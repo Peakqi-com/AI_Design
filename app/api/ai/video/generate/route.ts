@@ -28,6 +28,9 @@ export async function POST(request: Request) {
 
   const imageDataUrl = body.imageDataUrl?.trim();
   const prompt = body.prompt?.trim();
+  if (!imageDataUrl) {
+    return NextResponse.json({ error: "imageDataUrl is required for image-to-video mode." }, { status: 400 });
+  }
   if (!prompt) {
     return NextResponse.json({ error: "prompt is required." }, { status: 400 });
   }

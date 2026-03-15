@@ -633,7 +633,7 @@ export const VideoStudio: React.FC = () => {
     setIsPlaying(false);
   }, []);
 
-  const canGenerate = Boolean((uploadedAssetKind === "image" && uploadedAssetUrl) || (customPrompt.trim() && useVideoModel));
+  const canGenerate = Boolean(uploadedAssetKind === "image" && uploadedAssetUrl);
 
   const activePreviewAspectValue = ASPECT_RATIO_VALUES[aspectRatio] || DEFAULT_PREVIEW_RATIO;
   const previewObjectFitClass = sourceFrameMode === "fill" ? "object-cover" : "object-contain";
@@ -1195,7 +1195,7 @@ export const VideoStudio: React.FC = () => {
     setIsStopping(false);
   }, [clearActiveRequests, isGenerating, requestVeoCancel, userScopeId]);
 
-  const buildVeoPrompt = (input: { sourceType: "image" | "text"; frameMode?: SourceFrameMode }): string => {
+  const buildVeoPrompt = (input: { frameMode?: SourceFrameMode }): string => {
     const extraRequirement = customPrompt.trim();
     const hasExtraRequirement = Boolean(extraRequirement);
     const cameraInstruction =
@@ -1207,28 +1207,23 @@ export const VideoStudio: React.FC = () => {
             ? "cinematic orbit camera around main subject with real parallax"
             : "panorama cruise from left to right with immersive scene traversal and natural parallax";
 
-    const sourceConstraint =
-      input.sourceType === "text"
-        ? "generate scene from text brief only, keep semantic consistency with prompt"
-        : [
-            "use the reference image as source of truth",
-            "do not regenerate or replace the face",
-            "keep identical face, hairstyle, skin tone, body shape, pose, framing, clothing, and background",
-            "keep one coherent continuous shot and avoid still-photo overlays",
-            input.frameMode === "original"
-              ? "keep the full subject in frame and preserve original source framing without aggressive crop"
-              : "fill the target frame naturally while keeping person fully visible in center composition",
-            "no added people, no duplicated subjects, no scene switch, no identity drift",
-            hasExtraRequirement
-              ? "apply only the explicit extra requirement; keep all non-mentioned parts unchanged"
-              : "do not redesign outfit or scene; preserve the original appearance exactly",
-          ].join(", ");
+    const sourceConstraint = [
+      "use the uploaded reference image as source of truth",
+      "preserve the same room geometry, perspective, furniture scale and material logic",
+      "keep one coherent continuous shot and avoid still-photo overlays",
+      input.frameMode === "original"
+        ? "keep full room framing and preserve original source composition without aggressive crop"
+        : "fill the target frame naturally while keeping key space zones fully visible",
+      "no added people, no duplicated subjects, no scene switch, no geometry drift",
+      hasExtraRequirement
+        ? "apply only the explicit extra requirement; keep all non-mentioned parts unchanged"
+        : "do not redesign unrelated areas; preserve the original appearance exactly",
+    ].join(", ");
 
     return [
       `風格：${STYLE_PROMPTS[selectedStyle]}`,
       `鏡頭運動：${cameraInstruction}`,
       sourceConstraint,
-      "face lock: preserve the original face exactly and never synthesize a new face",
       "edge-to-edge full-frame composition with no black bars or blank margins",
       "high quality cinematic social short video, photorealistic details, clean edges, stable geometry, no warping, no jitter",
       hasExtraRequirement ? `extra requirement: ${extraRequirement}` : "",
@@ -1304,26 +1299,21 @@ export const VideoStudio: React.FC = () => {
   }
 
   const generateImageToVideoByModel = async (input: {
-    sourceImageUrl?: string;
+    sourceImageUrl: string;
     pendingJobMeta: PendingVeoJobMeta;
   }): Promise<{ blob: Blob; mimeType: string; model: string; durationSec: number }> => {
     let imageDataUrl: string | undefined;
-    if (input.sourceImageUrl) {
-      const sourceBlob = await fetch(input.sourceImageUrl).then((response) => response.blob());
-      setGenerationStage(
-        sourceFrameMode === "fill"
-          ? "正在等比例放大並滿版處理參考圖..."
-          : "正在保留原比例並補齊畫幅處理參考圖...",
-      );
-      setProgress((prev) => Math.max(prev, 14));
-      imageDataUrl = await imageBlobToOptimizedDataUrl(sourceBlob, aspectRatio, sourceFrameMode);
-      const requestBytes = estimateDataUrlBytes(imageDataUrl);
-      if (requestBytes > VEO_REQUEST_HARD_LIMIT_BYTES) {
-        throw new Error("圖片資料仍過大，請改用較小圖片或先降低解析度後再試。");
-      }
-    } else {
-      setGenerationStage("使用文字描述建立影片任務...");
-      setProgress((prev) => Math.max(prev, 14));
+    const sourceBlob = await fetch(input.sourceImageUrl).then((response) => response.blob());
+    setGenerationStage(
+      sourceFrameMode === "fill"
+        ? "正在等比例放大並滿版處理參考圖..."
+        : "正在保留原比例並補齊畫幅處理參考圖...",
+    );
+    setProgress((prev) => Math.max(prev, 14));
+    imageDataUrl = await imageBlobToOptimizedDataUrl(sourceBlob, aspectRatio, sourceFrameMode);
+    const requestBytes = estimateDataUrlBytes(imageDataUrl);
+    if (requestBytes > VEO_REQUEST_HARD_LIMIT_BYTES) {
+      throw new Error("圖片資料仍過大，請改用較小圖片或先降低解析度後再試。");
     }
 
     setGenerationStage("提交 Replicate 影片任務...");
@@ -1340,7 +1330,7 @@ export const VideoStudio: React.FC = () => {
         },
         signal: startController.signal,
         body: JSON.stringify({
-          ...(imageDataUrl ? { imageDataUrl } : {}),
+          imageDataUrl,
           model: videoModel,
           aspectRatio,
           resolution: videoResolution,
@@ -1348,7 +1338,6 @@ export const VideoStudio: React.FC = () => {
           negativePrompt:
           "blurry, jitter, distorted geometry, warped lines, low quality, subject drift, identity change, face replacement, face regeneration, different face, body proportion change, scene switch, duplicated person, added person, still photo overlay, frame collage, black bars, letterboxing, pillarboxing, empty margins, unrequested outfit change, unrequested wardrobe redesign",
           prompt: buildVeoPrompt({
-            sourceType: imageDataUrl ? "image" : "text",
             frameMode: sourceFrameMode,
           }),
         }),
@@ -1518,20 +1507,23 @@ export const VideoStudio: React.FC = () => {
       let appliedDuration = durationSec;
       let usedAiKeyframeModel = "";
       let usedVideoModel = "";
-      let sourceType: "image" | "text" = "text";
+      let sourceType: "image" | "text" = "image";
 
       if (uploadedAssetKind && uploadedAssetKind !== "image") {
-        throw new Error("目前僅支援圖生影片，請上傳圖片，或直接用文字描述生成。");
+        throw new Error("目前僅支援圖生影片，請上傳圖片。");
       }
-      if (!uploadedAssetUrl && !customPrompt.trim()) {
-        throw new Error("請上傳圖片或輸入文字描述後再生成。");
+      if (!uploadedAssetUrl) {
+        throw new Error("請先上傳圖片，提示詞僅作輔助，無法單獨生成影片。");
       }
 
       const sourceForMotion = uploadedAssetKind === "image" ? uploadedAssetUrl : null;
-      sourceType = sourceForMotion ? "image" : "text";
+      sourceType = "image";
       if (useVideoModel) {
+        if (!sourceForMotion) {
+          throw new Error("請先上傳圖片後再使用影片模型生成。");
+        }
         const generated = await generateImageToVideoByModel({
-          sourceImageUrl: sourceForMotion ?? undefined,
+          sourceImageUrl: sourceForMotion,
           pendingJobMeta: {
             mode,
             style: selectedStyle,
@@ -1551,7 +1543,7 @@ export const VideoStudio: React.FC = () => {
         usedVideoModel = generated.model;
       } else {
         if (!sourceForMotion) {
-          throw new Error("未上傳圖片時請開啟影片模型，才能使用文字生影片。");
+          throw new Error("請先上傳圖片後再生成影片。");
         }
         const generated = await generateImageTour(sourceForMotion, {
           preferPanorama: false,
@@ -1565,7 +1557,7 @@ export const VideoStudio: React.FC = () => {
         style: selectedStyle,
         aspectRatio,
         sourceType,
-        frameMode: sourceType === "image" ? sourceFrameMode : undefined,
+        frameMode: sourceFrameMode,
         cameraMotion,
         usePanoramaExpand,
         durationSec: appliedDuration,
@@ -1761,14 +1753,14 @@ export const VideoStudio: React.FC = () => {
 
           <div className="flex-1 p-4 space-y-6 overflow-y-auto">
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">1. 素材來源（圖片可選）</label>
+              <label className="block text-sm font-bold text-gray-700 mb-3">1. 素材來源（圖片必傳）</label>
               {!uploadedAssetUrl ? (
                 <div
                   onClick={() => fileInputRef.current?.click()}
                   className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:bg-brand-50 hover:border-brand-300 transition-colors cursor-pointer group"
                 >
                   <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2 group-hover:text-brand-500" />
-                  <p className="text-xs text-gray-500">上傳圖片素材 (JPG/PNG/WebP，可不傳，改用文字生成)</p>
+                  <p className="text-xs text-gray-500">上傳圖片素材 (JPG/PNG/WebP)，影片會依圖片生成</p>
                   <>
                     <div className="my-2 text-[10px] text-gray-300">- 或 -</div>
                     <Button
@@ -1824,21 +1816,16 @@ export const VideoStudio: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">3. 文字描述（可直接生成影片）</label>
+              <label className="block text-sm font-bold text-gray-700 mb-2">3. 補充提示詞（輔助）</label>
               <textarea
                 value={customPrompt}
                 onChange={(event) => setCustomPrompt(event.target.value)}
-                placeholder="例如：做一支 15 秒短片，主題是新品開箱，前 3 秒要吸睛，保留字幕空間在下方..."
+                placeholder="例如：運鏡慢一些、先帶客廳再帶餐廚、強化木紋與燈帶層次..."
                 className="w-full h-24 resize-none text-sm border border-gray-300 rounded-lg p-2.5 bg-white focus:ring-brand-500 focus:border-brand-500"
               />
               <p className="mt-1 text-[11px] text-gray-500">
-                沒有上傳圖片也可以生成，系統會依描述建立社群短影音。
+                提示詞僅作微調用途；必須先上傳圖片才可生成影片。
               </p>
-              {!uploadedAssetUrl && !useVideoModel && (
-                <p className="mt-1 text-[11px] text-amber-700">
-                  目前關閉影片模型，若要純文字生成請先開啟「影片模型」。
-                </p>
-              )}
             </div>
 
             <div>
@@ -1991,7 +1978,7 @@ export const VideoStudio: React.FC = () => {
                 className="gap-2"
               >
                 {isGenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                {isGenerating ? `AI 運算中 ${progress}%` : "開始生成社群影片（圖或文字）"}
+                {isGenerating ? `AI 運算中 ${progress}%` : "開始生成社群影片（需圖片）"}
               </Button>
               {isGenerating && (
                 <Button
@@ -2036,20 +2023,10 @@ export const VideoStudio: React.FC = () => {
                 maxHeight: "100%",
               }}
             >
-              {!resultVideoUrl && !uploadedAssetUrl && customPrompt.trim() ? (
-                <div className="w-full h-full flex items-center justify-center p-5">
-                  <div className="max-w-md rounded-xl border border-white/20 bg-white/10 backdrop-blur p-5 text-white">
-                    <p className="text-xs text-white/70 mb-2">文字生成預覽</p>
-                    <p className="text-sm leading-relaxed line-clamp-6">{customPrompt}</p>
-                    <p className="text-[11px] text-white/70 mt-3">
-                      將以 {ASPECT_RATIO_LABELS[aspectRatio]} 生成影片，風格：{STYLE_LABELS[selectedStyle]}
-                    </p>
-                  </div>
-                </div>
-              ) : !resultVideoUrl && !uploadedAssetUrl ? (
+              {!resultVideoUrl && !uploadedAssetUrl ? (
                 <div className="w-full h-full text-center text-gray-500 flex flex-col items-center justify-center">
                   <Film className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                  <p>上傳圖片或輸入文字描述即可生成</p>
+                  <p>請先上傳圖片才能生成動態影片</p>
                 </div>
               ) : (
                 <>
