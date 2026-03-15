@@ -16,8 +16,8 @@ import { CRMSystem } from "./components/CRMSystem";
 
 const DEMO_USER: User = {
   id: "u_demo",
-  name: "Wedding Team Demo",
-  email: "team@weddingpro.tw",
+  name: "Interior Team Demo",
+  email: "team@interiorpro.tw",
   avatar: "https://picsum.photos/200",
   plan: "free",
   credits: 50,
@@ -37,7 +37,7 @@ const toAppUser = (sessionUser: unknown): User | null => {
   };
   return {
     id: user.id || "u_oauth",
-    name: user.name || "Wedding User",
+    name: user.name || "Interior User",
     email: user.email || "oauth-user@example.com",
     avatar: user.image || "https://picsum.photos/200",
     plan: user.plan || "free",
