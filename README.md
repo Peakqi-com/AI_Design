@@ -135,7 +135,7 @@ VERTEX_AI_LOCATION=us-central1
 可選：
 
 ```bash
-VEO_VIDEO_MODEL=veo-3.1-generate-preview
+REPLICATE_VIDEO_MODEL=xai/grok-imagine-video
 ```
 
 ---
