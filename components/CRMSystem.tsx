@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { CrmInteriorIntakePanel } from "./CrmInteriorIntakePanel";
 
 type ContactStatus = "new" | "contacted" | "proposal" | "signed";
 type ContactSource = "line" | "manual";
@@ -503,6 +504,7 @@ export const CRMSystem: React.FC = () => {
     channelSecret: "",
   });
   const [lineCacheScope, setLineCacheScope] = useState("guest_server");
+  const [isInteriorIntakeComplete, setIsInteriorIntakeComplete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contactsRef = useRef<CrmContact[]>([]);
   const messagesByContactRef = useRef<Record<string, CrmMessage[]>>({});
@@ -521,6 +523,10 @@ export const CRMSystem: React.FC = () => {
     () => contacts.find((contact) => contact.id === selectedContactId) ?? null,
     [contacts, selectedContactId],
   );
+
+  useEffect(() => {
+    setIsInteriorIntakeComplete(false);
+  }, [selectedContactId]);
 
   const pushNotice = useCallback((key: string, message: string) => {
     const now = Date.now();
@@ -1154,6 +1160,11 @@ export const CRMSystem: React.FC = () => {
     if (!selectedContactId || sending) {
       return;
     }
+    if (!isInteriorIntakeComplete) {
+      setShowProfile(true);
+      setError("請先完成「室內設計初訪問卷」，再進行對話回覆。");
+      return;
+    }
     const text = composer.trim();
     if (!text) {
       return;
@@ -1205,6 +1216,12 @@ export const CRMSystem: React.FC = () => {
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !selectedContactId) {
+      return;
+    }
+    if (!isInteriorIntakeComplete) {
+      setShowProfile(true);
+      setError("請先完成「室內設計初訪問卷」，再傳送附件。");
+      event.target.value = "";
       return;
     }
 
@@ -1743,6 +1760,11 @@ export const CRMSystem: React.FC = () => {
             </div>
 
             <div className="border-t border-gray-200 bg-white p-4">
+              {!isInteriorIntakeComplete && (
+                <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                  此客戶尚未完成「室內設計初訪問卷」，請先於右側填答後再回覆訊息。
+                </div>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1753,6 +1775,7 @@ export const CRMSystem: React.FC = () => {
               <div className="flex items-end gap-2">
                 <button
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={!isInteriorIntakeComplete}
                   className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
                   title="上傳圖片或檔案"
                 >
@@ -1762,6 +1785,7 @@ export const CRMSystem: React.FC = () => {
                   rows={2}
                   value={composer}
                   onChange={(event) => setComposer(event.target.value)}
+                  disabled={!isInteriorIntakeComplete}
                   onFocus={() => {
                     composerFocusedRef.current = true;
                   }}
@@ -1774,7 +1798,7 @@ export const CRMSystem: React.FC = () => {
                 <Button
                   className="h-[42px] rounded-xl px-4"
                   onClick={handleSend}
-                  disabled={!composer.trim() || sending}
+                  disabled={!composer.trim() || sending || !isInteriorIntakeComplete}
                 >
                   <Send className="h-4 w-4" />
                 </Button>
@@ -1899,6 +1923,22 @@ export const CRMSystem: React.FC = () => {
                 )}
               </div>
             </div>
+
+            <CrmInteriorIntakePanel
+              selectedContact={{
+                id: selectedContact.id,
+                displayName: selectedContact.displayName,
+                tags: selectedContact.tags,
+                status: selectedContact.status,
+              }}
+              userScopeId={lineCacheScope}
+              conversationMessages={messages.map((item) => ({
+                direction: item.direction,
+                text: item.text,
+                timestamp: item.timestamp,
+              }))}
+              onCompletionChange={setIsInteriorIntakeComplete}
+            />
           </div>
         </aside>
       )}

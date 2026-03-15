@@ -85,10 +85,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
           </div>
         </div>
         <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          登入您的婚慶團隊帳戶
+          登入您的室內設計團隊帳戶
         </h2>
         <p className="mt-2 text-center text-sm text-gray-600">
-          開始使用 AI 加速婚禮服務與社群成長
+          開始使用 AI 加速室內設計提案與社群成長
         </p>
       </div>
 

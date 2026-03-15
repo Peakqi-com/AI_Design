@@ -129,6 +129,11 @@ interface GeminiListModelsResponse {
 }
 
 interface IdentityCheckJson {
+  sameLayout?: boolean;
+  hasUnexpectedObject?: boolean;
+  originalAnchorCount?: number;
+  generatedAnchorCount?: number;
+  structureScore?: number;
   samePerson?: boolean;
   hasExtraPerson?: boolean;
   originalFaceCount?: number;
@@ -155,50 +160,34 @@ const extractDataUrl = (imageDataUrl: string): ParsedDataUrl => {
 
 const buildPrompt = (input: RenderRequestInput): string => {
   const creativityScale = Math.round(Math.min(100, Math.max(0, input.creativity)));
-  const hasDressReference = Boolean(input.referenceDressImageDataUrl);
-  const lockFace = input.lockFace !== false;
-  const strictIdentity = Boolean(input.preserveIdentityStrict || hasDressReference || lockFace);
+  const hasStyleReference = Boolean(input.referenceDressImageDataUrl);
+  const strictIdentity = Boolean(input.preserveIdentityStrict);
   return [
-    "你是婚紗造型總監與婚禮視覺 AI，請根據輸入圖產生高品質 AI 禮服試穿圖。",
-    "任務類型：影像編修（edit existing photo），不是重新生成人像。",
+    "你是資深室內設計視覺總監，請把輸入圖轉為高品質室內設計渲染提案圖。",
+    "任務類型：影像編修（edit existing image），優先保留原始空間構圖與比例。",
     "輸入圖規則：",
-    "- 輸入圖 1 = 原始人物照（身份鎖定圖）。",
-    hasDressReference ? "- 輸入圖 2 = 婚紗參考圖（必須精準套用同款）。" : "",
+    "- 輸入圖 1 = 線稿、平面示意、或現況空間圖。",
+    hasStyleReference ? "- 輸入圖 2 = 參考風格/材質圖（用於輔助設計語彙）。" : "",
     "生成要求：",
-    `- 婚禮情境：${input.roomType}`,
-    `- 禮服風格：${input.style}`,
-    input.dressSpec ? `- 指定婚紗細節：${input.dressSpec}` : "",
-    `- 創意度：${creativityScale}/100（越高可更自由發揮，但需保留人物關鍵特徵）`,
-    lockFace
-      ? "- 必須是同一個人：嚴禁換臉、嚴禁改變五官與臉型、嚴禁改變年齡與膚色。"
-      : "",
+    `- 空間類型：${input.roomType}`,
+    `- 設計任務：${input.style}`,
+    input.dressSpec ? `- 指定設計細節：${input.dressSpec}` : "",
+    `- 創意度：${creativityScale}/100（越高代表可以有更多風格延展）`,
     strictIdentity
-      ? "- 嚴格規則：只允許替換原人物身上的衣著；臉、髮型、身形、姿勢、鏡頭角度、背景構圖都要維持原圖。"
+      ? "- 嚴格模式：維持原始空間主體、主要開口、樑柱與主要家具位置，不做破壞性改造。"
       : "",
-    strictIdentity
-      ? "- 不得重繪臉部：五官位置、臉型輪廓、眼鼻口比例、膚質與年齡感需與原圖高度一致。"
+    hasStyleReference
+      ? "- 若有參考圖，請優先學習其材質語彙、色彩節奏、燈光層次，但不要直接抄襲構圖。"
       : "",
-    strictIdentity
-      ? "- 禁止新增任何其他人臉、路人、伴娘、攝影師、反射人像、海報人像、相框照片。"
-      : "",
-    strictIdentity
-      ? "- 禁止多畫面拼貼、分鏡、雙圖合成、額外照片貼圖、浮水印與文字疊圖。"
-      : "",
-    "- 必須保留原人物髮型、臉部辨識特徵、身形比例與原始構圖，不要改變鏡頭角度。",
-    "- 僅允許替換衣著為婚紗，不可生成新的陌生人。",
-    hasDressReference
-      ? "- 參考婚紗圖中的領口、袖型、腰線、裙擺輪廓、蕾絲/珠飾細節必須高度一致。"
-      : "",
-    "- 影像風格必須是寫實攝影（photorealistic），禁止卡通、插畫、3D、塑膠肌膚質感。",
-    "- 保留原始人物在照片中的比例與位置，不可改成棚拍陌生模特。",
-    "- 請讓禮服材質、蕾絲細節、光影層次、配件比例自然，輸出可給新人快速決策的視覺稿。",
-    "- 清晰度優先：避免模糊與塗抹感，提升服裝邊緣、紋理與飾品細節。",
-    "- 請生成高品質、高細節、可直接提案的婚禮試穿視覺（接近 4K 視覺品質）。",
+    "- 渲染風格必須為 photorealistic，禁止插畫、卡通、塑膠感、過度 CGI。",
+    "- 保留空間尺度合理性：走道淨寬、櫃體比例、家具尺寸與視角透視需自然。",
+    "- 加強可提案細節：材質紋理、接縫、陰影、反射、燈光層次與可施工性。",
+    "- 優先輸出可與客戶討論的版本：兼具美感、機能、動線與收納思考。",
     input.customPrompt?.trim() ? `- 使用者補充需求：${input.customPrompt.trim()}` : "",
     "",
     "請輸出：",
-    "1) 一張試穿後圖片",
-    "2) 50-120字繁體中文簡短說明（版型、材質、整體婚禮氛圍）。",
+    "1) 一張渲染後圖片",
+    "2) 50-140 字繁體中文設計說明（動線/材質/光線/機能重點）。",
   ]
     .filter(Boolean)
     .join("\n");
@@ -206,20 +195,20 @@ const buildPrompt = (input: RenderRequestInput): string => {
 
 const buildRefinePrompt = (input: RefineRequestInput): string =>
   [
-    "你是婚紗影像後製師，請針對輸入圖片進行『細節修復與銳化』，不要改變人物身份特徵。",
-    input.roomType ? `- 婚禮情境：${input.roomType}` : "",
-    input.style ? `- 禮服風格：${input.style}` : "",
+    "你是室內設計視覺後製師，請針對輸入圖片做「細節修復與銳化」，不得重做空間結構。",
+    input.roomType ? `- 空間類型：${input.roomType}` : "",
+    input.style ? `- 設計任務：${input.style}` : "",
     input.lockFace !== false
-      ? "- 身份鎖定：臉部五官、臉型、髮型、年齡感、膚色必須與原圖一致，禁止任何換臉。"
+      ? "- 結構鎖定：主要空間結構、家具大輪廓、視角構圖需與原圖一致。"
       : "",
     input.sourceIdentityImageDataUrl
-      ? "- 會額外提供原始人物照作為身份參考，輸出必須與該人物完全一致。"
+      ? "- 會額外提供原始圖作為結構參考，輸出需保持相同空間骨架。"
       : "",
-    "- 嚴禁新增人物或任何額外照片元素，維持單一主體。",
-    "- 僅提升畫面清晰度、服裝紋理、邊緣細節、光影層次。",
-    "- 請降低模糊與塗抹感，特別是禮服蕾絲、裙襬皺褶、飾品亮面反射。",
-    "- 保持原有構圖與色調，不要更換人物臉部與身形比例。",
-    "- 輸出需維持真實攝影質感，避免過度磨皮、過度銳化或 AI 繪圖感。",
+    "- 嚴禁新增人物、浮水印、文字框、拼貼或分鏡。",
+    "- 僅提升清晰度、材質紋理、邊緣細節、光影層次。",
+    "- 請降低模糊與塗抹感，特別是木紋、石材、布料、金屬、燈具與牆角收邊。",
+    "- 保持原有構圖與主色調，不做大幅重新設計。",
+    "- 輸出需維持寫實攝影質感，避免過銳化與 AI 假感。",
     "- 請輸出一張修復後高品質圖片，並附上簡短後製說明（繁中）。",
   ]
     .filter(Boolean)
@@ -227,16 +216,16 @@ const buildRefinePrompt = (input: RefineRequestInput): string =>
 
 const buildPanoramaPrompt = (input: PanoramaRequestInput): string =>
   [
-    "你是婚禮影像導演，請把輸入圖片擴展成可做社群短影音運鏡的超寬幅婚禮場景畫面。",
-    input.style ? `- 目標禮服/視覺風格：${input.style}` : "",
-    "- 保留原始主體構圖（人物與禮服），向左右延展可運鏡的場景資訊。",
-    "- 畫面需要有景深與場景連續性，不要變形，不要破壞人物比例。",
+    "你是室內設計視覺導演，請把輸入圖片擴展成可做短影音運鏡的超寬幅室內場景。",
+    input.style ? `- 目標風格：${input.style}` : "",
+    "- 保留原始空間主體與主要構圖，向左右延展連續場景資訊。",
+    "- 畫面需要景深與連續性，不要變形，不要破壞空間比例。",
     "- 材質、光影、陰影與反射細節需自然，優先高細節與高解析品質。",
     input.customPrompt?.trim() ? `- 補充需求：${input.customPrompt.trim()}` : "",
     "",
     "輸出要求：",
-    "1) 一張超寬幅婚禮視覺（建議 21:9 視覺感）",
-    "2) 繁中簡短說明（描述延展出的場景重點）",
+    "1) 一張超寬幅室內設計視覺（建議 21:9）",
+    "2) 繁中簡短說明（描述延展出的空間重點）",
   ]
     .filter(Boolean)
     .join("\n");
@@ -476,7 +465,7 @@ const callGeminiModel = async (
           role: "user",
           parts: [
             { text: prompt },
-            { text: "[輸入圖1] 原始人物照（身份鎖定）" },
+            { text: "[輸入圖1] 原始空間圖（結構鎖定）" },
             {
               inlineData: {
                 mimeType: subjectImage.mimeType,
@@ -484,7 +473,7 @@ const callGeminiModel = async (
               },
             },
             ...referenceImages.flatMap((image, index) => [
-              { text: `[輸入圖${index + 2}] 婚紗參考圖` },
+              { text: `[輸入圖${index + 2}] 風格參考圖` },
               {
                 inlineData: {
                   mimeType: image.mimeType,
@@ -538,15 +527,15 @@ interface IdentityCheckResult {
 
 const buildIdentityCheckPrompt = (): string =>
   [
-    "你是嚴格的人臉一致性檢查器，請比對兩張圖是否為同一人。",
-    "輸入圖1：原始人物照。輸入圖2：AI 生成結果。",
+    "你是嚴格的室內空間結構一致性檢查器，請比對兩張圖是否為同一空間骨架。",
+    "輸入圖1：原始空間圖。輸入圖2：AI 生成結果。",
     "請檢查：",
-    "1) 是否同一個人（臉部五官、臉型、年齡感）",
-    "2) 生成圖是否新增其他人物或其他臉",
-    "3) 生成圖人臉數量是否和原圖一致",
-    "4) 是否有拼貼、額外照片、分鏡、雙畫面",
+    "1) 是否保留相同空間布局（牆面、門窗、主要家具位置）",
+    "2) 是否出現不合理的新增主體（大面積錯置物件、錯誤結構）",
+    "3) 關鍵錨點數量（門窗/樑柱/固定櫃）是否大致一致",
+    "4) 是否有拼貼、雙畫面、明顯視角錯亂",
     "只回傳 JSON：",
-    '{"samePerson":true,"hasExtraPerson":false,"originalFaceCount":1,"generatedFaceCount":1,"identityScore":95,"issues":[""],"verdict":"pass"}',
+    '{"sameLayout":true,"hasUnexpectedObject":false,"originalAnchorCount":6,"generatedAnchorCount":6,"structureScore":95,"issues":[""],"verdict":"pass"}',
   ].join("\n");
 
 const validateIdentityLock = async (
@@ -567,7 +556,7 @@ const validateIdentityLock = async (
           role: "user",
           parts: [
             { text: buildIdentityCheckPrompt() },
-            { text: "[輸入圖1] 原始人物照" },
+            { text: "[輸入圖1] 原始空間圖" },
             {
               inlineData: {
                 mimeType: originalImage.mimeType,
@@ -603,7 +592,7 @@ const validateIdentityLock = async (
     return {
       pass: false,
       score: 0,
-      reason: (body as GeminiErrorResponse).error?.message || "人臉一致性檢查失敗",
+      reason: (body as GeminiErrorResponse).error?.message || "結構一致性檢查失敗",
     };
   }
 
@@ -613,38 +602,44 @@ const validateIdentityLock = async (
     return {
       pass: false,
       score: 0,
-      reason: "無法解析人臉一致性檢查結果",
+      reason: "無法解析結構一致性檢查結果",
     };
   }
 
-  const samePerson = parsed.samePerson === true;
-  const hasExtraPerson = parsed.hasExtraPerson === true;
-  const originalFaceCount =
-    typeof parsed.originalFaceCount === "number" && Number.isFinite(parsed.originalFaceCount)
-      ? Math.max(0, Math.floor(parsed.originalFaceCount))
+  const sameLayout = parsed.sameLayout === true || parsed.samePerson === true;
+  const hasUnexpectedObject = parsed.hasUnexpectedObject === true || parsed.hasExtraPerson === true;
+  const originalAnchorCount =
+    typeof parsed.originalAnchorCount === "number" && Number.isFinite(parsed.originalAnchorCount)
+      ? Math.max(0, Math.floor(parsed.originalAnchorCount))
+      : typeof parsed.originalFaceCount === "number" && Number.isFinite(parsed.originalFaceCount)
+        ? Math.max(0, Math.floor(parsed.originalFaceCount))
       : 1;
-  const generatedFaceCount =
-    typeof parsed.generatedFaceCount === "number" && Number.isFinite(parsed.generatedFaceCount)
-      ? Math.max(0, Math.floor(parsed.generatedFaceCount))
+  const generatedAnchorCount =
+    typeof parsed.generatedAnchorCount === "number" && Number.isFinite(parsed.generatedAnchorCount)
+      ? Math.max(0, Math.floor(parsed.generatedAnchorCount))
+      : typeof parsed.generatedFaceCount === "number" && Number.isFinite(parsed.generatedFaceCount)
+        ? Math.max(0, Math.floor(parsed.generatedFaceCount))
       : 0;
-  const identityScore =
-    typeof parsed.identityScore === "number" && Number.isFinite(parsed.identityScore)
-      ? Math.max(0, Math.min(100, Math.round(parsed.identityScore)))
+  const structureScore =
+    typeof parsed.structureScore === "number" && Number.isFinite(parsed.structureScore)
+      ? Math.max(0, Math.min(100, Math.round(parsed.structureScore)))
+      : typeof parsed.identityScore === "number" && Number.isFinite(parsed.identityScore)
+        ? Math.max(0, Math.min(100, Math.round(parsed.identityScore)))
       : 0;
 
-  const faceCountMatch = generatedFaceCount === originalFaceCount && generatedFaceCount > 0;
-  const pass = samePerson && !hasExtraPerson && faceCountMatch && identityScore >= 93;
+  const anchorCountMatch = generatedAnchorCount === originalAnchorCount && generatedAnchorCount > 0;
+  const pass = sameLayout && !hasUnexpectedObject && anchorCountMatch && structureScore >= 90;
   if (pass) {
-    return { pass: true, score: identityScore, reason: "ok" };
+    return { pass: true, score: structureScore, reason: "ok" };
   }
 
   const issues = Array.isArray(parsed.issues) ? parsed.issues.filter(Boolean).join("；") : "";
   return {
     pass: false,
-    score: identityScore,
+    score: structureScore,
     reason:
       issues ||
-      `samePerson=${String(samePerson)}, extraPerson=${String(hasExtraPerson)}, faceCount=${generatedFaceCount}/${originalFaceCount}, score=${identityScore}`,
+      `sameLayout=${String(sameLayout)}, unexpectedObject=${String(hasUnexpectedObject)}, anchorCount=${generatedAnchorCount}/${originalAnchorCount}, score=${structureScore}`,
   };
 };
 
@@ -680,9 +675,9 @@ export async function generateInteriorRender(
         ? prompt
         : [
             prompt,
-            `- 【重試第 ${attempt} 次】上次結果未通過同人臉檢查：${lastReason || "身份不一致"}`,
-            "- 這次必須嚴格保留同一張臉，維持單一人物，不可新增任何其他人臉。",
-            "- 若無法滿足條件，寧可保持原圖構圖只改衣著，不要變更人物。",
+            `- 【重試第 ${attempt} 次】上次結果未通過結構一致性檢查：${lastReason || "結構不一致"}`,
+            "- 這次必須嚴格保留同一空間骨架，不可改變主要牆面、門窗與固定櫃位置。",
+            "- 若無法滿足條件，請優先保留原圖構圖，只做材質、光線與陳設優化。",
           ].join("\n");
 
     const result = await generateImageByPrompt({
@@ -702,7 +697,7 @@ export async function generateInteriorRender(
         imageDataUrl: result.imageDataUrl,
         summary:
           result.text ||
-          "已完成 AI 試穿生成，請確認婚紗版型、材質細節與整體人物是否自然。",
+          "已完成室內設計渲染，請確認動線、材質與照明是否符合提案方向。",
         model: result.model,
       };
     }
@@ -714,7 +709,7 @@ export async function generateInteriorRender(
         imageDataUrl: result.imageDataUrl,
         summary:
           result.text ||
-          "已完成 AI 試穿生成（同人臉鎖定），請確認婚紗版型、材質細節與參考款是否一致。",
+          "已完成室內設計渲染（結構鎖定模式），請確認空間比例與材質一致性。",
         model: result.model,
       };
     }
@@ -725,9 +720,9 @@ export async function generateInteriorRender(
     "若你使用 Vertex AI，請確認模型在目前區域可用（可嘗試將 VERTEX_AI_LOCATION 設為 global）" +
     "或於 GEMINI_IMAGE_MODEL 指定你已開通的影像模型。";
   throw new Error(
-    "為避免換臉與多人混入，系統已攔截本次結果（人臉一致性未通過）。" +
+    "系統已攔截本次結果（結構一致性未通過）。" +
       (lastResult ? `最後嘗試模型：${lastResult.model}。` : "") +
-      (lastReason ? `原因：${lastReason}。` : "請改用更清晰正面照並重試。") +
+      (lastReason ? `原因：${lastReason}。` : "請改用更清晰的線稿/原圖並重試。") +
       modelHint,
   );
 }
@@ -746,7 +741,7 @@ export async function refineInteriorRender(
     });
     return {
       imageDataUrl: result.imageDataUrl,
-      summary: result.text || "已完成細節修復與銳化。",
+      summary: result.text || "已完成室內渲染細節修復與銳化。",
       model: result.model,
     };
   }
@@ -762,8 +757,8 @@ export async function refineInteriorRender(
         ? prompt
         : [
             prompt,
-            `- 【重試第 ${attempt} 次】上次細節修復未通過同人臉檢查：${lastReason || "身份不一致"}`,
-            "- 本次修復只能做銳化與細節修補，臉部不可重繪。",
+            `- 【重試第 ${attempt} 次】上次細節修復未通過結構一致性檢查：${lastReason || "結構不一致"}`,
+            "- 本次修復只能做銳化與細節修補，不可重繪主要空間結構。",
           ].join("\n");
     const result = await generateImageByPrompt({
       imageDataUrl: input.imageDataUrl,
@@ -779,7 +774,7 @@ export async function refineInteriorRender(
     if (identityCheck.pass) {
       return {
         imageDataUrl: result.imageDataUrl,
-        summary: result.text || "已完成細節修復與銳化（同人臉鎖定）。",
+        summary: result.text || "已完成細節修復與銳化（結構鎖定）。",
         model: result.model,
       };
     }
@@ -787,7 +782,7 @@ export async function refineInteriorRender(
   }
 
   throw new Error(
-    `細節修復已被攔截：為避免換臉，結果未通過同人臉檢查。${lastModel ? `最後模型：${lastModel}。` : ""}${lastReason ? `原因：${lastReason}` : ""}`,
+    `細節修復已被攔截：結果未通過結構一致性檢查。${lastModel ? `最後模型：${lastModel}。` : ""}${lastReason ? `原因：${lastReason}` : ""}`,
   );
 }
 

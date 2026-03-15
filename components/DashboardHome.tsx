@@ -330,7 +330,7 @@ export const DashboardHome: React.FC = () => {
   }, [assets, contacts, projects, socialPosts]);
 
   const userName =
-    ((session?.user as { name?: string | null } | undefined)?.name || "").trim() || "Wedding Team";
+    ((session?.user as { name?: string | null } | undefined)?.name || "").trim() || "Interior Team";
   const todayLabel = dateFormatter.format(new Date());
 
   return (
@@ -443,11 +443,11 @@ export const DashboardHome: React.FC = () => {
 
           <div>
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-900">進行中婚禮專案</h3>
+              <h3 className="text-lg font-bold text-gray-900">進行中室內設計專案</h3>
             </div>
             {derived.activeProjects.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 text-sm text-gray-500">
-                目前沒有進行中的專案，可先到「婚禮專案管理」新增案件。
+                目前沒有進行中的專案，可先到「室內專案管理」新增案件。
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -479,7 +479,7 @@ export const DashboardHome: React.FC = () => {
                           <h4 className="font-bold text-gray-900 line-clamp-1">{project.name}</h4>
                           <MoreHorizontal className="w-4 h-4 text-gray-400" />
                         </div>
-                        <p className="text-xs text-gray-500 mb-3">新人：{project.clientName}</p>
+                        <p className="text-xs text-gray-500 mb-3">客戶：{project.clientName}</p>
                         <div className="flex items-center gap-2 mb-1">
                           <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div

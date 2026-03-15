@@ -29,13 +29,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   children 
 }) => {
   const navItems: NavItem[] = [
-    { id: 'overview', label: '婚慶總覽儀表板', icon: LayoutDashboard },
-    { id: 'ai-studio', label: 'AI 禮服試穿', icon: Palette },
-    { id: 'video-studio', label: '社群影片生成', icon: Video },
+    { id: 'overview', label: '室內設計總覽', icon: LayoutDashboard },
+    { id: 'ai-studio', label: 'AI 空間渲染', icon: Palette },
+    { id: 'video-studio', label: '空間動態影片', icon: Video },
     { id: 'marketing', label: '社群發文中心', icon: Share2 },
-    { id: 'crm', label: '客戶通訊 CRM', icon: MessageCircle },
-    { id: 'projects', label: '婚禮專案管理', icon: FileText },
-    { id: 'quotation', label: 'AI 婚禮報價', icon: Calculator },
+    { id: 'crm', label: '客戶關係 CRM', icon: MessageCircle },
+    { id: 'projects', label: '室內專案管理', icon: FileText },
+    { id: 'quotation', label: 'AI 裝修報價', icon: Calculator },
     { id: 'subscription', label: '訂閱與點數', icon: CreditCard },
   ];
 
@@ -51,7 +51,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       <div className="w-64 bg-white border-r border-gray-200 fixed h-full hidden md:flex flex-col z-20">
         <div className="p-6 flex items-center gap-2 border-b border-gray-100">
           <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white font-bold">Ai</div>
-          <span className="font-bold text-xl text-gray-900">Wedding Pro</span>
+          <span className="font-bold text-xl text-gray-900">Interior Pro</span>
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">

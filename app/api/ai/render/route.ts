@@ -67,7 +67,7 @@ export async function POST(request: Request) {
       elapsedMs: Date.now() - startedAt,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI 試穿影像生成發生未知錯誤。";
+    const message = error instanceof Error ? error.message : "AI 室內渲染發生未知錯誤。";
     const status = isGoogleAiCredentialErrorMessage(message) ? 503 : 500;
     return NextResponse.json(
       {

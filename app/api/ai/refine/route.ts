@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       elapsedMs: Date.now() - startedAt,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI 禮服細節修復發生未知錯誤。";
+    const message = error instanceof Error ? error.message : "AI 室內細節修復發生未知錯誤。";
     const status = isGoogleAiCredentialErrorMessage(message) ? 503 : 500;
     return NextResponse.json({ error: message }, { status });
   }
