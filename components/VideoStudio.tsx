@@ -164,8 +164,8 @@ const VEO_OPTIMIZED_MAX_EDGE = 1600;
 const VEO_OPTIMIZED_MIN_EDGE = 1120;
 const VEO_POLL_INTERVAL_MS = 3000;
 const VEO_MAX_WAIT_MS = 45 * 60 * 1000;
-const PENDING_VEO_JOB_KEY_PREFIX = "aiwedding:video-pending:";
-const VIDEO_HISTORY_CACHE_KEY_PREFIX = "aiwedding:video-history:";
+const PENDING_VEO_JOB_KEY_PREFIX = "aiinterior:video-pending:";
+const VIDEO_HISTORY_CACHE_KEY_PREFIX = "aiinterior:video-history:";
 const ASPECT_RATIO_VALUES: Record<AspectRatio, number> = {
   "9:16": 9 / 16,
   "1:1": 1,

@@ -85,8 +85,8 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
 };
 
 const DEFAULT_QUOTATION_ITEMS: ProjectQuotationItem[] = [
-  { id: `quote_seed_1`, name: "婚禮統籌服務費", quantity: 1, unitPrice: 68000 },
-  { id: `quote_seed_2`, name: "婚禮當日執行", quantity: 1, unitPrice: 18000 },
+  { id: `quote_seed_1`, name: "室內設計規劃服務費", quantity: 1, unitPrice: 68000 },
+  { id: `quote_seed_2`, name: "施工現場協調執行", quantity: 1, unitPrice: 18000 },
 ];
 
 const DEFAULT_NOTIFICATION_TEMPLATES: ProjectNotificationTemplate[] = [
@@ -110,20 +110,20 @@ const DEFAULT_NOTIFICATION_TEMPLATES: ProjectNotificationTemplate[] = [
 const WORKFLOW_TEMPLATES: Array<{ id: string; label: string; tasks: Omit<ProjectWorkflowTask, "id">[] }> = [
   {
     id: "classic-lunch",
-    label: "經典午宴模板",
+    label: "住宅標準流程模板",
     tasks: [
-      { time: "07:30", title: "新娘梳化", detail: "妝髮與禮服確認", owner: "造型師", done: false, isCustom: false },
-      { time: "10:00", title: "迎娶流程", detail: "闖關、拜別、出門", owner: "婚禮企劃", done: false, isCustom: false },
-      { time: "12:00", title: "午宴開席", detail: "主持開場與新人進場", owner: "主持人", done: false, isCustom: false },
+      { time: "07:30", title: "現況丈量與需求確認", detail: "丈量尺寸與需求盤點", owner: "專案經理", done: false, isCustom: false },
+      { time: "10:00", title: "平面配置與動線初稿", detail: "提出動線、收納與機能分區方案", owner: "設計師", done: false, isCustom: false },
+      { time: "12:00", title: "材質與燈光提案會議", detail: "確認材質樣板、色系與預算分配", owner: "工務監工", done: false, isCustom: false },
     ],
   },
   {
     id: "classic-dinner",
-    label: "經典晚宴模板",
+    label: "商空標準流程模板",
     tasks: [
-      { time: "09:00", title: "新娘梳化", detail: "晨間妝髮與禮服確認", owner: "造型師", done: false, isCustom: false },
-      { time: "14:30", title: "First Look 拍攝", detail: "類婚紗與類婚禮紀錄", owner: "攝影團隊", done: false, isCustom: false },
-      { time: "18:30", title: "晚宴開場", detail: "迎賓、進場、主桌儀式", owner: "主持人", done: false, isCustom: false },
+      { time: "09:00", title: "現況丈量與需求確認", detail: "晨間丈量尺寸與需求盤點", owner: "專案經理", done: false, isCustom: false },
+      { time: "14:30", title: "3D 渲染與提案簡報", detail: "輸出多角度渲染圖與報價版本", owner: "3D 視覺師", done: false, isCustom: false },
+      { time: "18:30", title: "材質與燈光提案會議", detail: "確認樣板、預算與施工節點", owner: "工務監工", done: false, isCustom: false },
     ],
   },
 ];
@@ -151,7 +151,7 @@ const createDressSelectionRecord = (
   const now = new Date().toISOString();
   return {
     id: partial?.id || `dress_${crypto.randomUUID()}`,
-    dressName: partial?.dressName || "新婚紗紀錄",
+    dressName: partial?.dressName || "新渲染紀錄",
     dressSpec: partial?.dressSpec || "",
     sourceLabel: partial?.sourceLabel || "自訂",
     referenceAssetId: partial?.referenceAssetId || "",
@@ -214,9 +214,9 @@ const buildAuspiciousPlan = (
     preferredWindow: preferredWindow || "afternoon",
     recommendedStartTime: startTime,
     recommendations: [
-      `建議新人主儀式安排在 ${startTime} 左右開始，預留 20 分鐘彈性緩衝。`,
-      "主儀式前 45 分鐘完成彩排與音控確認，避免臨時延誤。",
-      "若有外拍或迎娶流程，請提前安排交通與雨備動線。",
+      `建議關鍵施工節點安排在 ${startTime} 左右啟動，預留 20 分鐘彈性緩衝。`,
+      "施工前一天完成材料、設備與保護工程確認，避免臨時延誤。",
+      "若涉及社區施工申請或大樓搬運時段，請提前完成管理規約與動線申請。",
     ],
     generatedAt: new Date().toISOString(),
   };
@@ -522,15 +522,15 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     const base = (draft.workflowTasks || []).length
       ? [...(draft.workflowTasks || [])]
       : WORKFLOW_TEMPLATES[0].tasks.map((task) => createFlowTask({ ...task, date: fallbackDate }));
-    const hasRehearsal = base.some((task) => /彩排|rehearsal/i.test(task.title));
-    if (!hasRehearsal) {
+    const hasSiteCheck = base.some((task) => /放樣|工序確認|site review/i.test(task.title));
+    if (!hasSiteCheck) {
       base.unshift(
         createFlowTask({
           date: fallbackDate,
           time: "16:30",
-          title: "彩排與動線確認",
-          detail: "主持、音控、進場動線全流程彩排",
-          owner: "婚禮企劃",
+          title: "現場放樣與工序確認",
+          detail: "確認保護工程、動線與工班交接節點",
+          owner: "設計師",
           isCustom: false,
         }),
       );
@@ -604,7 +604,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       ...prev,
       auspiciousPlan: generated,
     }));
-    setNotice("已產生 AI 時辰建議，可再手動微調。");
+    setNotice("已產生 AI 工期節點建議，可再手動微調。");
   };
 
   const handleDispatchReminders = async (force: boolean) => {
@@ -863,7 +863,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
               </span>
             </div>
             <p className="text-gray-500 text-sm mt-1">
-              新人：{draft.client} • 綁定客戶：{linkedContactName}
+              客戶：{draft.client} • 綁定客戶：{linkedContactName}
             </p>
             {linkedContact?.tags && linkedContact.tags.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">
@@ -923,7 +923,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </>
           )}
           <Button onClick={onGoToAI} variant="outline" className="flex-1 lg:flex-none gap-2">
-            <PenTool className="w-4 h-4" /> 進入 AI 禮服試穿工坊
+            <PenTool className="w-4 h-4" /> 進入 線稿轉渲染工坊
           </Button>
           <Button onClick={onGoToQuotation} variant="outline" className="flex-1 lg:flex-none gap-2">
             報價單系統
@@ -953,11 +953,11 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="space-y-6 lg:col-span-2">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="font-bold text-gray-900 mb-4">婚禮專案基本資料</h3>
+            <h3 className="font-bold text-gray-900 mb-4">室內設計專案基本資料</h3>
             {loading && <p className="mb-3 text-xs text-gray-500">同步最新專案資料中...</p>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div>
-                <label className="mb-1 block text-xs text-gray-600">婚禮專案名稱</label>
+                <label className="mb-1 block text-xs text-gray-600">室內設計專案名稱</label>
                 <input
                   value={draft.name}
                   onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
@@ -965,7 +965,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-gray-600">新人姓名</label>
+                <label className="mb-1 block text-xs text-gray-600">客戶名稱</label>
                 <input
                   value={draft.client}
                   onChange={(event) => setDraft((prev) => ({ ...prev, client: event.target.value }))}
@@ -988,7 +988,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs text-gray-600">婚禮階段</label>
+                <label className="mb-1 block text-xs text-gray-600">設計階段</label>
                 <input
                   value={draft.phase}
                   onChange={(event) => setDraft((prev) => ({ ...prev, phase: event.target.value }))}
@@ -1178,9 +1178,9 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-gray-900">婚紗選擇紀錄</h3>
+                <h3 className="font-bold text-gray-900">空間渲染紀錄</h3>
                 <p className="text-xs text-gray-500 mt-1">
-                  建議每次 AI 試穿後記錄婚紗款式、來源、參考圖與備註，方便專案追蹤。
+                  建議每次 AI 渲染後記錄版本、來源、參考圖與備註，方便專案追蹤。
                 </p>
               </div>
               <Button size="sm" variant="outline" className="gap-1" onClick={addDressSelectionRecord}>
@@ -1190,7 +1190,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
             <div className="space-y-3">
               {(draft.dressSelectionRecords || []).length === 0 && (
-                <p className="text-sm text-gray-500">目前尚無婚紗紀錄，可由 AI Studio 產生後回填。</p>
+                <p className="text-sm text-gray-500">目前尚無渲染紀錄，可由 AI Studio 產生後回填。</p>
               )}
               {(draft.dressSelectionRecords || []).map((record) => (
                 <div key={record.id} className="rounded-lg border border-gray-200 p-3 space-y-2">
@@ -1201,7 +1201,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                         updateDressSelectionRecord(record.id, "dressName", event.target.value)
                       }
                       className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="婚紗名稱"
+                      placeholder="渲染主題"
                     />
                     <input
                       value={record.sourceLabel || ""}
@@ -1209,7 +1209,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                         updateDressSelectionRecord(record.id, "sourceLabel", event.target.value)
                       }
                       className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="來源（預設婚紗/自訂婚紗）"
+                      placeholder="來源（預設模板/自訂需求）"
                     />
                     <input
                       value={record.model || ""}
@@ -1238,7 +1238,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                       updateDressSelectionRecord(record.id, "dressSpec", event.target.value)
                     }
                     className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm h-16 resize-y"
-                    placeholder="婚紗規格（版型、布料、細節）"
+                    placeholder="渲染重點（材質、燈光、動線）"
                   />
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <input
@@ -1247,7 +1247,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                         updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
                       }
                       className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="參考婚紗圖片 URL"
+                      placeholder="參考圖片 URL"
                     />
                     <input
                       value={record.generatedImageUrl || ""}
@@ -1264,7 +1264,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                       updateDressSelectionRecord(record.id, "note", event.target.value)
                     }
                     className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm h-16 resize-y"
-                    placeholder="備註（新人偏好、修改方向、待確認重點）"
+                    placeholder="備註（客戶偏好、修改方向、待確認重點）"
                   />
                   <div className="flex justify-end">
                     <Button
@@ -1285,7 +1285,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <div className="mb-4 flex flex-col gap-2">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                <h3 className="font-bold text-gray-900">婚禮流程安排（清單 / 甘特圖 / 日曆）</h3>
+                <h3 className="font-bold text-gray-900">工程流程安排（清單 / 甘特圖 / 日曆）</h3>
                 <div className="flex flex-wrap gap-2">
                   <select
                     value={workflowTemplateId}
@@ -1503,7 +1503,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">AI 時辰安排</h3>
+              <h3 className="font-bold text-gray-900">AI 工期節點建議</h3>
               <Button size="sm" variant="outline" className="gap-1" onClick={generateAuspiciousPlan}>
                 <Wand2 className="w-4 h-4" />
                 AI 產生建議
@@ -1511,7 +1511,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
             <div className="space-y-3 text-sm">
               <div>
-                <label className="mb-1 block text-xs text-gray-600">婚禮日期</label>
+                <label className="mb-1 block text-xs text-gray-600">預計施工起日</label>
                 <input
                   type="date"
                   value={draft.auspiciousPlan?.ceremonyDate || ""}
@@ -1548,7 +1548,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                 </select>
               </div>
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs text-gray-500">建議主儀式開始時間</p>
+                <p className="text-xs text-gray-500">建議開工時間</p>
                 <p className="mt-1 text-base font-semibold text-gray-800">
                   {draft.auspiciousPlan?.recommendedStartTime || "--:--"}
                 </p>
@@ -1620,13 +1620,13 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
 
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-gray-500" /> 婚禮註記（可串接 CRM）
+              <MessageSquare className="w-4 h-4 text-gray-500" /> 專案註記（可串接 CRM）
             </h3>
             <textarea
               value={draft.note || ""}
               onChange={(event) => setDraft((prev) => ({ ...prev, note: event.target.value }))}
               className="w-full text-sm border-gray-200 rounded-lg bg-gray-50 p-3 h-36 focus:ring-brand-500 focus:border-brand-500 resize-none"
-              placeholder="輸入案件筆記，例如：希望晚宴版主紗更華麗、流程中加入 First Look 拍攝..."
+              placeholder="輸入案件筆記，例如：希望主臥收納加強、公共區改用耐磨材質、並安排 3D 渲染提案..."
             />
             <div className="mt-3 flex flex-col gap-2">
               <Button

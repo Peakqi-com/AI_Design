@@ -10,11 +10,11 @@ export const SubscriptionPage: React.FC = () => {
       type: 'credits',
       title: '靈活點數制',
       price: 'NT$ 2,990',
-      description: '適合婚禮接案波動較大的團隊。無過期限制，隨用隨扣。',
+      description: '適合接案波動較大的設計團隊。無過期限制，隨用隨扣。',
       features: [
         '500 點 AI 算力點數',
-        '單張 AI 試穿圖約消耗 2-5 點',
-        '基礎婚禮專案管理',
+        '單張 AI 空間渲染圖約消耗 2-5 點',
+        '基礎室內專案管理',
         '無月費負擔',
         '優先客服支援'
       ],
@@ -26,11 +26,11 @@ export const SubscriptionPage: React.FC = () => {
       title: '專業月訂閱',
       price: 'NT$ 1,490',
       period: '/ 月',
-      description: '適合穩定接案的婚禮工作室。無限使用基礎功能。',
+      description: '適合穩定接案的室內設計工作室。無限使用基礎功能。',
       features: [
         '每月贈送 1000 點',
-        'AI 禮服試穿圖無限預覽',
-        '全功能 AI 婚禮報價系統',
+        '線稿轉渲染圖無限預覽',
+        '全功能 AI 裝修報價系統',
         '社群自動化發文 (IG/FB)',
         '社群短影音腳本生成'
       ],
@@ -40,14 +40,14 @@ export const SubscriptionPage: React.FC = () => {
     {
       id: 'course',
       type: 'course',
-      title: 'AI 婚慶實戰課程包',
+      title: 'AI 室內設計實戰課程包',
       price: 'NT$ 18,800',
       description: '買課程送一年訂閱！最划算的長期投資選擇。',
       features: [
         '包含「一年份」專業版訂閱 (價值 $17,880)',
-        '10 堂 AI 婚禮營運實戰線上課',
-        '婚禮品牌風格模型訓練教學',
-        '婚禮產業專屬社群入場券',
+        '10 堂 AI 室內設計營運實戰線上課',
+        '設計品牌風格模型訓練教學',
+        '室內設計產業專屬社群入場券',
         '結業證書'
       ],
       buttonText: '購買課程 + 一年免費',
@@ -58,7 +58,7 @@ export const SubscriptionPage: React.FC = () => {
     <div className="max-w-6xl mx-auto">
       <div className="text-center mb-12">
         <h2 className="text-3xl font-bold text-gray-900">選擇最適合您的成長方案</h2>
-        <p className="mt-4 text-gray-500">無論是新創婚禮團隊或成熟婚慶品牌，都能用 AI 提升產能與轉換率。</p>
+        <p className="mt-4 text-gray-500">無論是新創設計團隊或成熟室內品牌，都能用 AI 提升產能與轉換率。</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">

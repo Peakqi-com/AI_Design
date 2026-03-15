@@ -19,7 +19,7 @@ const DEFAULT_TEMPLATES: ProjectNotificationTemplate[] = [
     id: "default_preparation",
     name: "行前準備提醒",
     content:
-      "您好，{projectName} 即將進行「{taskTitle}」（{taskDateTime}）。請提前確認服裝、場地與聯絡窗口，謝謝！",
+      "您好，{projectName} 即將進行「{taskTitle}」（{taskDateTime}）。請提前確認圖面、材質樣板與聯絡窗口，謝謝！",
   },
   {
     id: "default_followup",

@@ -57,7 +57,7 @@ const REDIS_COOLDOWN_MS = Number(process.env.CONTENT_VAULT_REDIS_COOLDOWN_MS || 
 const redis = REDIS_URL && REDIS_TOKEN ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN }) : null;
 const DATA_DIR =
   process.env.CONTENT_VAULT_DATA_DIR ||
-  (process.env.VERCEL ? "/tmp/aiwedding-content-vault" : path.join(process.cwd(), ".data"));
+  (process.env.VERCEL ? "/tmp/aiinterior-content-vault" : path.join(process.cwd(), ".data"));
 const STORE_FILE = path.join(DATA_DIR, "content-vault-store.json");
 
 let memoryStore: ContentVaultStore | null = null;

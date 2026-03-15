@@ -99,7 +99,7 @@ const REDIS_COOLDOWN_MS = Number(process.env.SOCIAL_ASSET_REDIS_COOLDOWN_MS || 3
 const redis = REDIS_URL && REDIS_TOKEN ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN }) : null;
 const DATA_DIR =
   process.env.SOCIAL_ASSET_DATA_DIR ||
-  (process.env.VERCEL ? "/tmp/aiwedding-social-assets" : path.join(process.cwd(), ".data"));
+  (process.env.VERCEL ? "/tmp/aiinterior-social-assets" : path.join(process.cwd(), ".data"));
 const ASSET_DIR = path.join(DATA_DIR, "social-assets");
 const STORE_FILE = path.join(DATA_DIR, "social-asset-store.json");
 

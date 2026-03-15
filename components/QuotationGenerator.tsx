@@ -102,16 +102,16 @@ const roundToThousand = (value: number): number => Math.max(0, Math.round(value 
 
 const buildQuoteItemsFromProject = (project: ProjectDetailItem): QuoteItem[] => {
   const budgetBase = parseBudgetValue(project.budget) || 360000;
-  const dressCount = Math.max(1, project.dressSelectionRecords?.length || 0);
+  const renderCount = Math.max(1, project.dressSelectionRecords?.length || 0);
   const workflowCount = Math.max(1, project.workflowTasks?.length || 0);
   const workflowDone = (project.workflowTasks || []).filter((task) => task.done).length;
   const completionRate = workflowCount > 0 ? workflowDone / workflowCount : 0;
-  const phaseLabel = project.phase?.trim() || "婚禮統籌";
+  const phaseLabel = project.phase?.trim() || "室內設計規劃";
 
   return [
     {
       id: 1,
-      category: "婚禮企劃",
+      category: "設計師",
       name: `${phaseLabel}服務費`,
       unit: "式",
       quantity: 1,
@@ -121,18 +121,18 @@ const buildQuoteItemsFromProject = (project: ProjectDetailItem): QuoteItem[] => 
     },
     {
       id: 2,
-      category: "禮服服務",
-      name: `婚紗與禮服規劃（${dressCount} 套）`,
+      category: "渲染與提案",
+      name: `空間渲染與風格提案（${renderCount} 版）`,
       unit: "式",
       quantity: 1,
-      price: roundToThousand(dressCount * 18000),
+      price: roundToThousand(renderCount * 18000),
       source: "file",
       confidence: 90,
     },
     {
       id: 3,
       category: "流程執行",
-      name: `婚禮流程執行與場控（${workflowCount} 項流程）`,
+      name: `工程流程管理與現場協調（${workflowCount} 項）`,
       unit: "式",
       quantity: 1,
       price: roundToThousand(12000 + workflowCount * 3200),
@@ -141,8 +141,8 @@ const buildQuoteItemsFromProject = (project: ProjectDetailItem): QuoteItem[] => 
     },
     {
       id: 4,
-      category: "場地佈置",
-      name: "主舞台與迎賓佈置",
+      category: "軟裝配置",
+      name: "家具與軟裝配置提案",
       unit: "式",
       quantity: 1,
       price: roundToThousand(budgetBase * 0.12),
@@ -151,8 +151,8 @@ const buildQuoteItemsFromProject = (project: ProjectDetailItem): QuoteItem[] => 
     },
     {
       id: 5,
-      category: "影音紀錄",
-      name: completionRate >= 0.5 ? "平面攝影 + 精華短影音剪輯" : "平面攝影 + 動態錄影",
+      category: "視覺內容",
+      name: completionRate >= 0.5 ? "空間動態影片分鏡提案" : "空間導覽短影音製作",
       unit: "式",
       quantity: 1,
       price: roundToThousand(budgetBase * 0.1),
@@ -194,7 +194,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
     const dressCount = selectedProject.dressSelectionRecords?.length || 0;
     const summaryLines = [
       `1. 專案名稱：${selectedProject.name}`,
-      `2. 新人名稱：${selectedProject.clientName}`,
+      `2. 客戶名稱：${selectedProject.clientName}`,
       `3. CRM 客戶：${linkedContact?.displayName || "未綁定"}${linkedContact?.source === "line" ? "（LINE）" : ""}`,
       `4. 對應 LINE OA：${
         lineOaSettings?.connected && lineOaSettings.channelId
@@ -204,7 +204,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
       `5. 階段 / 狀態：${selectedProject.phase || "未填寫"} / ${selectedProject.status || "draft"}`,
       `6. 預算：${selectedProject.budget || "待定"}`,
       `7. 流程進度：${workflowDone}/${workflowCount || 0} 已完成`,
-      `8. 婚紗紀錄：${dressCount} 筆`,
+      `8. 渲染紀錄：${dressCount} 筆`,
       `9. 專案備註：${selectedProject.note?.trim() || "未填寫"}`,
     ].join("\n");
 
@@ -214,14 +214,14 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
     }
     if (dressCount > 0) {
       attachments.push({
-        name: `婚紗選擇紀錄 x${dressCount}`,
+        name: `空間渲染紀錄 x${dressCount}`,
         type: "data",
         sizeLabel: "專案資料",
       });
     }
     if (workflowCount > 0) {
       attachments.push({
-        name: `婚禮流程清單 x${workflowCount}`,
+        name: `工程流程清單 x${workflowCount}`,
         type: "text",
         sizeLabel: "專案資料",
       });
@@ -334,7 +334,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
         setSelectedProject(data.project);
         const incomingItems = (data.project.quotationItems || []).map((item, idx) => ({
           id: Number(item.id.replace(/\D+/g, "")) || idx + 1,
-          category: "婚禮服務",
+          category: "室內設計服務",
           name: item.name,
           unit: "式",
           quantity: item.quantity,
@@ -672,7 +672,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                     </div>
                     <div className="text-center">
                         <p className="font-bold text-gray-900">AI 正在計算服務項目...</p>
-                        <p className="text-sm text-gray-500 mt-2">正在比對婚慶歷史報價資料庫 (1/3)</p>
+                        <p className="text-sm text-gray-500 mt-2">正在比對歷史裝修報價資料庫 (1/3)</p>
                     </div>
                 </div>
             ) : (

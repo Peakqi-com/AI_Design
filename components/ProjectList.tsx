@@ -136,7 +136,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     name: "",
     clientName: "",
     status: "draft" as ProjectStatus,
-    phase: "婚禮諮詢",
+    phase: "需求訪談",
     budget: "待定",
     coverImageUrl: "",
     linkedContactId: "",
@@ -250,7 +250,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     const name = form.name.trim();
     const clientName = form.clientName.trim();
     if (!name || !clientName) {
-      setError("請填寫專案名稱與新人姓名");
+      setError("請填寫專案名稱與客戶名稱");
       return;
     }
     setCreating(true);
@@ -277,7 +277,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         name: "",
         clientName: "",
         status: "draft",
-        phase: "婚禮諮詢",
+        phase: "需求訪談",
         budget: "待定",
         coverImageUrl: "",
         linkedContactId: "",
@@ -286,7 +286,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
       setSearch("");
       void loadProjects("", includeArchived, includeFiled, includeDeleted);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "新增婚禮專案失敗");
+      setError(err instanceof Error ? err.message : "新增室內設計專案失敗");
     } finally {
       setCreating(false);
     }
@@ -295,7 +295,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">婚禮專案管理</h2>
+        <h2 className="text-2xl font-bold text-gray-900">室內設計專案管理</h2>
         <div className="flex gap-2 w-full sm:w-auto">
           <div className="relative flex-1 sm:flex-none">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
@@ -303,7 +303,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
               type="text"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜尋婚禮專案..."
+              placeholder="搜尋室內設計專案..."
               className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-brand-500 focus:border-brand-500 w-full sm:w-64"
             />
           </div>
@@ -320,7 +320,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
             {includeDeleted ? "隱藏刪除區" : "顯示刪除區"}
           </Button>
           <Button className="gap-1" onClick={() => setShowCreate(true)}>
-            <Plus className="w-4 h-4" /> 新增婚禮專案
+            <Plus className="w-4 h-4" /> 新增室內設計專案
           </Button>
         </div>
       </div>
@@ -438,7 +438,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
           />
           <div className="w-full max-w-xl rounded-xl border border-gray-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h3 className="text-lg font-bold text-gray-900">新增婚禮專案</h3>
+              <h3 className="text-lg font-bold text-gray-900">新增室內設計專案</h3>
               <button onClick={() => setShowCreate(false)} className="text-gray-500 hover:text-gray-900">
                 <X className="w-5 h-5" />
               </button>
@@ -446,16 +446,16 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
             <div className="space-y-4 p-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-600">婚禮專案名稱</label>
+                  <label className="mb-1 block text-xs text-gray-600">室內設計專案名稱</label>
                   <input
                     value={form.name}
                     onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                    placeholder="例如：林家戶外婚禮統籌案"
+                    placeholder="例如：林宅老屋翻新整合案"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-600">新人姓名</label>
+                  <label className="mb-1 block text-xs text-gray-600">客戶名稱</label>
                   <input
                     value={form.clientName}
                     onChange={(event) =>
@@ -484,7 +484,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-600">婚禮階段</label>
+                  <label className="mb-1 block text-xs text-gray-600">設計階段</label>
                   <input
                     value={form.phase}
                     onChange={(event) => setForm((prev) => ({ ...prev, phase: event.target.value }))}
@@ -556,12 +556,12 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-gray-600">婚禮註記（可同步 CRM）</label>
+                <label className="mb-1 block text-xs text-gray-600">專案註記（可同步 CRM）</label>
                 <textarea
                   value={form.note}
                   onChange={(event) => setForm((prev) => ({ ...prev, note: event.target.value }))}
                   className="w-full h-24 rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none"
-                  placeholder="例如：偏好韓系輕婚紗、宴客主色奶茶金、希望增加戶外證婚橋段..."
+                  placeholder="例如：偏好奶油白木質調、收納要足夠、客廳需投影牆..."
                 />
               </div>
             </div>
@@ -570,7 +570,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
                 取消
               </Button>
               <Button onClick={() => void handleCreate()} disabled={creating || uploadingCover}>
-                {creating ? "建立中..." : "建立婚禮專案"}
+                {creating ? "建立中..." : "建立室內設計專案"}
               </Button>
             </div>
           </div>

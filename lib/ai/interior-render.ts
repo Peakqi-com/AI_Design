@@ -129,6 +129,11 @@ interface GeminiListModelsResponse {
 }
 
 interface IdentityCheckJson {
+  sameLayout?: boolean;
+  hasUnexpectedObject?: boolean;
+  originalAnchorCount?: number;
+  generatedAnchorCount?: number;
+  structureScore?: number;
   samePerson?: boolean;
   hasExtraPerson?: boolean;
   originalFaceCount?: number;
@@ -460,7 +465,7 @@ const callGeminiModel = async (
           role: "user",
           parts: [
             { text: prompt },
-            { text: "[輸入圖1] 原始人物照（身份鎖定）" },
+            { text: "[輸入圖1] 原始空間圖（結構鎖定）" },
             {
               inlineData: {
                 mimeType: subjectImage.mimeType,
@@ -468,7 +473,7 @@ const callGeminiModel = async (
               },
             },
             ...referenceImages.flatMap((image, index) => [
-              { text: `[輸入圖${index + 2}] 婚紗參考圖` },
+              { text: `[輸入圖${index + 2}] 風格參考圖` },
               {
                 inlineData: {
                   mimeType: image.mimeType,
@@ -522,15 +527,15 @@ interface IdentityCheckResult {
 
 const buildIdentityCheckPrompt = (): string =>
   [
-    "你是嚴格的人臉一致性檢查器，請比對兩張圖是否為同一人。",
-    "輸入圖1：原始人物照。輸入圖2：AI 生成結果。",
+    "你是嚴格的室內空間結構一致性檢查器，請比對兩張圖是否為同一空間骨架。",
+    "輸入圖1：原始空間圖。輸入圖2：AI 生成結果。",
     "請檢查：",
-    "1) 是否同一個人（臉部五官、臉型、年齡感）",
-    "2) 生成圖是否新增其他人物或其他臉",
-    "3) 生成圖人臉數量是否和原圖一致",
-    "4) 是否有拼貼、額外照片、分鏡、雙畫面",
+    "1) 是否保留相同空間布局（牆面、門窗、主要家具位置）",
+    "2) 是否出現不合理的新增主體（大面積錯置物件、錯誤結構）",
+    "3) 關鍵錨點數量（門窗/樑柱/固定櫃）是否大致一致",
+    "4) 是否有拼貼、雙畫面、明顯視角錯亂",
     "只回傳 JSON：",
-    '{"samePerson":true,"hasExtraPerson":false,"originalFaceCount":1,"generatedFaceCount":1,"identityScore":95,"issues":[""],"verdict":"pass"}',
+    '{"sameLayout":true,"hasUnexpectedObject":false,"originalAnchorCount":6,"generatedAnchorCount":6,"structureScore":95,"issues":[""],"verdict":"pass"}',
   ].join("\n");
 
 const validateIdentityLock = async (
@@ -551,7 +556,7 @@ const validateIdentityLock = async (
           role: "user",
           parts: [
             { text: buildIdentityCheckPrompt() },
-            { text: "[輸入圖1] 原始人物照" },
+            { text: "[輸入圖1] 原始空間圖" },
             {
               inlineData: {
                 mimeType: originalImage.mimeType,
@@ -587,7 +592,7 @@ const validateIdentityLock = async (
     return {
       pass: false,
       score: 0,
-      reason: (body as GeminiErrorResponse).error?.message || "人臉一致性檢查失敗",
+      reason: (body as GeminiErrorResponse).error?.message || "結構一致性檢查失敗",
     };
   }
 
@@ -597,38 +602,44 @@ const validateIdentityLock = async (
     return {
       pass: false,
       score: 0,
-      reason: "無法解析人臉一致性檢查結果",
+      reason: "無法解析結構一致性檢查結果",
     };
   }
 
-  const samePerson = parsed.samePerson === true;
-  const hasExtraPerson = parsed.hasExtraPerson === true;
-  const originalFaceCount =
-    typeof parsed.originalFaceCount === "number" && Number.isFinite(parsed.originalFaceCount)
-      ? Math.max(0, Math.floor(parsed.originalFaceCount))
+  const sameLayout = parsed.sameLayout === true || parsed.samePerson === true;
+  const hasUnexpectedObject = parsed.hasUnexpectedObject === true || parsed.hasExtraPerson === true;
+  const originalAnchorCount =
+    typeof parsed.originalAnchorCount === "number" && Number.isFinite(parsed.originalAnchorCount)
+      ? Math.max(0, Math.floor(parsed.originalAnchorCount))
+      : typeof parsed.originalFaceCount === "number" && Number.isFinite(parsed.originalFaceCount)
+        ? Math.max(0, Math.floor(parsed.originalFaceCount))
       : 1;
-  const generatedFaceCount =
-    typeof parsed.generatedFaceCount === "number" && Number.isFinite(parsed.generatedFaceCount)
-      ? Math.max(0, Math.floor(parsed.generatedFaceCount))
+  const generatedAnchorCount =
+    typeof parsed.generatedAnchorCount === "number" && Number.isFinite(parsed.generatedAnchorCount)
+      ? Math.max(0, Math.floor(parsed.generatedAnchorCount))
+      : typeof parsed.generatedFaceCount === "number" && Number.isFinite(parsed.generatedFaceCount)
+        ? Math.max(0, Math.floor(parsed.generatedFaceCount))
       : 0;
-  const identityScore =
-    typeof parsed.identityScore === "number" && Number.isFinite(parsed.identityScore)
-      ? Math.max(0, Math.min(100, Math.round(parsed.identityScore)))
+  const structureScore =
+    typeof parsed.structureScore === "number" && Number.isFinite(parsed.structureScore)
+      ? Math.max(0, Math.min(100, Math.round(parsed.structureScore)))
+      : typeof parsed.identityScore === "number" && Number.isFinite(parsed.identityScore)
+        ? Math.max(0, Math.min(100, Math.round(parsed.identityScore)))
       : 0;
 
-  const faceCountMatch = generatedFaceCount === originalFaceCount && generatedFaceCount > 0;
-  const pass = samePerson && !hasExtraPerson && faceCountMatch && identityScore >= 93;
+  const anchorCountMatch = generatedAnchorCount === originalAnchorCount && generatedAnchorCount > 0;
+  const pass = sameLayout && !hasUnexpectedObject && anchorCountMatch && structureScore >= 90;
   if (pass) {
-    return { pass: true, score: identityScore, reason: "ok" };
+    return { pass: true, score: structureScore, reason: "ok" };
   }
 
   const issues = Array.isArray(parsed.issues) ? parsed.issues.filter(Boolean).join("；") : "";
   return {
     pass: false,
-    score: identityScore,
+    score: structureScore,
     reason:
       issues ||
-      `samePerson=${String(samePerson)}, extraPerson=${String(hasExtraPerson)}, faceCount=${generatedFaceCount}/${originalFaceCount}, score=${identityScore}`,
+      `sameLayout=${String(sameLayout)}, unexpectedObject=${String(hasUnexpectedObject)}, anchorCount=${generatedAnchorCount}/${originalAnchorCount}, score=${structureScore}`,
   };
 };
 
@@ -664,9 +675,9 @@ export async function generateInteriorRender(
         ? prompt
         : [
             prompt,
-            `- 【重試第 ${attempt} 次】上次結果未通過同人臉檢查：${lastReason || "身份不一致"}`,
-            "- 這次必須嚴格保留同一張臉，維持單一人物，不可新增任何其他人臉。",
-            "- 若無法滿足條件，寧可保持原圖構圖只改衣著，不要變更人物。",
+            `- 【重試第 ${attempt} 次】上次結果未通過結構一致性檢查：${lastReason || "結構不一致"}`,
+            "- 這次必須嚴格保留同一空間骨架，不可改變主要牆面、門窗與固定櫃位置。",
+            "- 若無法滿足條件，請優先保留原圖構圖，只做材質、光線與陳設優化。",
           ].join("\n");
 
     const result = await generateImageByPrompt({
@@ -746,8 +757,8 @@ export async function refineInteriorRender(
         ? prompt
         : [
             prompt,
-            `- 【重試第 ${attempt} 次】上次細節修復未通過同人臉檢查：${lastReason || "身份不一致"}`,
-            "- 本次修復只能做銳化與細節修補，臉部不可重繪。",
+            `- 【重試第 ${attempt} 次】上次細節修復未通過結構一致性檢查：${lastReason || "結構不一致"}`,
+            "- 本次修復只能做銳化與細節修補，不可重繪主要空間結構。",
           ].join("\n");
     const result = await generateImageByPrompt({
       imageDataUrl: input.imageDataUrl,

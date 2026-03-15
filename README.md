@@ -1,8 +1,8 @@
-# AI Wedding Pro (Next.js)
+# AI Interior Pro (Next.js)
 
-AI Wedding Pro 是面向婚慶產業（甜蜜經濟）的 AI 營運平台，主打：
+AI Interior Pro 是面向室內設計產業的 AI 營運平台，主打：
 
-- AI 禮服試穿與婚禮視覺生成
+- AI 空間渲染與視覺提案生成
 - 社群發文與社群短影音生成
 - CRM + 專案管理 + 報價流程（管理為輔）
 
@@ -66,16 +66,16 @@ AUTH_APPLE_SECRET=your_apple_client_secret
 
 ---
 
-## AI 禮服試穿（Google AI Studio / Vertex AI）
+## AI 空間渲染（Google AI Studio / Vertex AI）
 
 已完成真實 API 串接，流程為：
 
-1. 前端上傳新人照片 / 禮服參考圖與參數
+1. 前端上傳空間原圖（或線稿）/ 參考風格圖與參數
 2. 呼叫 `POST /api/ai/render`
-3. 由後端呼叫 Gemini 影像模型生成試穿圖
+3. 由後端呼叫 Gemini 影像模型生成渲染圖
 4. 可選擇呼叫 `POST /api/ai/refine` 做 AI 細節修復
 5. 可選擇呼叫 `POST /api/ai/upscale` 做 2x 高清增強
-6. 回傳試穿結果與建議說明到介面
+6. 回傳渲染結果與建議說明到介面
 
 ### AI Provider 環境變數
 
@@ -112,11 +112,11 @@ GEMINI_IMAGE_MODEL=gemini-3.1-flash-image-preview
 - 圖轉影（Image to Video）  
   - 預設使用 **Veo 影片模型**（真實 image-to-video）
   - API 流程：`/api/ai/video/generate` → `/api/ai/video/status` → `/api/ai/video/download`
-  - 可選運鏡與婚禮風格模板
+  - 可選運鏡與空間風格模板
   - 可選 AI 關鍵幀增強、AI 畫面延展
   - 可切換模型與輸出解析度（720p / 1080p）
 - 影轉影（Video to Video）  
-  - 對既有婚禮素材做風格化輸出
+  - 對既有空間素材做風格化輸出
 - 支援下載生成影片（Veo 路徑為 MP4）
 
 必要環境變數（與上方 AI Provider 共用）：
@@ -151,11 +151,11 @@ VEO_VIDEO_MODEL=veo-3.1-generate-preview
 
 ---
 
-## CRM + 婚禮專案管理 + 報價
+## CRM + 室內設計專案管理 + 報價
 
 已改為後端持久化，不再使用固定假資料：
 
-- 可在「新增專案」建立婚禮案件（可綁定 CRM 客戶）
+- 可在「新增專案」建立室內設計案件（可綁定 CRM 客戶）
 - 專案詳情可編輯狀態/階段/預算/註記，可封存/取消封存、永久刪除
 - 封面圖可直接上傳（沿用 `POST /api/crm/upload`）
 - 支援「同步註記到 LINE CRM」
@@ -206,8 +206,8 @@ npm run start
 ### 3) Docker
 
 ```bash
-docker build -t ai-wedding-pro .
-docker run -p 3000:3000 ai-wedding-pro
+docker build -t ai-interior-pro .
+docker run -p 3000:3000 ai-interior-pro
 ```
 
 ---

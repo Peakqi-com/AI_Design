@@ -58,7 +58,7 @@ export async function POST(request: Request) {
 
   const name = body.name?.trim() || "";
   const clientName = body.clientName?.trim() || "";
-  const phase = body.phase?.trim() || "婚禮諮詢";
+  const phase = body.phase?.trim() || "需求訪談";
   const budget = body.budget?.trim() || "待定";
   const status = body.status || "draft";
 

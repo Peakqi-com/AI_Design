@@ -1,4 +1,4 @@
-const STORAGE_KEY = "aiwedding:user-scope-id";
+const STORAGE_KEY = "aiinterior:user-scope-id";
 
 const sanitizeUserScope = (value: string): string =>
   value
