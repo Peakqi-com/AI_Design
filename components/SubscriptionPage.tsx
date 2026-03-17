@@ -1,56 +1,54 @@
 import React from 'react';
 import { Button } from './Button';
-import { Check, Star, Zap, GraduationCap, Crown } from 'lucide-react';
+import { Check, Star, Zap, Crown } from 'lucide-react';
 import { PricingPlan } from '../types';
 
 export const SubscriptionPage: React.FC = () => {
   const plans: PricingPlan[] = [
     {
-      id: 'points',
+      id: 'starter-credits',
       type: 'credits',
-      title: '靈活點數制',
-      price: 'NT$ 2,990',
-      description: '適合接案波動較大的設計團隊。無過期限制，隨用隨扣。',
+      title: '標準點數包',
+      price: 'NT$ 2,500',
+      description: '適合小型團隊與短週期專案，按需啟用 AI 產能。',
       features: [
-        '500 點 AI 算力點數',
+        '800 點 AI 算力點數',
         '單張 AI 空間渲染圖約消耗 2-5 點',
+        '可用於渲染、細節修復與影音生成',
         '基礎室內專案管理',
-        '無月費負擔',
-        '優先客服支援'
+        '無月費負擔'
       ],
       buttonText: '購買點數'
     },
     {
-      id: 'monthly',
-      type: 'subscription',
-      title: '專業月訂閱',
-      price: 'NT$ 1,490',
-      period: '/ 月',
-      description: '適合穩定接案的室內設計工作室。無限使用基礎功能。',
+      id: 'pro-credits',
+      type: 'credits',
+      title: '進階點數包',
+      price: 'NT$ 6,600',
+      description: '適合高頻提案與多人協作，單點成本更低。',
       features: [
-        '每月贈送 1000 點',
-        '線稿轉渲染圖無限預覽',
+        '2400 點 AI 算力點數',
+        '可用於渲染、細節修復與影音生成',
         '全功能 AI 裝修報價系統',
         '社群自動化發文 (IG/FB)',
-        '社群短影音腳本生成'
+        '優先客服支援'
       ],
       recommended: true,
-      buttonText: '立即訂閱'
+      buttonText: '選擇進階方案'
     },
     {
-      id: 'course',
-      type: 'course',
-      title: 'AI 室內設計實戰課程包',
-      price: 'NT$ 18,800',
-      description: '買課程送一年訂閱！最划算的長期投資選擇。',
+      id: 'custom',
+      type: 'subscription',
+      title: '客製化方案',
+      price: '客製報價',
+      description: '適合連鎖品牌、大型團隊與跨部門導入。',
       features: [
-        '包含「一年份」專業版訂閱 (價值 $17,880)',
-        '10 堂 AI 室內設計營運實戰線上課',
-        '設計品牌風格模型訓練教學',
-        '室內設計產業專屬社群入場券',
-        '結業證書'
+        '依團隊規模與流程客製點數與權限',
+        '專屬導入顧問與教育訓練',
+        '進階 API / 流程整合支援',
+        '專屬 SLA 與長期合作方案'
       ],
-      buttonText: '購買課程 + 一年免費',
+      buttonText: '聯繫銷售團隊',
     }
   ];
 
@@ -69,7 +67,7 @@ export const SubscriptionPage: React.FC = () => {
               plan.recommended 
                 ? 'border-brand-500 ring-2 ring-brand-500 ring-opacity-50 shadow-lg' 
                 : 'border-gray-200 hover:border-brand-200'
-            } ${plan.type === 'course' ? 'bg-gradient-to-b from-purple-50 to-white border-purple-200' : ''}`}
+            }`}
           >
             {plan.recommended && (
               <div className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/4">
@@ -79,19 +77,10 @@ export const SubscriptionPage: React.FC = () => {
               </div>
             )}
             
-            {plan.type === 'course' && (
-              <div className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/4">
-                <span className="inline-flex items-center gap-1 bg-purple-600 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">
-                  <GraduationCap className="w-3 h-3" /> 超值優惠
-                </span>
-              </div>
-            )}
-
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-2">
                 {plan.type === 'credits' && <Zap className="w-6 h-6 text-yellow-500" />}
                 {plan.type === 'subscription' && <Crown className="w-6 h-6 text-brand-500" />}
-                {plan.type === 'course' && <GraduationCap className="w-6 h-6 text-purple-600" />}
                 <h3 className="text-xl font-bold text-gray-900">{plan.title}</h3>
               </div>
               <div className="flex items-baseline gap-1">
@@ -113,9 +102,8 @@ export const SubscriptionPage: React.FC = () => {
             </div>
 
             <Button 
-              variant={plan.recommended || plan.type === 'course' ? 'primary' : 'outline'}
+              variant={plan.recommended ? 'primary' : 'outline'}
               fullWidth
-              className={plan.type === 'course' ? 'bg-purple-600 hover:bg-purple-700 border-transparent text-white' : ''}
             >
               {plan.buttonText}
             </Button>
@@ -124,7 +112,7 @@ export const SubscriptionPage: React.FC = () => {
       </div>
 
       <div className="mt-12 bg-gray-50 rounded-xl p-6 text-center text-sm text-gray-500">
-        <p>企業/大型團隊需要客製化方案？<a href="#" className="text-brand-600 font-medium hover:underline">聯繫我們的銷售團隊</a> 了解「免前金分潤授權」模式。</p>
+        <p>需要跨品牌、跨據點或 API 串接？<a href="#" className="text-brand-600 font-medium hover:underline">聯繫我們的銷售團隊</a> 取得客製化導入建議與正式報價。</p>
       </div>
     </div>
   );

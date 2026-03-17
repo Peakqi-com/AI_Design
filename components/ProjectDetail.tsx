@@ -150,7 +150,7 @@ const createDressSelectionRecord = (
 ): ProjectDressSelectionRecord => {
   const now = new Date().toISOString();
   return {
-    id: partial?.id || `dress_${crypto.randomUUID()}`,
+    id: partial?.id || `render_${crypto.randomUUID()}`,
     dressName: partial?.dressName || "新渲染紀錄",
     dressSpec: partial?.dressSpec || "",
     sourceLabel: partial?.sourceLabel || "自訂",
@@ -204,9 +204,9 @@ const buildAuspiciousPlan = (
   preferredWindow: ProjectAuspiciousPlan["preferredWindow"],
 ): ProjectAuspiciousPlan => {
   const startTimeMap: Record<NonNullable<ProjectAuspiciousPlan["preferredWindow"]>, string> = {
-    morning: "09:18",
-    afternoon: "13:18",
-    evening: "18:18",
+    morning: "09:30",
+    afternoon: "13:30",
+    evening: "18:30",
   };
   const startTime = startTimeMap[preferredWindow || "afternoon"];
   return {
@@ -214,9 +214,9 @@ const buildAuspiciousPlan = (
     preferredWindow: preferredWindow || "afternoon",
     recommendedStartTime: startTime,
     recommendations: [
-      `建議關鍵施工節點安排在 ${startTime} 左右啟動，預留 20 分鐘彈性緩衝。`,
-      "施工前一天完成材料、設備與保護工程確認，避免臨時延誤。",
-      "若涉及社區施工申請或大樓搬運時段，請提前完成管理規約與動線申請。",
+      `建議將首個施工節點安排在 ${startTime} 左右啟動，預留 20 分鐘彈性緩衝。`,
+      "施工前一天完成材料、設備與保護工程檢查，降低現場等待與返工風險。",
+      "若涉及社區施工申請或大樓搬運時段，請先完成管理規約與動線確認。",
     ],
     generatedAt: new Date().toISOString(),
   };
@@ -1503,10 +1503,10 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">AI 工期節點建議</h3>
+              <h3 className="font-bold text-gray-900">AI 施工排程建議</h3>
               <Button size="sm" variant="outline" className="gap-1" onClick={generateAuspiciousPlan}>
                 <Wand2 className="w-4 h-4" />
-                AI 產生建議
+                AI 產生排程建議
               </Button>
             </div>
             <div className="space-y-3 text-sm">
