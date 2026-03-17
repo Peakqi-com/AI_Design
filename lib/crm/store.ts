@@ -87,6 +87,25 @@ const normalizeLineSettingsRecord = (
   return Object.fromEntries(mapped);
 };
 
+const LEGACY_WEDDING_TEXT_REPLACERS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /婚禮|婚宴|喜宴|證婚|婚紗|婚攝|婚顧|婚佈|迎娶/gi, replacement: "室內專案" },
+  { pattern: /新娘|新郎/gi, replacement: "客戶" },
+  { pattern: /禮服/gi, replacement: "設計方案" },
+  { pattern: /wedding/gi, replacement: "interior" },
+  { pattern: /bride|groom/gi, replacement: "client" },
+];
+
+const sanitizeLegacyShadowText = (value?: string): string => {
+  const source = String(value || "");
+  if (!source.trim()) {
+    return "";
+  }
+  return LEGACY_WEDDING_TEXT_REPLACERS.reduce(
+    (acc, replacer) => acc.replace(replacer.pattern, replacer.replacement),
+    source,
+  ).trim();
+};
+
 const computeProjectDeletePurgeAt = (baseDate: Date): string => {
   const next = new Date(baseDate.getTime());
   next.setDate(next.getDate() + PROJECT_DELETE_RETENTION_DAYS);
@@ -206,7 +225,12 @@ const normalizeStore = (raw: unknown): CrmStore => {
         const deletedAt = item.deletedAt?.trim() || undefined;
         return {
           ...item,
-        dressSelectionRecords: normalizeDressSelectionRecords(item.dressSelectionRecords),
+          name: sanitizeLegacyShadowText(item.name) || "未命名專案",
+          clientName: sanitizeLegacyShadowText(item.clientName) || "未命名客戶",
+          phase: sanitizeLegacyShadowText(item.phase),
+          budget: sanitizeLegacyShadowText(item.budget),
+          note: sanitizeLegacyShadowText(item.note),
+          dressSelectionRecords: normalizeDressSelectionRecords(item.dressSelectionRecords),
           filedAt,
           deletedAt,
           deletePurgeAt: item.deletePurgeAt?.trim() || (deletedAt ? computeProjectDeletePurgeAt(new Date(deletedAt)) : undefined),
@@ -307,7 +331,7 @@ const createSampleProject = (): CrmProject => {
     notificationEmail: "",
     dressSelectionRecords: [
       {
-        id: createId("dress"),
+        id: createId("render"),
         dressName: "北歐木質客廳渲染",
         dressSpec: "暖木地坪、淺灰牆面、間接照明與電視牆收納",
         sourceLabel: "預設渲染模板",
@@ -340,8 +364,8 @@ const normalizeQuotationItems = (items?: ProjectQuotationItem[]): ProjectQuotati
   return items
     .map((item) => ({
       id: item.id?.trim() || createId("quote"),
-      name: item.name?.trim() || "未命名項目",
-      description: item.description?.trim() || "",
+      name: sanitizeLegacyShadowText(item.name) || "未命名項目",
+      description: sanitizeLegacyShadowText(item.description),
       quantity: Number.isFinite(item.quantity) ? Math.max(0, Number(item.quantity)) : 0,
       unitPrice: Number.isFinite(item.unitPrice) ? Math.max(0, Number(item.unitPrice)) : 0,
     }))
@@ -360,7 +384,7 @@ const normalizeQuotationMeta = (meta?: ProjectQuotationMeta): ProjectQuotationMe
     quoteNo: meta.quoteNo?.trim() || "",
     validUntil: meta.validUntil?.trim() || "",
     status,
-    note: meta.note?.trim() || "",
+    note: sanitizeLegacyShadowText(meta.note),
     updatedAt: meta.updatedAt?.trim() || nowIso(),
   };
 };
@@ -374,8 +398,8 @@ const normalizeNotificationTemplates = (
   const normalized = templates
     .map((item, index) => ({
       id: item.id?.trim() || `custom_template_${index + 1}`,
-      name: item.name?.trim() || `提醒模板 ${index + 1}`,
-      content: item.content?.trim() || "",
+      name: sanitizeLegacyShadowText(item.name) || `提醒模板 ${index + 1}`,
+      content: sanitizeLegacyShadowText(item.content),
     }))
     .filter((item) => item.content.length > 0)
     .slice(0, 20);
@@ -391,9 +415,9 @@ const normalizeWorkflowTasks = (items?: ProjectWorkflowTask[]): ProjectWorkflowT
       id: item.id?.trim() || createId("task"),
       date: item.date?.trim() || "",
       time: item.time?.trim() || "",
-      title: item.title?.trim() || "未命名流程",
-      detail: item.detail?.trim() || "",
-      owner: item.owner?.trim() || "",
+      title: sanitizeLegacyShadowText(item.title) || "未命名流程",
+      detail: sanitizeLegacyShadowText(item.detail),
+      owner: sanitizeLegacyShadowText(item.owner),
       done: Boolean(item.done),
       isCustom: Boolean(item.isCustom),
       reminderMinutesBefore: Number.isFinite(item.reminderMinutesBefore)
@@ -419,7 +443,10 @@ const normalizeAuspiciousPlan = (plan?: ProjectAuspiciousPlan): ProjectAuspiciou
     preferredWindow,
     recommendedStartTime: plan.recommendedStartTime?.trim() || "",
     recommendations: Array.isArray(plan.recommendations)
-      ? plan.recommendations.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 12)
+      ? plan.recommendations
+          .map((item) => sanitizeLegacyShadowText(String(item || "")))
+          .filter(Boolean)
+          .slice(0, 12)
       : [],
     generatedAt: plan.generatedAt?.trim() || nowIso(),
   };
@@ -433,16 +460,16 @@ const normalizeDressSelectionRecords = (
   }
   return items
     .map((item) => ({
-      id: item.id?.trim() || createId("dress"),
-      dressName: item.dressName?.trim() || "未命名渲染紀錄",
-      dressSpec: item.dressSpec?.trim() || "",
-      sourceLabel: item.sourceLabel?.trim() || "",
+      id: item.id?.trim() || createId("render"),
+      dressName: sanitizeLegacyShadowText(item.dressName) || "未命名渲染紀錄",
+      dressSpec: sanitizeLegacyShadowText(item.dressSpec),
+      sourceLabel: sanitizeLegacyShadowText(item.sourceLabel),
       referenceAssetId: item.referenceAssetId?.trim() || "",
       referenceImageUrl: item.referenceImageUrl?.trim() || "",
       generatedImageUrl: item.generatedImageUrl?.trim() || "",
-      summary: item.summary?.trim() || "",
-      model: item.model?.trim() || "",
-      note: item.note?.trim() || "",
+      summary: sanitizeLegacyShadowText(item.summary),
+      model: sanitizeLegacyShadowText(item.model),
+      note: sanitizeLegacyShadowText(item.note),
       createdAt: item.createdAt?.trim() || nowIso(),
       updatedAt: item.updatedAt?.trim() || nowIso(),
     }))
@@ -1175,14 +1202,14 @@ export async function createProject(input: CreateProjectInput): Promise<CrmProje
   const now = nowIso();
   const project: CrmProject = {
     id: createId("project"),
-    name: input.name.trim(),
-    clientName: input.clientName.trim(),
+    name: sanitizeLegacyShadowText(input.name) || "未命名專案",
+    clientName: sanitizeLegacyShadowText(input.clientName) || "未命名客戶",
     status: input.status,
-    phase: input.phase.trim(),
-    budget: input.budget.trim(),
+    phase: sanitizeLegacyShadowText(input.phase),
+    budget: sanitizeLegacyShadowText(input.budget),
     coverImageUrl: input.coverImageUrl?.trim() || getDefaultProjectCover(),
     linkedContactId: normalizedLinkedContactId,
-    note: input.note?.trim() || "",
+    note: sanitizeLegacyShadowText(input.note),
     quotationItems: normalizeQuotationItems(input.quotationItems),
     dressSelectionRecords: normalizeDressSelectionRecords(input.dressSelectionRecords),
     quotationMeta: normalizeQuotationMeta(input.quotationMeta),
@@ -1251,16 +1278,16 @@ export async function updateProject(
 
   const next: CrmProject = {
     ...current,
-    ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
-    ...(patch.clientName !== undefined ? { clientName: patch.clientName.trim() } : {}),
+    ...(patch.name !== undefined ? { name: sanitizeLegacyShadowText(patch.name) } : {}),
+    ...(patch.clientName !== undefined ? { clientName: sanitizeLegacyShadowText(patch.clientName) } : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
-    ...(patch.phase !== undefined ? { phase: patch.phase.trim() } : {}),
-    ...(patch.budget !== undefined ? { budget: patch.budget.trim() } : {}),
+    ...(patch.phase !== undefined ? { phase: sanitizeLegacyShadowText(patch.phase) } : {}),
+    ...(patch.budget !== undefined ? { budget: sanitizeLegacyShadowText(patch.budget) } : {}),
     ...(patch.coverImageUrl !== undefined
       ? { coverImageUrl: patch.coverImageUrl.trim() || getDefaultProjectCover() }
       : {}),
     linkedContactId: normalizedLinkedContactId,
-    ...(patch.note !== undefined ? { note: patch.note } : {}),
+    ...(patch.note !== undefined ? { note: sanitizeLegacyShadowText(patch.note) } : {}),
     ...(patch.quotationItems !== undefined ? { quotationItems: normalizeQuotationItems(patch.quotationItems) } : {}),
     ...(patch.dressSelectionRecords !== undefined
       ? { dressSelectionRecords: normalizeDressSelectionRecords(patch.dressSelectionRecords) }

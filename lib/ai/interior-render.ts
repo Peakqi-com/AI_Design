@@ -66,6 +66,15 @@ export interface RefineRequestInput {
   preferredModel?: string;
 }
 
+export interface LocalEditRequestInput {
+  imageDataUrl: string;
+  regionHintImageDataUrl: string;
+  instruction: string;
+  roomType?: string;
+  style?: string;
+  preferredModel?: string;
+}
+
 export interface PanoramaRequestInput {
   imageDataUrl: string;
   style?: string;
@@ -210,6 +219,28 @@ const buildRefinePrompt = (input: RefineRequestInput): string =>
     "- 保持原有構圖與主色調，不做大幅重新設計。",
     "- 輸出需維持寫實攝影質感，避免過銳化與 AI 假感。",
     "- 請輸出一張修復後高品質圖片，並附上簡短後製說明（繁中）。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+const buildLocalEditPrompt = (input: LocalEditRequestInput): string =>
+  [
+    "你是室內設計影像局部修圖助手，請針對指定區域做精準修改。",
+    "輸入圖1：原始空間圖（主圖）。",
+    "輸入圖2：同一張圖，但已用紅色筆刷圈選希望修改的區域（區域提示圖）。",
+    "",
+    "硬性規則：",
+    "- 只能修改紅色圈選區域內的內容。",
+    "- 圈選區域外，必須維持原圖一致（構圖、透視、材質、光影、家具位置盡量不變）。",
+    "- 禁止新增人物、浮水印、文字框、拼貼、多畫面。",
+    "- 生成結果必須維持 photorealistic，不得卡通化。",
+    input.roomType ? `- 空間類型：${input.roomType}` : "",
+    input.style ? `- 設計任務：${input.style}` : "",
+    `- 使用者局部修改需求：${input.instruction.trim()}`,
+    "",
+    "輸出要求：",
+    "1) 一張局部修改後的完整圖片",
+    "2) 一段 40-120 字繁中說明，描述你修改了哪些區域與細節",
   ]
     .filter(Boolean)
     .join("\n");
@@ -784,6 +815,32 @@ export async function refineInteriorRender(
   throw new Error(
     `細節修復已被攔截：結果未通過結構一致性檢查。${lastModel ? `最後模型：${lastModel}。` : ""}${lastReason ? `原因：${lastReason}` : ""}`,
   );
+}
+
+export async function editInteriorRenderRegion(
+  input: LocalEditRequestInput,
+): Promise<RenderResponseOutput> {
+  const instruction = input.instruction.trim();
+  if (!instruction) {
+    throw new Error("局部修改需求不可為空。");
+  }
+  const prompt = buildLocalEditPrompt({
+    ...input,
+    instruction,
+  });
+  const result = await generateImageByPrompt({
+    imageDataUrl: input.imageDataUrl,
+    referenceImageDataUrls: [input.regionHintImageDataUrl],
+    prompt,
+    creativity: 10,
+    preferredModel: input.preferredModel,
+    strictIdentityMode: true,
+  });
+  return {
+    imageDataUrl: result.imageDataUrl,
+    summary: result.text || "已完成圈選區域的局部修改。",
+    model: result.model,
+  };
 }
 
 export async function generatePanoramaRender(

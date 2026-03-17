@@ -31,6 +31,13 @@ interface RenderApiResponse {
   elapsedMs: number;
 }
 
+interface LocalEditApiResponse {
+  imageDataUrl: string;
+  summary: string;
+  model: string;
+  elapsedMs: number;
+}
+
 interface RefineApiResponse {
   imageDataUrl: string;
   summary: string;
@@ -92,6 +99,12 @@ interface DesignFunctionPreset {
   name: string;
   hint: string;
   prompt: string;
+}
+
+interface LocalEditMark {
+  x: number;
+  y: number;
+  r: number;
 }
 
 const DESIGN_FUNCTION_PRESETS: DesignFunctionPreset[] = [
@@ -226,11 +239,19 @@ export const AIStudio: React.FC = () => {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectRecordNotice, setProjectRecordNotice] = useState<string | null>(null);
+  const [localEditMode, setLocalEditMode] = useState(false);
+  const [localEditInstruction, setLocalEditInstruction] = useState("");
+  const [localEditBrushSize, setLocalEditBrushSize] = useState(42);
+  const [localEditMarks, setLocalEditMarks] = useState<LocalEditMark[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const localEditCanvasRef = useRef<HTMLCanvasElement>(null);
+  const localEditBaseImageRef = useRef<HTMLImageElement | null>(null);
+  const localEditDrawingRef = useRef(false);
 
   const selectedFunction = DESIGN_FUNCTION_PRESETS.find((item) => item.id === selectedFunctionId) || DESIGN_FUNCTION_PRESETS[0];
+  const localEditSourceImage = resultImage || uploadedImage || null;
 
   const stopProgressAnimation = useCallback(() => {
     if (progressTimerRef.current) {
@@ -255,7 +276,101 @@ export const AIStudio: React.FC = () => {
     }, 700);
   }, []);
 
+  const redrawLocalEditCanvas = useCallback(() => {
+    const canvas = localEditCanvasRef.current;
+    const baseImage = localEditBaseImageRef.current;
+    if (!canvas || !baseImage) {
+      return;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+    for (const mark of localEditMarks) {
+      ctx.beginPath();
+      ctx.arc(mark.x, mark.y, mark.r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(239, 68, 68, 0.28)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(220, 38, 38, 0.92)";
+      ctx.lineWidth = Math.max(2, mark.r * 0.12);
+      ctx.stroke();
+    }
+  }, [localEditMarks]);
+
+  const appendLocalEditMark = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = localEditCanvasRef.current;
+      if (!canvas) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) {
+        return;
+      }
+      const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
+      const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
+      setLocalEditMarks((prev) => [...prev, { x, y, r: localEditBrushSize }].slice(-160));
+    },
+    [localEditBrushSize],
+  );
+
+  const clearLocalEditMarks = useCallback(() => {
+    setLocalEditMarks([]);
+  }, []);
+
+  const buildLocalEditHintDataUrl = useCallback((): string => {
+    const canvas = localEditCanvasRef.current;
+    if (!canvas) {
+      return "";
+    }
+    redrawLocalEditCanvas();
+    return canvas.toDataURL("image/png");
+  }, [redrawLocalEditCanvas]);
+
   useEffect(() => () => stopProgressAnimation(), [stopProgressAnimation]);
+
+  useEffect(() => {
+    if (!localEditMode || !localEditSourceImage) {
+      return;
+    }
+    let cancelled = false;
+    const image = new Image();
+    image.onload = () => {
+      if (cancelled) {
+        return;
+      }
+      const canvas = localEditCanvasRef.current;
+      if (!canvas) {
+        return;
+      }
+      const maxEdge = 960;
+      const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(320, Math.round(image.naturalWidth * scale));
+      const height = Math.max(240, Math.round(image.naturalHeight * scale));
+      canvas.width = width;
+      canvas.height = height;
+      localEditBaseImageRef.current = image;
+      setLocalEditMarks([]);
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(image, 0, 0, width, height);
+      }
+    };
+    image.src = localEditSourceImage;
+    return () => {
+      cancelled = true;
+    };
+  }, [localEditMode, localEditSourceImage]);
+
+  useEffect(() => {
+    if (!localEditMode) {
+      return;
+    }
+    redrawLocalEditCanvas();
+  }, [localEditMode, localEditMarks, redrawLocalEditCanvas]);
 
   useEffect(() => {
     const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
@@ -399,6 +514,9 @@ export const AIStudio: React.FC = () => {
     setResultMeta("");
     setErrorMessage(null);
     setProjectRecordNotice(null);
+    setLocalEditMode(false);
+    setLocalEditInstruction("");
+    setLocalEditMarks([]);
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -415,6 +533,9 @@ export const AIStudio: React.FC = () => {
       setResultMeta("");
       setErrorMessage(null);
       setProjectRecordNotice(null);
+      setLocalEditMode(false);
+      setLocalEditInstruction("");
+      setLocalEditMarks([]);
     } catch {
       setErrorMessage("圖片讀取失敗，請改用 JPG / PNG / WebP 格式重試。");
     } finally {
@@ -437,6 +558,9 @@ export const AIStudio: React.FC = () => {
       setResultSummary("");
       setResultMeta("");
       setProjectRecordNotice(null);
+      setLocalEditMode(false);
+      setLocalEditInstruction("");
+      setLocalEditMarks([]);
     } catch {
       setErrorMessage("範例圖載入失敗，請改用本機圖片上傳。");
     }
@@ -474,6 +598,98 @@ export const AIStudio: React.FC = () => {
       throw new Error(payload.error || "細節修復失敗");
     }
     return payload as RefineApiResponse;
+  };
+
+  const handleApplyLocalEdit = async () => {
+    if (!localEditSourceImage || isGenerating) {
+      return;
+    }
+    if (!localEditInstruction.trim()) {
+      setErrorMessage("請先輸入局部修改需求。");
+      return;
+    }
+    if (localEditMarks.length === 0) {
+      setErrorMessage("請先在圖片上圈選要修改的區域。");
+      return;
+    }
+    const regionHintImageDataUrl = buildLocalEditHintDataUrl();
+    if (!regionHintImageDataUrl) {
+      setErrorMessage("局部修改圈選資料建立失敗，請重試。");
+      return;
+    }
+
+    setIsGenerating(true);
+    setErrorMessage(null);
+    setGenerationStatusText("局部修改中...");
+    startProgressAnimation();
+
+    try {
+      const response = await fetch("/api/ai/local-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: localEditSourceImage,
+          regionHintImageDataUrl,
+          instruction: localEditInstruction.trim(),
+          roomType: selectedRoomType,
+          style: selectedFunction.name,
+          preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+        }),
+      });
+      const raw = await response.text();
+      const payload = raw ? (JSON.parse(raw) as Partial<LocalEditApiResponse> & { error?: string }) : {};
+      if (!response.ok || !payload.imageDataUrl) {
+        throw new Error(payload.error || "局部修改失敗，請稍後再試。");
+      }
+
+      const summary = payload.summary || "已完成圈選區域局部修改。";
+      const modelTag = `${payload.model || "Gemini"} / 局部修改`;
+      setGenerationProgress(100);
+      setResultImage(payload.imageDataUrl);
+      setResultSummary(summary);
+      setResultMeta(
+        `${payload.model || "Gemini"} · 局部修改 · 圈選 ${localEditMarks.length} 處 · 耗時 ${Math.max(
+          1,
+          Number(payload.elapsedMs || 0),
+        )} ms`,
+      );
+
+      try {
+        const saved = await saveResultToServer({
+          imageDataUrl: payload.imageDataUrl,
+          summary,
+          modelTag,
+        });
+        const historyItem = toRenderHistoryItem(saved);
+        if (historyItem) {
+          setRenderHistory((prev) =>
+            [historyItem, ...prev.filter((item) => item.id !== historyItem.id)].slice(0, 20),
+          );
+        }
+      } catch {
+        // keep preview result even if persistence fails
+      }
+
+      try {
+        await appendRenderRecordToProject({
+          generatedImageUrl: payload.imageDataUrl,
+          summary,
+          modelTag,
+        });
+      } catch {
+        // keep result even if project append fails
+      }
+      setLocalEditMarks([]);
+      setLocalEditMode(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "局部修改失敗，請稍後再試。");
+    } finally {
+      setTimeout(() => {
+        stopProgressAnimation();
+        setIsGenerating(false);
+        setGenerationStatusText("AI 渲染中...");
+      }, 220);
+    }
   };
 
   const handleGenerate = async () => {
@@ -609,6 +825,25 @@ export const AIStudio: React.FC = () => {
     setResultImage(item.imageDataUrl);
     setResultSummary(item.summary);
     setResultMeta(`${item.model} · ${item.roomType} · ${item.style}`);
+    setLocalEditMode(false);
+    setLocalEditInstruction("");
+    setLocalEditMarks([]);
+  };
+
+  const handleLocalEditPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    localEditDrawingRef.current = true;
+    appendLocalEditMark(event);
+  };
+
+  const handleLocalEditPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!localEditDrawingRef.current) {
+      return;
+    }
+    appendLocalEditMark(event);
+  };
+
+  const handleLocalEditPointerUp = () => {
+    localEditDrawingRef.current = false;
   };
 
   return (
@@ -727,6 +962,65 @@ export const AIStudio: React.FC = () => {
             </p>
           </div>
 
+          <div className={!localEditSourceImage ? "opacity-50 pointer-events-none" : ""}>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">局部修改（圈選 + 文字）</label>
+              <button
+                onClick={() => {
+                  setLocalEditMode((prev) => !prev);
+                  setLocalEditMarks([]);
+                }}
+                className={`text-xs px-2.5 py-1 rounded-full border ${
+                  localEditMode
+                    ? "bg-brand-600 text-white border-brand-600"
+                    : "bg-white text-gray-600 border-gray-300"
+                }`}
+              >
+                {localEditMode ? "編輯中" : "啟用"}
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              啟用後可在右側畫面拖曳圈選要改的範圍，再輸入修改內容。
+            </p>
+            {localEditMode && (
+              <div className="mt-2 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <textarea
+                  value={localEditInstruction}
+                  onChange={(event) => setLocalEditInstruction(event.target.value)}
+                  placeholder="例如：把圈選區牆面改成米灰藝術塗料，並加線性壁燈。"
+                  className="w-full text-sm border-gray-300 rounded-lg p-2.5 bg-white border h-20 resize-none"
+                />
+                <div>
+                  <label className="block text-[11px] text-gray-600 mb-1">
+                    圈選筆刷大小：{localEditBrushSize}px
+                  </label>
+                  <input
+                    type="range"
+                    min={16}
+                    max={120}
+                    value={localEditBrushSize}
+                    onChange={(event) => setLocalEditBrushSize(Number(event.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500"
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-gray-600">
+                  <span>已圈選：{localEditMarks.length} 筆</span>
+                  <button onClick={clearLocalEditMarks} className="text-red-600 hover:text-red-700">
+                    清除圈選
+                  </button>
+                </div>
+                <Button
+                  fullWidth
+                  size="sm"
+                  onClick={handleApplyLocalEdit}
+                  disabled={!localEditSourceImage || isGenerating}
+                >
+                  套用局部修改
+                </Button>
+              </div>
+            )}
+          </div>
+
           <div className={!uploadedImage ? "opacity-50 pointer-events-none" : ""}>
             <label className="block text-sm font-medium text-gray-700 mb-2">渲染模型</label>
             <select
@@ -793,7 +1087,7 @@ export const AIStudio: React.FC = () => {
             <span>估計點數</span>
             <span className="font-bold text-brand-600">2 點</span>
           </div>
-          <Button fullWidth onClick={handleGenerate} disabled={!uploadedImage || isGenerating}>
+          <Button fullWidth onClick={handleGenerate} disabled={!uploadedImage || isGenerating || localEditMode}>
             {isGenerating ? (
               <span className="flex items-center gap-2">
                 <RefreshCw className="animate-spin w-4 h-4" />
@@ -802,7 +1096,7 @@ export const AIStudio: React.FC = () => {
             ) : (
               <span className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4" />
-                生成室內渲染圖
+                {localEditMode ? "請先完成局部修改" : "生成室內渲染圖"}
               </span>
             )}
           </Button>
@@ -823,7 +1117,23 @@ export const AIStudio: React.FC = () => {
         )}
 
         <div className="flex-1 min-h-0 flex items-center justify-center p-4 lg:p-8 relative overflow-hidden">
-          {!uploadedImage && !isGenerating && !resultImage && (
+          {localEditMode && localEditSourceImage && !isGenerating && (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+              <div className="rounded-full bg-white/90 px-3 py-1 text-xs text-gray-700 shadow-sm">
+                拖曳滑鼠在圖片上圈選要修改的區域（可重複疊加）
+              </div>
+              <canvas
+                ref={localEditCanvasRef}
+                className="max-h-full max-w-full rounded-lg border border-red-200 shadow-lg cursor-crosshair touch-none bg-white"
+                onPointerDown={handleLocalEditPointerDown}
+                onPointerMove={handleLocalEditPointerMove}
+                onPointerUp={handleLocalEditPointerUp}
+                onPointerLeave={handleLocalEditPointerUp}
+              />
+            </div>
+          )}
+
+          {!localEditMode && !localEditSourceImage && !isGenerating && (
             <div className="text-center text-gray-400">
               <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
                 <ImageIcon className="w-10 h-10" />
@@ -833,7 +1143,7 @@ export const AIStudio: React.FC = () => {
             </div>
           )}
 
-          {uploadedImage && !isGenerating && !resultImage && (
+          {!localEditMode && uploadedImage && !isGenerating && !resultImage && (
             <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
               <img
                 src={uploadedImage}
@@ -866,7 +1176,7 @@ export const AIStudio: React.FC = () => {
             </div>
           )}
 
-          {resultImage && !isGenerating && (
+          {!localEditMode && resultImage && !isGenerating && (
             <img
               src={resultImage}
               alt="Interior Rendered Result"
