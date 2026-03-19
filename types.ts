@@ -10,6 +10,7 @@ export interface User {
   avatar: string;
   plan: 'free' | 'pro' | 'enterprise';
   credits: number;
+  authProvider?: string;
 }
 
 export interface PricingPlan {

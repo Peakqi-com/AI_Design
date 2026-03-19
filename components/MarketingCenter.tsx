@@ -82,10 +82,22 @@ interface ContentVaultSaveResponse {
 }
 
 interface GenerateSocialPostResponse {
-  title: string;
-  caption: string;
-  hashtags: string[];
+  variants: Array<{
+    title: string;
+    caption: string;
+    hashtags: string[];
+  }>;
   model: string;
+}
+
+interface CreditStatusResponse {
+  remainingCredits: number | null;
+  shouldEnforce: boolean;
+  costs?: {
+    image?: number;
+    video?: number;
+  };
+  upgradeMessage?: string;
 }
 
 interface ScheduleItem {
@@ -306,6 +318,9 @@ export const MarketingCenter: React.FC = () => {
   const [postLength, setPostLength] = useState<PostLength>("medium");
   const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
   const [lastGeneratedModel, setLastGeneratedModel] = useState("");
+  const [generatedVariants, setGeneratedVariants] = useState<GenerateSocialPostResponse["variants"]>([]);
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
+  const [creditStatus, setCreditStatus] = useState<CreditStatusResponse | null>(null);
 
   const [postTitle, setPostTitle] = useState("");
   const [postCaption, setPostCaption] = useState("");
@@ -493,6 +508,21 @@ export const MarketingCenter: React.FC = () => {
     }
   }, [userScopeId]);
 
+  const loadCreditStatus = useCallback(async () => {
+    if (!userScopeId) {
+      return;
+    }
+    try {
+      const payload = await requestJson<CreditStatusResponse>(
+        `/api/account/credits?userId=${encodeURIComponent(userScopeId)}`,
+        { method: "GET" },
+      );
+      setCreditStatus(payload);
+    } catch {
+      // ignore credit fetch errors to keep feature usable
+    }
+  }, [userScopeId]);
+
   useEffect(() => {
     const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
     setUserScopeId(resolveClientUserScopeId(sessionUser?.id || null, sessionUser?.email || null));
@@ -501,6 +531,10 @@ export const MarketingCenter: React.FC = () => {
   useEffect(() => {
     void loadAssets();
   }, [loadAssets]);
+
+  useEffect(() => {
+    void loadCreditStatus();
+  }, [loadCreditStatus]);
 
   useEffect(() => {
     if (!userScopeId) {
@@ -549,6 +583,7 @@ export const MarketingCenter: React.FC = () => {
       if (task.status === "completed") {
         setIsGeneratingImage(false);
         setSocialImageTaskNotice("背景生成完成，已自動存入素材庫。");
+        void loadCreditStatus();
         if (task.savedAsset) {
           rememberAssetImageFallback(task.savedAsset.id, task.imageDataUrl);
           setBrokenAssetImageIds((prev) => {
@@ -573,10 +608,11 @@ export const MarketingCenter: React.FC = () => {
       }
       setIsGeneratingImage(false);
       setSocialImageTaskNotice(`背景生成失敗：${task.error || "請稍後重試"}`);
+      void loadCreditStatus();
     });
 
     return unsubscribe;
-  }, [rememberAssetImageFallback, userScopeId]);
+  }, [loadCreditStatus, rememberAssetImageFallback, userScopeId]);
 
   useEffect(() => {
     setMarketingStateReady(false);
@@ -720,6 +756,14 @@ export const MarketingCenter: React.FC = () => {
       alert("請先輸入社群圖片需求");
       return;
     }
+    if (
+      creditStatus?.shouldEnforce &&
+      typeof creditStatus.remainingCredits === "number" &&
+      creditStatus.remainingCredits < (creditStatus.costs?.image ?? 1)
+    ) {
+      alert(creditStatus.upgradeMessage || "點數不足，請開啟付費會員功能。");
+      return;
+    }
     const styleOption = IMAGE_STYLE_OPTIONS.find((item) => item.id === selectedImageStyleId) || IMAGE_STYLE_OPTIONS[0];
     const seedImageDataUrl = referenceImageDataUrl || createPromptSeedImage(imagePrompt);
     const task = startSocialImageBackgroundTask({
@@ -738,6 +782,21 @@ export const MarketingCenter: React.FC = () => {
     setImagePrompt("");
     setReferenceImageDataUrl(null);
   };
+
+  const applyGeneratedVariant = useCallback(
+    (index: number, sourceVariants?: GenerateSocialPostResponse["variants"]) => {
+      const pool = sourceVariants || generatedVariants;
+      const picked = pool[index];
+      if (!picked) {
+        return;
+      }
+      setSelectedVariantIndex(index);
+      setPostTitle(ensureDatePrefix(picked.title, toDate(new Date())));
+      setPostCaption(picked.caption);
+      setPostHashtagsInput(picked.hashtags.join(" "));
+    },
+    [generatedVariants],
+  );
 
   const togglePlatform = (platform: Platform) => {
     if (selectedPlatforms.includes(platform)) {
@@ -792,9 +851,12 @@ export const MarketingCenter: React.FC = () => {
         }),
       });
 
-      setPostTitle(ensureDatePrefix(generated.title, toDate(new Date())));
-      setPostCaption(generated.caption);
-      setPostHashtagsInput(generated.hashtags.join(" "));
+      const variants = Array.isArray(generated.variants) ? generated.variants.slice(0, 2) : [];
+      if (variants.length === 0) {
+        throw new Error("伺服器未回傳可用文案版本。");
+      }
+      setGeneratedVariants(variants);
+      applyGeneratedVariant(0, variants);
       setLastGeneratedModel(generated.model);
       void requestJson<ContentVaultSaveResponse>("/api/content/vault", {
         method: "POST",
@@ -802,12 +864,14 @@ export const MarketingCenter: React.FC = () => {
         body: JSON.stringify({
           userId: userScopeId,
           kind: "social-post",
-          title: ensureDatePrefix(generated.title, toDate(new Date())),
-          summary: generated.caption.slice(0, 120),
+          title: ensureDatePrefix(variants[0].title, toDate(new Date())),
+          summary: variants[0].caption.slice(0, 120),
           payload: {
-            title: ensureDatePrefix(generated.title, toDate(new Date())),
-            caption: generated.caption,
-            hashtags: generated.hashtags,
+            variants,
+            selectedVariantIndex: 0,
+            title: ensureDatePrefix(variants[0].title, toDate(new Date())),
+            caption: variants[0].caption,
+            hashtags: variants[0].hashtags,
             model: generated.model,
             selectedAssetId: selectedAsset.id,
             selectedAssetFileName: selectedAsset.fileName,
@@ -1007,6 +1071,12 @@ export const MarketingCenter: React.FC = () => {
 
           <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-3">
             <h3 className="font-bold text-gray-900">社群圖片生成</h3>
+            {creditStatus?.shouldEnforce && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                剩餘點數：{typeof creditStatus.remainingCredits === "number" ? creditStatus.remainingCredits : "--"} 點
+                （生成圖片每張 {creditStatus.costs?.image ?? 1} 點）
+              </div>
+            )}
             <textarea
               value={imagePrompt}
               onChange={(event) => setImagePrompt(event.target.value)}
@@ -1042,7 +1112,9 @@ export const MarketingCenter: React.FC = () => {
               className="gap-2 bg-pink-600 hover:bg-pink-700"
             >
               {isGeneratingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              {isGeneratingImage ? "背景生成中（可切換介面）" : "生成圖片並存入素材庫"}
+              {isGeneratingImage
+                ? "背景生成中（可切換介面）"
+                : `生成圖片並存入素材庫（${creditStatus?.costs?.image ?? 1} 點）`}
             </Button>
             {socialImageTaskNotice && (
               <p className="text-[11px] text-blue-700 rounded border border-blue-200 bg-blue-50 px-2 py-1.5">
@@ -1186,8 +1258,37 @@ export const MarketingCenter: React.FC = () => {
               className="gap-2 bg-purple-600 hover:bg-purple-700"
             >
               {isGeneratingCopy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-              AI 讀取素材並生成文案
+              AI 讀取素材並生成 2 版文案
             </Button>
+
+            {generatedVariants.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {generatedVariants.map((variant, index) => (
+                  <div
+                    key={`variant_${index}`}
+                    className={`rounded-lg border p-3 ${
+                      selectedVariantIndex === index
+                        ? "border-purple-400 bg-purple-50"
+                        : "border-gray-200 bg-gray-50"
+                    }`}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-gray-700">
+                        文案方案 {index === 0 ? "A" : "B"}
+                      </p>
+                      <Button size="sm" variant="outline" onClick={() => applyGeneratedVariant(index)}>
+                        套用此版
+                      </Button>
+                    </div>
+                    <p className="text-sm font-semibold text-gray-900 line-clamp-2">{variant.title}</p>
+                    <p className="mt-2 text-xs text-gray-700 whitespace-pre-wrap line-clamp-6">
+                      {variant.caption}
+                    </p>
+                    <p className="mt-2 text-[11px] text-blue-700 line-clamp-2">{variant.hashtags.join(" ")}</p>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <input
               value={postTitle}

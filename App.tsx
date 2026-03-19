@@ -13,6 +13,7 @@ import { MarketingCenter } from "./components/MarketingCenter";
 import { QuotationGenerator } from "./components/QuotationGenerator";
 import { VideoStudio } from "./components/VideoStudio";
 import { CRMSystem } from "./components/CRMSystem";
+import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
 const DEMO_USER: User = {
   id: "u_demo",
@@ -34,14 +35,17 @@ const toAppUser = (sessionUser: unknown): User | null => {
     image?: string | null;
     plan?: "free" | "pro" | "enterprise";
     credits?: number;
+    authProvider?: string;
   };
+  const authProvider = String(user.authProvider || "");
   return {
     id: user.id || "u_oauth",
     name: user.name || "Interior User",
     email: user.email || "oauth-user@example.com",
     avatar: user.image || "https://picsum.photos/200",
     plan: user.plan || "free",
-    credits: typeof user.credits === "number" ? user.credits : 50,
+    credits: typeof user.credits === "number" ? user.credits : authProvider === "google" ? 30 : 50,
+    authProvider,
   };
 };
 
@@ -51,9 +55,45 @@ const App: React.FC = () => {
   const [dashboardView, setDashboardView] = useState<DashboardView>("overview");
   const [manualUser, setManualUser] = useState<User | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [resolvedCredits, setResolvedCredits] = useState<number | null>(null);
 
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
+  const effectiveUser = useMemo(
+    () => (user ? { ...user, credits: resolvedCredits ?? user.credits } : null),
+    [resolvedCredits, user],
+  );
+
+  useEffect(() => {
+    if (!user) {
+      setResolvedCredits(null);
+      return;
+    }
+    const userScopeId = resolveClientUserScopeId(user.id, user.email);
+    let aborted = false;
+    const loadCredits = async () => {
+      try {
+        const response = await fetch(`/api/account/credits?userId=${encodeURIComponent(userScopeId)}`);
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as { remainingCredits?: number | null };
+        if (!aborted) {
+          setResolvedCredits(typeof payload.remainingCredits === "number" ? payload.remainingCredits : null);
+        }
+      } catch {
+        // ignore credit fetch failures and fallback to session value
+      }
+    };
+    void loadCredits();
+    const timer = window.setInterval(() => {
+      void loadCredits();
+    }, 10000);
+    return () => {
+      aborted = true;
+      window.clearInterval(timer);
+    };
+  }, [user]);
 
   useEffect(() => {
     if (oauthUser && viewState !== "dashboard") {
@@ -79,6 +119,7 @@ const App: React.FC = () => {
       await signOut({ redirect: false });
     }
     setManualUser(null);
+    setResolvedCredits(null);
     setViewState("landing");
     setDashboardView("overview");
     setSelectedProject(null);
@@ -159,9 +200,9 @@ const App: React.FC = () => {
         />
       )}
 
-      {viewState === "dashboard" && user && (
+      {viewState === "dashboard" && effectiveUser && (
         <DashboardLayout
-          user={user}
+          user={effectiveUser}
           currentView={dashboardView}
           onChangeView={handleViewChange}
           onLogout={handleLogout}
