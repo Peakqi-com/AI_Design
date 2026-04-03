@@ -177,16 +177,23 @@ interface ViewSlotDef {
 }
 
 const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
+  // ── 彩色平面圖系列（全部嚴格 2D 俯視，禁止 3D） ──
   {
     slotKey: "colored-handdrawn",
     label: "彩色平面圖-手繪",
     group: "colored",
     referenceSource: "labeled-floor-plan",
     prompt:
-      "請將這張標示版平面圖轉換成台灣室內設計慣用的「彩色手繪平面圖」風格。" +
-      "嚴格規則：(1) 保持原始平面圖所有牆面走向、門窗位置、每件傢具的擺放位置與數量完全不變，不得新增、移除或移動任何物件。" +
-      "(2) 以溫潤水彩筆觸填色，傢具從正上方俯視繪製，呈現設計師手繪提案圖的專業質感。" +
-      "(3) 視角必須是嚴格正上方俯視（90度，不允許任何透視傾斜）。",
+      "Convert this labeled floor plan into a hand-drawn watercolor architectural floor plan (彩色手繪平面圖). " +
+      "STRICT RULES: " +
+      "(1) This is a FLAT 2D drawing — absolutely NO 3D perspective, NO wall height, NO depth. " +
+      "Think of it as a paper document, not a 3D render. " +
+      "(2) Keep every wall, door, window, and furniture piece in the EXACT same position and quantity as the input. " +
+      "Do NOT add, remove, or move any object. " +
+      "(3) Walls = thick black lines. Fill each room with soft watercolor washes (warm beige for living room, " +
+      "light blue-green for bedrooms, pale yellow for kitchen, light blue for bathrooms). " +
+      "(4) Furniture shown as 2D top-down icons with watercolor fill — beds, sofas, tables are flat shapes viewed from directly above. " +
+      "(5) Camera = perfectly orthographic top-down at exactly 90°. The output must look like a flat architectural plan printed on paper.",
   },
   {
     slotKey: "colored-cartoon",
@@ -194,10 +201,14 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "colored",
     referenceSource: "colored-handdrawn",
     prompt:
-      "請將這張彩色手繪平面圖轉換成「卡通平面圖」風格。" +
-      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
-      "(2) 改用扁平化卡通插圖風格，色彩明亮飽和，線條乾淨粗獷。" +
-      "(3) 視角保持正上方俯視（90度）。",
+      "Convert this hand-drawn floor plan into a colorful cartoon floor plan illustration (卡通平面圖). " +
+      "STRICT RULES: " +
+      "(1) This is a FLAT 2D illustration — absolutely NO 3D, NO perspective, NO depth, NO wall height visible. " +
+      "(2) Keep every wall, door, window, and furniture piece in the EXACT same position. " +
+      "(3) Use bright, saturated, flat colors — red, blue, green, yellow, orange. Bold clean outlines. " +
+      "(4) Furniture as simplified cartoon 2D top-down icons (like clip art viewed from above). " +
+      "(5) Style reference: children's book illustration of a floor plan, vector-art quality, fun and colorful. " +
+      "(6) Camera = perfectly orthographic top-down at exactly 90°.",
   },
   {
     slotKey: "colored-noshadow",
@@ -205,10 +216,14 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "colored",
     referenceSource: "colored-handdrawn",
     prompt:
-      "請將這張彩色手繪平面圖轉換成「無陰影彩色平面圖」風格。" +
-      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
-      "(2) 移除所有陰影與漸層，改用完全扁平純色填充，呈現乾淨 CAD 彩圖風格。" +
-      "(3) 視角保持正上方俯視（90度）。",
+      "Convert this hand-drawn floor plan into a clean CAD-style colored floor plan with NO shadows (無陰影彩色平面圖). " +
+      "STRICT RULES: " +
+      "(1) This is a FLAT 2D plan — absolutely NO 3D, NO perspective, NO depth, NO wall height. " +
+      "(2) Keep every wall, door, window, and furniture piece in the EXACT same position. " +
+      "(3) Remove ALL shadows, ALL gradients. Use ONLY flat solid fills — muted professional earth tones " +
+      "(gray-brown walls, tan/beige floors, olive furniture, slate bathrooms). " +
+      "(4) Clean thin lines, professional architectural presentation style like AutoCAD output with solid color fills. " +
+      "(5) Camera = perfectly orthographic top-down at exactly 90°.",
   },
   {
     slotKey: "colored-realistic",
@@ -216,22 +231,33 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "colored",
     referenceSource: "colored-handdrawn",
     prompt:
-      "請將這張彩色手繪平面圖轉換成「擬真俯視平面渲染圖」風格。" +
-      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
-      "(2) 以照片寫實材質呈現地板、傢具（真實木紋、石材、布料紋理），加入自然光由上照射的陰影。" +
-      "(3) 視角保持正上方俯視（90度）。",
+      "Convert this hand-drawn floor plan into a photorealistic top-down rendered floor plan (擬真俯視平面渲染圖). " +
+      "STRICT RULES: " +
+      "(1) Keep every wall, door, window, and furniture piece in the EXACT same position. " +
+      "(2) Replace all fills with photorealistic material textures viewed from directly above — real wood grain floors, " +
+      "stone tiles in bathrooms, fabric textures on sofas/beds, metal fixtures. " +
+      "(3) Add subtle natural lighting shadows cast downward. Walls show slight 3D depth/thickness. " +
+      "(4) Style reference: high-end real estate marketing top-down 3D floor plan with Chinese room labels (主臥室, 客廳, 廚房 etc.). " +
+      "(5) Camera = top-down view, nearly 90° but slight depth allowed for material realism. " +
+      "This should look like a Lumion/3ds Max top-view rendering, NOT a hand drawing.",
   },
+  // ── 剖透圖系列（3D 渲染，不同相機角度） ──
   {
     slotKey: "section-top",
     label: "剖透圖-上視角度",
     group: "section",
     referenceSource: "colored-handdrawn",
     prompt:
-      "根據這張彩色俯視平面圖，生成一張「3D 剖透圖-上視角度」。" +
-      "嚴格保持輸入圖中所有房間位置、門窗走向、每件傢具的位置與數量完全不變。" +
-      "渲染方式：牆面沿 1 公尺高度水平剖切後移除，相機從正上方垂直俯瞰（camera angle = 90°），" +
-      "所有傢具以立體 3D 方式呈現（可見物件厚度），牆體白色或淺灰，地板材質清晰，" +
-      "整體風格為「3D Floor Plan」正視頂視效果圖，白色背景。",
+      "Create a 3D cutaway floor plan viewed from DIRECTLY ABOVE (剖透圖-上視角度). " +
+      "STRICT RULES: " +
+      "(1) Keep every room, wall, door, window, and furniture piece in the EXACT same position as the input plan. " +
+      "(2) Walls are cut horizontally at 1 meter height — you can see inside all rooms. " +
+      "Wall material = white or light gray. Wall thickness clearly visible. " +
+      "(3) All furniture is rendered as 3D objects (beds have pillows/blankets, sofas have cushions, tables have items on them) " +
+      "but viewed from STRAIGHT ABOVE at exactly 90°. " +
+      "(4) Realistic floor materials (wood, tile). " +
+      "(5) Style = standard '3D Floor Plan' product used in real estate marketing. Clean white background. " +
+      "(6) Camera angle = EXACTLY 90° straight down. No tilt, no perspective distortion.",
   },
   {
     slotKey: "section-birds-eye",
@@ -239,12 +265,16 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "section",
     referenceSource: "colored-handdrawn",
     prompt:
-      "根據這張彩色俯視平面圖，生成「3D 剖透圖-俯視角度」（bird's eye 3D floor plan）。" +
-      "嚴格保持所有房間格局、傢具位置與數量完全不變。" +
-      "渲染方式：相機從空間正上方向斜前方傾斜 30-40 度（俯仰角約 55-60°），建築四面牆保留至 2.7 公尺高，" +
-      "從略高於屋頂的前斜方俯瞰，能同時看到牆面厚度側面與地板，所有傢具立體 3D 呈現。" +
-      "整棟建築清晰可見，乾淨米白或淺灰背景，風格類似「3D apartment floor plan」標準展示圖，" +
-      "不能是正上方 90 度俯視，相機必須有明顯的前傾斜角。",
+      "Create a 3D bird's-eye view floor plan (剖透圖-俯視角度, bird's eye 3D floor plan). " +
+      "STRICT RULES: " +
+      "(1) Keep every room and furniture piece in the EXACT same position as the input plan. " +
+      "(2) Camera is positioned HIGH ABOVE and tilted FORWARD — elevation angle approximately 60-70° from horizontal. " +
+      "You must be able to see the SIDE FACES of walls (wall thickness and height visible). " +
+      "The front wall of the building appears closer/larger than the back wall due to perspective. " +
+      "(3) Walls are full height (2.7m) with roof removed. 3D furniture inside. " +
+      "(4) This must look DIFFERENT from a flat top-down view — the slight forward tilt creates visible depth and perspective. " +
+      "(5) Clean background (white or light beige). Style = real estate 3D apartment floor plan visualization. " +
+      "(6) NOT 90° top-down. The camera MUST have a visible forward tilt showing wall sides.",
   },
   {
     slotKey: "section-oblique",
@@ -252,12 +282,16 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "section",
     referenceSource: "colored-handdrawn",
     prompt:
-      "根據這張彩色俯視平面圖，生成「剖透圖-斜角度 isometric 等角投影圖」。" +
-      "嚴格保持所有房間格局、傢具位置與數量完全不變。" +
-      "渲染方式：從空間的右前角（或左前角）以 45 度仰角斜向看入室內，牆面從一側完整剖開，" +
-      "可同時看到完整牆高（2.7-3 公尺）、地板材質、所有傢具立體細節。" +
-      "風格為「isometric 3D floor plan cutaway view」等角投影，建築座落在淺灰平台上，白色背景，" +
-      "質感類似 3ds Max / Lumion 等角渲染出圖。",
+      "Create a 3D isometric cutaway view of this floor plan from a DIAGONAL CORNER ANGLE (剖透圖-斜角度). " +
+      "STRICT RULES: " +
+      "(1) Keep every room and furniture piece in the EXACT same position as the input plan. " +
+      "(2) Camera is positioned at approximately 45° elevation, looking from one corner diagonally across the apartment. " +
+      "The building is viewed from a low-angle corner — you can clearly see FULL wall heights (2.7m), " +
+      "room interiors, furniture from the SIDE, and the floor. " +
+      "(3) Front walls are removed or cut to reveal interior. Back walls remain at full height. " +
+      "(4) The building sits on a clean platform/base. Background = white or light gray. " +
+      "(5) Style = isometric architectural cutaway model, like a SketchUp or Lumion render. " +
+      "(6) This must look DRAMATICALLY different from a top-down view — it's like looking into a dollhouse from across a table.",
   },
   {
     slotKey: "section-3d",
@@ -265,12 +299,17 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "section",
     referenceSource: "colored-handdrawn",
     prompt:
-      "根據這張彩色俯視平面圖，生成「全 3D 立體模型剖透展示圖」。" +
-      "嚴格保持所有房間格局、傢具位置與數量完全不變。" +
-      "渲染方式：建築以斜角 45-60 度從上方等距視角觀看，屋頂移除，四面牆保留（或前兩面牆移除），" +
-      "室內全部傢具、燈光、植物、材質完整高品質 3D 渲染可見，" +
-      "風格為「photorealistic isometric dollhouse cutaway」，超高細節質感（如參考圖 SketchUp + V-Ray），" +
-      "建築座落在乾淨白色或深灰背景，整體為建築師模型展示圖水準。",
+      "Create a photorealistic 3D architectural dollhouse model of this floor plan (剖透圖-立體模型). " +
+      "STRICT RULES: " +
+      "(1) Keep every room and furniture piece in the EXACT same position as the input plan. " +
+      "(2) Camera at 30-45° elevation from one corner, viewing the ENTIRE apartment as a miniature architectural model. " +
+      "Roof removed. All four walls partially visible, front walls lower or removed to show interior. " +
+      "(3) MAXIMUM 3D detail: realistic furniture, lighting effects, plants, decor items, material textures. " +
+      "This should look like a professional CGI render of an architectural scale model. " +
+      "(4) Dramatic lighting — warm interior lights visible, subtle shadows. " +
+      "(5) Background = dark gray gradient or studio backdrop, making the model stand out. " +
+      "(6) Quality = V-Ray / Unreal Engine photorealistic render. " +
+      "Think: luxury real estate marketing 3D model visualization.",
   },
 ];
 
