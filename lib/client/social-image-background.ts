@@ -38,6 +38,7 @@ interface GenerateResponse {
   imageDataUrl: string;
   summary: string;
   model: string;
+  remainingCredits?: number | null;
 }
 
 interface SaveAssetResponse {
@@ -117,6 +118,7 @@ export const startSocialImageBackgroundTask = (
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: input.userId,
           imageDataUrl: input.imageDataUrl,
           prompt: input.prompt,
           style: input.style,

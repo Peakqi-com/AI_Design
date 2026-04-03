@@ -42,10 +42,14 @@ export interface SocialPostCopyInput {
 }
 
 export interface SocialPostCopyOutput {
+  variants: SocialPostCopyVariant[];
+  model: string;
+}
+
+export interface SocialPostCopyVariant {
   title: string;
   caption: string;
   hashtags: string[];
-  model: string;
 }
 
 export type SocialPostTone =
@@ -177,7 +181,7 @@ const extractResponseText = (body: GeminiResponse): string => {
     .trim();
 };
 
-const parseJsonCandidate = (text: string): { title?: string; caption?: string; hashtags?: unknown } | null => {
+const parseJsonCandidate = (text: string): Record<string, unknown> | null => {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   const source = fenced ? fenced[1] : trimmed;
@@ -185,19 +189,39 @@ const parseJsonCandidate = (text: string): { title?: string; caption?: string; h
   const objectLike = source.match(/\{[\s\S]*\}/);
   const candidate = objectLike ? objectLike[0] : source;
   try {
-    return JSON.parse(candidate) as { title?: string; caption?: string; hashtags?: unknown };
+    return JSON.parse(candidate) as Record<string, unknown>;
   } catch {
     return null;
   }
 };
 
-const buildFallback = (input: SocialPostCopyInput): SocialPostCopyOutput => {
+const toCopyVariant = (
+  raw: unknown,
+  hashtagCount: number,
+): SocialPostCopyVariant | null => {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const payload = raw as { title?: unknown; caption?: unknown; hashtags?: unknown };
+  const title = String(payload.title || "").trim();
+  const caption = String(payload.caption || "").trim();
+  const hashtagsRaw = Array.isArray(payload.hashtags)
+    ? payload.hashtags.map((tag) => normalizeTag(String(tag || ""))).filter(Boolean)
+    : [];
+  const hashtags = dedupe(hashtagsRaw).slice(0, hashtagCount);
+  if (!title || !caption || hashtags.length === 0) {
+    return null;
+  }
+  return { title, caption, hashtags };
+};
+
+const buildFallbackVariants = (input: SocialPostCopyInput): SocialPostCopyVariant[] => {
   const tone = resolveTone(input.tone);
   const theme = resolveTheme(input.theme);
   const length = resolveLength(input.length);
   const summary = deriveMarketingSummary(input);
-  const title = (input.topic?.trim() || `${input.assetKind === "video" ? "影片" : "圖片"}貼文`) + "｜可直接發布";
-  const caption = [
+  const baseTopic = input.topic?.trim() || `${input.assetKind === "video" ? "影片" : "圖片"}貼文`;
+  const captionA = [
     `【${THEME_LABELS[theme]}｜${TONE_LABELS[tone]}｜${LENGTH_LABELS[length]}】`,
     `這次主打內容聚焦在「${summary}」，我們用更貼近消費者的角度，整理出你真正在意的選擇重點。`,
     input.objective?.trim()
@@ -207,7 +231,7 @@ const buildFallback = (input: SocialPostCopyInput): SocialPostCopyOutput => {
     "如果你也想套用同樣做法，留言或私訊，我們可以提供完整執行建議。",
   ].join("\n\n");
 
-  const tags = dedupe(
+  const tagsA = dedupe(
     [
       normalizeTag(input.topic || ""),
       "#社群貼文",
@@ -218,12 +242,39 @@ const buildFallback = (input: SocialPostCopyInput): SocialPostCopyOutput => {
     ].filter(Boolean),
   ).slice(0, Math.max(5, Math.min(input.hashtagCount ?? 10, 12)));
 
-  return {
-    title,
-    caption,
-    hashtags: tags,
-    model: "fallback-template",
-  };
+  const titleA = `${baseTopic}｜方案 A（理性價值）`;
+  const titleB = `${baseTopic}｜方案 B（情感共鳴）`;
+  const captionB = [
+    `【${THEME_LABELS[theme]}｜故事感切角】`,
+    `如果你正在找「${summary}」的靈感，這組內容把你最在意的使用情境先整理好了，讓你不用花太多時間比來比去。`,
+    input.objective?.trim()
+      ? `這篇重點想帶你看到：${input.objective.trim()}，並且更快做出適合自己的選擇。`
+      : "我們把內容拆成好理解的重點，讓你一看就懂、可直接收藏備用。",
+    "想看更多實際案例或對照版本，歡迎留言關鍵字，我們會再整理給你。",
+  ].join("\n\n");
+  const tagsB = dedupe(
+    [
+      normalizeTag(input.topic || ""),
+      "#社群貼文",
+      "#內容行銷",
+      input.assetKind === "video" ? "#影音行銷" : "#視覺內容",
+      "#品牌溝通",
+      "#行銷靈感",
+    ].filter(Boolean),
+  ).slice(0, Math.max(5, Math.min(input.hashtagCount ?? 10, 12)));
+
+  return [
+    {
+      title: titleA,
+      caption: captionA,
+      hashtags: tagsA,
+    },
+    {
+      title: titleB,
+      caption: captionB,
+      hashtags: tagsB,
+    },
+  ];
 };
 
 export async function generateSocialPostCopy(
@@ -239,7 +290,10 @@ export async function generateSocialPostCopy(
   try {
     authHeaders = await getGoogleAiAuthHeaders();
   } catch {
-    return buildFallback(input);
+    return {
+      variants: buildFallbackVariants(input),
+      model: "fallback-template",
+    };
   }
 
   let image: ParsedDataUrl | null = null;
@@ -255,11 +309,12 @@ export async function generateSocialPostCopy(
   const prompt = [
     "你是資深社群行銷企劃，請根據素材內容直接產生『可立即發佈』的繁體中文社群貼文。",
     "核心任務：以消費者需求為中心，寫出有情境、有價值、有行動引導的行銷文案。",
+    "一次輸出 2 篇可直接發布貼文，做 A/B 對照比較，讓使用者可選擇偏好版本。",
     "不要給教學、不要給說明步驟、不要提到你是 AI。",
     "除非素材、檔名、主題或目標明確提及，否則不得自行假設產業情境（例如室內設計、餐飲、教育、美妝等）。",
     "嚴格禁止寫成功能演示或技術介紹，禁止出現：圖轉影、模式、運鏡、比例、秒數、解析度、模型、生成流程、示範做法。",
     "輸出必須是 JSON，格式如下：",
-    '{"title":"", "caption":"", "hashtags":["#tag1","#tag2"]}',
+    '{"variants":[{"title":"","caption":"","hashtags":["#tag1","#tag2"]},{"title":"","caption":"","hashtags":["#tag1","#tag2"]}]}',
     `目標平台：${input.platforms.join(", ") || "instagram, facebook"}`,
     `素材類型：${input.assetKind === "video" ? "影片" : "圖片"}`,
     `素材檔名：${input.assetFileName || "未命名素材"}`,
@@ -270,6 +325,7 @@ export async function generateSocialPostCopy(
     input.topic?.trim() ? `貼文主題：${input.topic.trim()}` : "",
     input.objective?.trim() ? `貼文目標：${input.objective.trim()}` : "",
     `hashtags 數量：請輸出 ${hashtagCount} 個，避免重複。`,
+    "兩篇貼文都要符合上述要求，但角度必須有明顯差異（例如一篇偏理性價值、一篇偏感性情境）。",
     "caption 內容要求：",
     "- 第一段：以目標客群痛點/期待切入（例如想快速理解產品差異、想看實際使用效果）",
     "- 中段：描述使用者能得到的價值、差異化與安心感（不要講製作技術）",
@@ -320,27 +376,54 @@ export async function generateSocialPostCopy(
     const text = extractResponseText(json);
     const parsed = parseJsonCandidate(text);
     if (!parsed) {
-      return buildFallback(input);
+      return {
+        variants: buildFallbackVariants(input),
+        model: "fallback-template",
+      };
     }
 
-    const title = String(parsed.title || "").trim();
-    const caption = String(parsed.caption || "").trim();
-    const hashtagsRaw = Array.isArray(parsed.hashtags)
-      ? parsed.hashtags.map((tag) => normalizeTag(String(tag || ""))).filter(Boolean)
-      : [];
-    const hashtags = dedupe(hashtagsRaw).slice(0, hashtagCount);
+    const candidateVariants: unknown[] = [];
+    const rawVariants = parsed.variants;
+    if (Array.isArray(rawVariants)) {
+      candidateVariants.push(...rawVariants);
+    }
+    const keyedCandidates = [
+      parsed.optionA,
+      parsed.optionB,
+      parsed.variantA,
+      parsed.variantB,
+      parsed.postA,
+      parsed.postB,
+    ];
+    keyedCandidates.forEach((item) => {
+      if (item && typeof item === "object") {
+        candidateVariants.push(item);
+      }
+    });
+    if (
+      candidateVariants.length === 0 &&
+      (typeof parsed.title === "string" || typeof parsed.caption === "string")
+    ) {
+      candidateVariants.push(parsed);
+    }
+    const normalized = candidateVariants
+      .map((item) => toCopyVariant(item, hashtagCount))
+      .filter((item): item is SocialPostCopyVariant => Boolean(item));
 
-    if (!title || !caption || hashtags.length === 0) {
-      return buildFallback(input);
+    let variants: SocialPostCopyVariant[] = normalized.slice(0, 2);
+    if (variants.length < 2) {
+      const fallback = buildFallbackVariants(input);
+      variants = [...variants, ...fallback].slice(0, 2);
     }
 
     return {
-      title,
-      caption,
-      hashtags,
+      variants,
       model: DEFAULT_MODEL,
     };
   } catch {
-    return buildFallback(input);
+    return {
+      variants: buildFallbackVariants(input),
+      model: "fallback-template",
+    };
   }
 }

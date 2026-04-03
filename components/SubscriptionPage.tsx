@@ -6,51 +6,50 @@ import { PricingPlan } from '../types';
 export const SubscriptionPage: React.FC = () => {
   const plans: PricingPlan[] = [
     {
-      id: 'points',
+      id: 'starter-800',
       type: 'credits',
-      title: '靈活點數制',
-      price: 'NT$ 2,990',
-      description: '適合接案波動較大的設計團隊。無過期限制，隨用隨扣。',
+      title: '入門方案',
+      price: 'NT$ 2,500',
+      description: '最低門檻方案，適合剛起步的團隊先快速上線使用。',
       features: [
-        '500 點 AI 算力點數',
-        '單張 AI 空間渲染圖約消耗 2-5 點',
+        '800 點 AI 算力點數',
+        '圖片、影片、社群功能可用',
         '基礎室內專案管理',
-        '無月費負擔',
+        '點數用完可再加購',
+        '無月費負擔'
+      ],
+      buttonText: '購買 800 點'
+    },
+    {
+      id: 'pro-2400',
+      type: 'credits',
+      title: '進階方案',
+      price: 'NT$ 6,600',
+      description: '高性價比大點數包，適合穩定產出內容與提案的團隊。',
+      features: [
+        '2400 點 AI 算力點數',
+        '平均單點成本更低',
+        '支援大量圖片與影片生成',
+        '可搭配團隊日常營運流程',
         '優先客服支援'
       ],
-      buttonText: '購買點數'
-    },
-    {
-      id: 'monthly',
-      type: 'subscription',
-      title: '專業月訂閱',
-      price: 'NT$ 1,490',
-      period: '/ 月',
-      description: '適合穩定接案的室內設計工作室。無限使用基礎功能。',
-      features: [
-        '每月贈送 1000 點',
-        '線稿轉渲染圖無限預覽',
-        '全功能 AI 裝修報價系統',
-        '社群自動化發文 (IG/FB)',
-        '社群短影音腳本生成'
-      ],
       recommended: true,
-      buttonText: '立即訂閱'
+      buttonText: '購買 2400 點'
     },
     {
-      id: 'course',
-      type: 'course',
-      title: 'AI 室內設計實戰課程包',
-      price: 'NT$ 18,800',
-      description: '買課程送一年訂閱！最划算的長期投資選擇。',
+      id: 'custom',
+      type: 'subscription',
+      title: '客製化方案',
+      price: '洽詢報價',
+      description: '依團隊規模、目標與流程，提供專屬點數與功能配置。',
       features: [
-        '包含「一年份」專業版訂閱 (價值 $17,880)',
-        '10 堂 AI 室內設計營運實戰線上課',
-        '設計品牌風格模型訓練教學',
-        '室內設計產業專屬社群入場券',
-        '結業證書'
+        '專屬點數與權限配置',
+        '可加值 API / 私有部署整合',
+        '專人導入與教育訓練',
+        '企業級合約與服務 SLA',
+        '彈性擴充方案'
       ],
-      buttonText: '購買課程 + 一年免費',
+      buttonText: '聯繫顧問',
     }
   ];
 

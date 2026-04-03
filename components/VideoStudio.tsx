@@ -39,6 +39,8 @@ interface GeneratedVideoItem {
 interface VeoStartResponse {
   operationName: string;
   model: string;
+  remainingCredits?: number | null;
+  costDeducted?: number;
 }
 
 interface VeoStatusResponse {
@@ -225,12 +227,26 @@ interface ApiErrorPayload {
   code?: string;
   hints?: string[];
   supportSummary?: string;
+  remainingCredits?: number;
+  requiredCredits?: number;
+}
+
+interface CreditStatusResponse {
+  remainingCredits: number | null;
+  shouldEnforce: boolean;
+  costs?: {
+    image?: number;
+    video?: number;
+  };
+  upgradeMessage?: string;
 }
 
 class ApiRequestError extends Error {
   code?: string;
   hints?: string[];
   supportSummary?: string;
+  remainingCredits?: number;
+  requiredCredits?: number;
 
   constructor(message: string, payload?: ApiErrorPayload) {
     super(message);
@@ -238,6 +254,8 @@ class ApiRequestError extends Error {
     this.code = payload?.code;
     this.hints = payload?.hints;
     this.supportSummary = payload?.supportSummary;
+    this.remainingCredits = payload?.remainingCredits;
+    this.requiredCredits = payload?.requiredCredits;
   }
 }
 
@@ -594,6 +612,7 @@ export const VideoStudio: React.FC = () => {
   const [generationStage, setGenerationStage] = useState("待命中");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [veoSupportHint, setVeoSupportHint] = useState<string | null>(null);
+  const [creditStatus, setCreditStatus] = useState<CreditStatusResponse | null>(null);
 
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoCurrent, setVideoCurrent] = useState(0);
@@ -776,6 +795,21 @@ export const VideoStudio: React.FC = () => {
       // Ignore initial history load failures to avoid blocking generation flows.
     }
   }, [areHistoryListsEqual, toGeneratedVideoItem, trimHistory, userScopeId]);
+
+  const loadCreditStatus = useCallback(async () => {
+    if (!userScopeId) {
+      return;
+    }
+    try {
+      const payload = await requestJson<CreditStatusResponse>(
+        `/api/account/credits?userId=${encodeURIComponent(userScopeId)}`,
+        { method: "GET" },
+      );
+      setCreditStatus(payload);
+    } catch {
+      // Ignore credit status errors to keep generator usable.
+    }
+  }, [userScopeId]);
 
   const finalizeGeneratedVideo = useCallback(
     async (input: {
@@ -1031,6 +1065,10 @@ export const VideoStudio: React.FC = () => {
   useEffect(() => {
     void loadServerHistory();
   }, [loadServerHistory]);
+
+  useEffect(() => {
+    void loadCreditStatus();
+  }, [loadCreditStatus]);
 
   const resumePendingVeoJob = useCallback(
     async (job: PendingVeoJob) => {
@@ -1330,6 +1368,7 @@ export const VideoStudio: React.FC = () => {
         },
         signal: startController.signal,
         body: JSON.stringify({
+          userId: userScopeId,
           imageDataUrl,
           model: videoModel,
           aspectRatio,
@@ -1348,6 +1387,19 @@ export const VideoStudio: React.FC = () => {
 
     if (stopRequestedRef.current) {
       throw new ApiRequestError("已停止生成。", { code: "VEO_CANCELLED_BY_USER" });
+    }
+    if (typeof start.remainingCredits === "number") {
+      const remainingCredits = start.remainingCredits;
+      setCreditStatus((prev) =>
+        prev
+          ? { ...prev, remainingCredits }
+          : {
+              remainingCredits,
+              shouldEnforce: true,
+              costs: { video: 20, image: 1 },
+              upgradeMessage: "點數不足，請開啟付費會員功能。",
+            },
+      );
     }
     activeOperationNameRef.current = start.operationName;
 
@@ -1489,6 +1541,14 @@ export const VideoStudio: React.FC = () => {
     if (isGenerating) {
       return;
     }
+    if (
+      creditStatus?.shouldEnforce &&
+      typeof creditStatus.remainingCredits === "number" &&
+      creditStatus.remainingCredits < (creditStatus.costs?.video ?? 20)
+    ) {
+      setErrorMessage(creditStatus.upgradeMessage || "點數不足，請開啟付費會員功能。");
+      return;
+    }
 
     stopRequestedRef.current = false;
     activeOperationNameRef.current = null;
@@ -1588,8 +1648,23 @@ export const VideoStudio: React.FC = () => {
         clearPendingVeoJob(userScopeId);
         setGenerationStage("已停止生成");
         setErrorMessage("你已手動停止生成。");
-      } else
-      if (error instanceof ApiRequestError && error.code === "VEO_IMAGE_INPUT_UNSUPPORTED") {
+      } else if (error instanceof ApiRequestError && error.code === "INSUFFICIENT_CREDITS") {
+        if (typeof error.remainingCredits === "number") {
+          const remainingCredits = error.remainingCredits;
+          setCreditStatus((prev) =>
+            prev
+              ? { ...prev, remainingCredits }
+              : {
+                  remainingCredits,
+                  shouldEnforce: true,
+                  costs: { video: 20, image: 1 },
+                },
+          );
+        }
+        clearPendingVeoJob(userScopeId);
+        setGenerationStage("點數不足");
+        setErrorMessage(error.message || "點數不足，請開啟付費會員功能。");
+      } else if (error instanceof ApiRequestError && error.code === "VEO_IMAGE_INPUT_UNSUPPORTED") {
         clearPendingVeoJob(userScopeId);
         setErrorMessage("目前此憑證的 Veo 模型不接受圖片輸入（image-to-video）。");
         const hintLines: string[] = [
@@ -1637,6 +1712,7 @@ export const VideoStudio: React.FC = () => {
       clearActiveRequests();
       activeOperationNameRef.current = null;
       setIsStopping(false);
+      void loadCreditStatus();
       setTimeout(() => {
         setIsGenerating(false);
         setProgress(0);
@@ -1951,6 +2027,13 @@ export const VideoStudio: React.FC = () => {
               </p>
             </div>
 
+            {creditStatus?.shouldEnforce && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                剩餘點數：{typeof creditStatus.remainingCredits === "number" ? creditStatus.remainingCredits : "--"} 點
+                （每支影片 {creditStatus.costs?.video ?? 20} 點）
+              </div>
+            )}
+
             {errorMessage && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 whitespace-pre-line">
                 {errorMessage}
@@ -1968,7 +2051,7 @@ export const VideoStudio: React.FC = () => {
           <div className="p-4 border-t border-gray-100 bg-gray-50">
             <div className="flex justify-between text-xs text-gray-500 mb-2">
               <span>預估時長：{durationSec}s</span>
-              <span>消耗：5 點</span>
+              <span>消耗：{creditStatus?.costs?.video ?? 20} 點</span>
             </div>
             <div className="flex items-center gap-2">
               <Button

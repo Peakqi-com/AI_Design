@@ -80,10 +80,14 @@ export const authConfig: NextAuthOptions = {
   },
   providers,
   callbacks: {
-    jwt({ token, user }) {
+    jwt({ token, user, account }) {
+      const provider = account?.provider || String((token as { authProvider?: string }).authProvider || "");
       if (user) {
         token.plan = "free";
-        token.credits = 50;
+        token.credits = provider === "google" ? 30 : 50;
+      }
+      if (provider) {
+        (token as { authProvider?: string }).authProvider = provider;
       }
       return token;
     },
@@ -95,12 +99,16 @@ export const authConfig: NextAuthOptions = {
         image?: string | null;
         plan?: "free" | "pro" | "enterprise";
         credits?: number;
+        authProvider?: string;
       };
       typedUser.id = String(token.sub || typedUser.id || "u_oauth");
       typedUser.plan =
         (token.plan as "free" | "pro" | "enterprise" | undefined) || typedUser.plan || "free";
       typedUser.credits =
-        typeof token.credits === "number" ? token.credits : (typedUser.credits ?? 50);
+        typeof token.credits === "number"
+          ? token.credits
+          : (typedUser.credits ?? ((token as { authProvider?: string }).authProvider === "google" ? 30 : 50));
+      typedUser.authProvider = String((token as { authProvider?: string }).authProvider || "");
       session.user = typedUser;
       return session;
     },
