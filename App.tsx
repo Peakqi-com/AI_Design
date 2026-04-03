@@ -13,6 +13,7 @@ import { MarketingCenter } from "./components/MarketingCenter";
 import { QuotationGenerator } from "./components/QuotationGenerator";
 import { VideoStudio } from "./components/VideoStudio";
 import { CRMSystem } from "./components/CRMSystem";
+import { MediaLibrary } from "./components/MediaLibrary";
 
 const DEMO_USER: User = {
   id: "u_demo",
@@ -141,6 +142,8 @@ const App: React.FC = () => {
         return <VideoStudio />;
       case "crm":
         return <CRMSystem />;
+      case "media-library":
+        return <MediaLibrary />;
       default:
         return <DashboardHome />;
     }

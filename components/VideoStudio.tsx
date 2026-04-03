@@ -2111,48 +2111,6 @@ export const VideoStudio: React.FC = () => {
         </div>
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-2 max-h-[18vh] flex flex-col">
-        <div className="mb-2 flex items-center justify-between px-1">
-          <p className="text-xs font-semibold text-gray-700">生成歷史</p>
-          <p className="text-[10px] text-gray-500">小縮圖（等高）· 點擊開啟彈窗播放器</p>
-        </div>
-        <div className="flex-1 flex items-center gap-2 overflow-x-auto pb-1">
-          {history.length === 0 ? (
-            <div className="px-2 text-xs text-gray-400">尚未生成影片</div>
-          ) : (
-            history.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => handleOpenHistoryPreview(item)}
-                className={`relative shrink-0 rounded-md border bg-black/90 text-left transition-colors overflow-hidden ${
-                  resultVideoUrl === item.videoUrl
-                    ? "border-brand-500 ring-1 ring-brand-300"
-                    : "border-gray-300 hover:border-brand-300"
-                }`}
-                style={{
-                  height: "min(15vh, 110px)",
-                  aspectRatio: toCssAspectRatio(item.aspectRatio),
-                }}
-                title={`${item.aspectRatio} · ${new Date(item.createdAt).toLocaleTimeString("zh-TW")}`}
-              >
-                <video
-                  src={item.videoUrl}
-                  className="w-full h-full object-contain"
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  preload="metadata"
-                  onError={() => removeBrokenVideo(item.videoUrl)}
-                />
-                <div className="absolute bottom-1 left-1 rounded bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
-                  {item.aspectRatio}
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
       {historyPreviewItem && (
         <div
           className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"

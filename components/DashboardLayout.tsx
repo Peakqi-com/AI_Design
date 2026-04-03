@@ -1,15 +1,16 @@
 import React from 'react';
-import { 
-  LayoutDashboard, 
-  Palette, 
-  FileText, 
-  Share2, 
-  CreditCard, 
-  LogOut, 
+import {
+  LayoutDashboard,
+  Palette,
+  FileText,
+  Share2,
+  CreditCard,
+  LogOut,
   Bell,
   Video,
   Calculator,
-  MessageCircle
+  MessageCircle,
+  Library
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
 
@@ -32,6 +33,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     { id: 'overview', label: '室內設計總覽', icon: LayoutDashboard },
     { id: 'ai-studio', label: 'AI 空間渲染', icon: Palette },
     { id: 'video-studio', label: '空間動態影片', icon: Video },
+    { id: 'media-library', label: '媒體庫', icon: Library },
     { id: 'marketing', label: '社群發文中心', icon: Share2 },
     { id: 'crm', label: '客戶關係 CRM', icon: MessageCircle },
     { id: 'projects', label: '室內專案管理', icon: FileText },

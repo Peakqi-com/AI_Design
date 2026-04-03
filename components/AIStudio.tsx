@@ -3,7 +3,6 @@ import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
   Download,
-  History,
   Image as ImageIcon,
   RefreshCw,
   Sliders,
@@ -181,14 +180,24 @@ const FIXED_VIEW_SLOTS = [
   },
   {
     slotKey: "3d-angle",
-    label: "3D 斜角透視",
+    label: "2.5D 俯視透視",
     prompt:
-      "以室內設計常見的斜角透視呈現空間，模擬 3D 立體感，展現空間深度、傢具立體輪廓與材質質感，整體風格與原圖一致。",
+      "將此平面圖以 2.5D 等角俯視方式呈現，保持從正上方略微傾斜約 25 度的視角，維持平面圖內所有傢具配置、牆面結構與格局完全不變，輸出立體化的等角投影平面圖，不要生成透視室內實景圖。",
   },
 ] as const;
 
 const SAMPLE_SKETCH_URL =
   "https://images.unsplash.com/photo-1460317442991-0ec209397118?auto=format&fit=crop&q=80&w=1600";
+
+const generatePackageId = (): { packageId: string; packageLabel: string } => {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+  const countKey = `aiinterior:pkg-count:${dateStr}`;
+  const current = parseInt(localStorage.getItem(countKey) || "0") + 1;
+  localStorage.setItem(countKey, String(current));
+  const label = `${dateStr}-Output-${String(current).padStart(3, "0")}`;
+  return { packageId: label, packageLabel: label };
+};
 
 const formatFileDate = (date = new Date()): string => {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -356,7 +365,14 @@ export const AIStudio: React.FC = () => {
   }, [loadProjects]);
 
   const saveResultToServer = useCallback(
-    async (input: { imageDataUrl: string; summary: string; modelTag: string }) => {
+    async (input: {
+      imageDataUrl: string;
+      summary: string;
+      modelTag: string;
+      packageId?: string;
+      packageLabel?: string;
+      slotLabel?: string;
+    }) => {
       const file = await dataUrlToFile(input.imageDataUrl, `interior-render-${formatFileDate()}.jpg`);
       const formData = new FormData();
       formData.append("userId", userScopeId);
@@ -371,6 +387,13 @@ export const AIStudio: React.FC = () => {
           roomType: selectedRoomType,
           model: input.modelTag,
           prompt: designerPrompt.trim(),
+          ...(input.packageId
+            ? {
+                packageId: input.packageId,
+                packageLabel: input.packageLabel,
+                slotLabel: input.slotLabel,
+              }
+            : {}),
         }),
       );
       const payload = await requestJson<SocialAssetSaveResponse>("/api/social/assets", {
@@ -649,6 +672,8 @@ export const AIStudio: React.FC = () => {
   const handleMultiGenerate = async () => {
     if (!uploadedImage || isMultiGenerating) return;
 
+    const { packageId, packageLabel } = generatePackageId();
+
     const roomSlots = selectedMultiRooms.map((room) => ({
       slotKey: `room-${room}`,
       label: `${room}場景`,
@@ -707,6 +732,9 @@ export const AIStudio: React.FC = () => {
             imageDataUrl: payload.imageDataUrl!,
             summary: payload.summary || `${slot.label} 渲染完成`,
             modelTag: payload.model || "Gemini",
+            packageId,
+            packageLabel,
+            slotLabel: slot.label,
           });
         } catch {
           // 忽略個別視角的儲存錯誤
@@ -1080,39 +1108,15 @@ export const AIStudio: React.FC = () => {
               )}
             </div>
 
-            <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3">
-              {resultSummary && (
-                <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 mb-3 max-h-24 overflow-y-auto">
+            {resultSummary && (
+              <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+                <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 max-h-24 overflow-y-auto">
                   <p className="text-xs font-semibold text-brand-700 mb-1">AI 設計說明</p>
                   <p className="text-xs text-brand-800 leading-relaxed whitespace-pre-wrap">{resultSummary}</p>
                   {resultMeta && <p className="text-[10px] text-brand-600 mt-2">{resultMeta}</p>}
                 </div>
-              )}
-              <div className="h-24 flex items-center gap-2 overflow-x-auto overflow-y-hidden">
-                {renderHistory.length === 0 ? (
-                  <div className="text-xs text-gray-400 shrink-0">
-                    渲染歷史會顯示在這裡，並依使用者自動儲存至伺服器。
-                  </div>
-                ) : (
-                  renderHistory.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => handlePickHistory(item)}
-                      className="w-24 h-20 flex-shrink-0 bg-gray-100 rounded-lg border border-gray-200 hover:ring-2 hover:ring-brand-500 overflow-hidden"
-                      title={`${item.style} · ${item.roomType}`}
-                    >
-                      <img src={item.imageDataUrl} alt={`history-${item.id}`} className="w-full h-full object-contain bg-white" />
-                    </button>
-                  ))
-                )}
               </div>
-              {renderHistory.length > 0 && (
-                <div className="mt-2 flex items-center gap-1 text-[11px] text-gray-500">
-                  <History className="w-3.5 h-3.5" />
-                  點擊縮圖可快速回看歷史結果
-                </div>
-              )}
-            </div>
+            )}
           </>
         ) : (
           <>
