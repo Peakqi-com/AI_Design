@@ -87,6 +87,15 @@ interface ProjectDetailItem extends ProjectListItem {
   }>;
 }
 
+interface MultiViewResult {
+  slotKey: string;
+  label: string;
+  status: "idle" | "generating" | "done" | "error";
+  imageDataUrl?: string;
+  summary?: string;
+  error?: string;
+}
+
 interface DesignFunctionPreset {
   id: string;
   name: string;
@@ -155,6 +164,27 @@ const OUTPUT_QUALITY_OPTIONS = [
   { value: "standard", label: "標準（較快）" },
   { value: "detail", label: "細節修復（較清晰）" },
   { value: "hd2x", label: "高清 2x（較清晰）" },
+] as const;
+
+const FIXED_VIEW_SLOTS = [
+  {
+    slotKey: "linedrawing",
+    label: "線稿平面圖",
+    prompt:
+      "將圖片解讀為室內平面規劃，以清晰線條標示牆面、開口、傢具配置與動線，保留原始空間比例，輸出乾淨的線稿風格平面圖。",
+  },
+  {
+    slotKey: "vray",
+    label: "VRay 渲染圖",
+    prompt:
+      "以 VRay 寫實渲染風格重建空間，加入精確的燈光計算、材質反射、陰影層次，輸出高品質室內效果圖，與原始空間風格一致。",
+  },
+  {
+    slotKey: "3d-angle",
+    label: "3D 斜角透視",
+    prompt:
+      "以室內設計常見的斜角透視呈現空間，模擬 3D 立體感，展現空間深度、傢具立體輪廓與材質質感，整體風格與原圖一致。",
+  },
 ] as const;
 
 const SAMPLE_SKETCH_URL =
@@ -226,6 +256,11 @@ export const AIStudio: React.FC = () => {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectRecordNotice, setProjectRecordNotice] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"single" | "multi">("single");
+  const [multiViewResults, setMultiViewResults] = useState<MultiViewResult[]>([]);
+  const [selectedMultiRooms, setSelectedMultiRooms] = useState<string[]>(["客廳", "主臥"]);
+  const [isMultiGenerating, setIsMultiGenerating] = useState(false);
+  const [currentMultiSlot, setCurrentMultiSlot] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -611,6 +646,90 @@ export const AIStudio: React.FC = () => {
     setResultMeta(`${item.model} · ${item.roomType} · ${item.style}`);
   };
 
+  const handleMultiGenerate = async () => {
+    if (!uploadedImage || isMultiGenerating) return;
+
+    const roomSlots = selectedMultiRooms.map((room) => ({
+      slotKey: `room-${room}`,
+      label: `${room}場景`,
+      prompt: `針對${room}空間，維持原始設計風格與材質選材，輸出獨立場景的室內渲染圖，確保傢具、色調、設計語言與其他視角保持一致。`,
+    }));
+
+    const allSlots = [...FIXED_VIEW_SLOTS, ...roomSlots];
+
+    setMultiViewResults(
+      allSlots.map((slot) => ({ slotKey: slot.slotKey, label: slot.label, status: "idle" as const }))
+    );
+    setIsMultiGenerating(true);
+    setErrorMessage(null);
+
+    for (const slot of allSlots) {
+      setCurrentMultiSlot(slot.label);
+      setMultiViewResults((prev) =>
+        prev.map((r) => (r.slotKey === slot.slotKey ? { ...r, status: "generating" as const } : r))
+      );
+      try {
+        const mergedPrompt = [slot.prompt, selectedFunction.prompt, designerPrompt.trim()]
+          .filter(Boolean)
+          .join("\n");
+        const response = await fetch("/api/ai/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageDataUrl: uploadedImage,
+            roomType: slot.slotKey.startsWith("room-")
+              ? slot.label.replace("場景", "")
+              : selectedRoomType,
+            style: selectedFunction.name,
+            lockFace: false,
+            preserveIdentityStrict: false,
+            preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+            customPrompt: mergedPrompt,
+            creativity,
+          }),
+        });
+        const raw = await response.text();
+        const payload = raw
+          ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string })
+          : {};
+        if (!response.ok || !payload.imageDataUrl) {
+          throw new Error(payload.error || "AI 渲染失敗");
+        }
+        setMultiViewResults((prev) =>
+          prev.map((r) =>
+            r.slotKey === slot.slotKey
+              ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary }
+              : r
+          )
+        );
+        try {
+          await saveResultToServer({
+            imageDataUrl: payload.imageDataUrl!,
+            summary: payload.summary || `${slot.label} 渲染完成`,
+            modelTag: payload.model || "Gemini",
+          });
+        } catch {
+          // 忽略個別視角的儲存錯誤
+        }
+      } catch (error) {
+        setMultiViewResults((prev) =>
+          prev.map((r) =>
+            r.slotKey === slot.slotKey
+              ? {
+                  ...r,
+                  status: "error" as const,
+                  error: error instanceof Error ? error.message : "生成失敗",
+                }
+              : r
+          )
+        );
+      }
+    }
+
+    setIsMultiGenerating(false);
+    setCurrentMultiSlot("");
+  };
+
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
       <input
@@ -777,6 +896,60 @@ export const AIStudio: React.FC = () => {
             </div>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">輸出模式</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setViewMode("single")}
+                className={`p-2.5 rounded-lg border text-sm font-medium transition-colors ${
+                  viewMode === "single"
+                    ? "border-brand-500 bg-brand-50 text-brand-700 ring-1 ring-brand-500"
+                    : "border-gray-200 text-gray-600 hover:border-brand-300"
+                }`}
+              >
+                單張渲染
+              </button>
+              <button
+                onClick={() => setViewMode("multi")}
+                className={`p-2.5 rounded-lg border text-sm font-medium transition-colors ${
+                  viewMode === "multi"
+                    ? "border-brand-500 bg-brand-50 text-brand-700 ring-1 ring-brand-500"
+                    : "border-gray-200 text-gray-600 hover:border-brand-300"
+                }`}
+              >
+                多視角輸出
+              </button>
+            </div>
+          </div>
+
+          {viewMode === "multi" && (
+            <div className={!uploadedImage ? "opacity-50 pointer-events-none" : ""}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">視角 4+ 房間選擇</label>
+              <p className="text-[11px] text-gray-500 mb-2">
+                前三個視角（線稿、VRay、3D）固定生成，請選擇需要獨立輸出的房間場景
+              </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {ROOM_TYPE_OPTIONS.map((room) => (
+                  <button
+                    key={room}
+                    onClick={() =>
+                      setSelectedMultiRooms((prev) =>
+                        prev.includes(room) ? prev.filter((r) => r !== room) : [...prev, room]
+                      )
+                    }
+                    className={`p-1.5 text-xs rounded-lg border transition-colors ${
+                      selectedMultiRooms.includes(room)
+                        ? "border-brand-500 bg-brand-50 text-brand-700"
+                        : "border-gray-200 text-gray-600 hover:border-brand-300"
+                    }`}
+                  >
+                    {room}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {errorMessage && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               {errorMessage}
@@ -789,125 +962,255 @@ export const AIStudio: React.FC = () => {
           )}
         </div>
         <div className="p-4 border-t border-gray-100 bg-gray-50">
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-            <span>估計點數</span>
-            <span className="font-bold text-brand-600">2 點</span>
-          </div>
-          <Button fullWidth onClick={handleGenerate} disabled={!uploadedImage || isGenerating}>
-            {isGenerating ? (
-              <span className="flex items-center gap-2">
-                <RefreshCw className="animate-spin w-4 h-4" />
-                {generationStatusText}
-              </span>
-            ) : (
-              <span className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                生成室內渲染圖
-              </span>
-            )}
-          </Button>
+          {viewMode === "single" ? (
+            <>
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                <span>估計點數</span>
+                <span className="font-bold text-brand-600">2 點</span>
+              </div>
+              <Button fullWidth onClick={handleGenerate} disabled={!uploadedImage || isGenerating}>
+                {isGenerating ? (
+                  <span className="flex items-center gap-2">
+                    <RefreshCw className="animate-spin w-4 h-4" />
+                    {generationStatusText}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    生成室內渲染圖
+                  </span>
+                )}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                <span>估計點數</span>
+                <span className="font-bold text-brand-600">
+                  {(3 + selectedMultiRooms.length) * 2} 點
+                </span>
+              </div>
+              <Button
+                fullWidth
+                onClick={handleMultiGenerate}
+                disabled={!uploadedImage || isMultiGenerating}
+              >
+                {isMultiGenerating ? (
+                  <span className="flex items-center gap-2">
+                    <RefreshCw className="animate-spin w-4 h-4" />
+                    生成中：{currentMultiSlot}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Wand2 className="w-4 h-4" />
+                    生成多視角圖（{3 + selectedMultiRooms.length} 張）
+                  </span>
+                )}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
       <div className="flex-1 min-h-0 bg-gray-900/5 rounded-xl border border-gray-200 flex flex-col overflow-hidden relative">
-        {resultImage && !isGenerating && (
-          <div className="absolute top-4 right-4 z-10">
-            <button
-              onClick={handleDownload}
-              className="p-2 bg-brand-600 rounded-lg shadow-sm hover:bg-brand-700 text-white"
-              title="下載渲染結果"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        <div className="flex-1 min-h-0 flex items-center justify-center p-4 lg:p-8 relative overflow-hidden">
-          {!uploadedImage && !isGenerating && !resultImage && (
-            <div className="text-center text-gray-400">
-              <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
-                <ImageIcon className="w-10 h-10" />
-              </div>
-              <p className="text-lg font-medium">尚未生成渲染圖</p>
-              <p className="text-sm">請先上傳線稿或空間圖</p>
-            </div>
-          )}
-
-          {uploadedImage && !isGenerating && !resultImage && (
-            <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-              <img
-                src={uploadedImage}
-                alt="Sketch Preview"
-                className="h-full w-auto max-w-full max-h-full rounded-lg shadow-lg object-contain mx-auto"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-lg">
-                <span className="bg-white/90 px-4 py-2 rounded-full text-sm font-medium shadow-sm flex items-center gap-2">
-                  <Wand2 className="w-4 h-4 text-brand-600" /> 準備就緒，點擊生成渲染
-                </span>
-              </div>
-            </div>
-          )}
-
-          {isGenerating && (
-            <div className="flex flex-col items-center z-20 w-full max-w-md">
-              <div className="w-full bg-white p-6 rounded-xl shadow-lg border border-gray-100">
-                <div className="flex justify-between text-sm font-medium text-gray-900 mb-2">
-                  <span>AI 運算中...</span>
-                  <span>{Math.min(99, Math.max(8, generationProgress))}%</span>
-                </div>
-                <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
-                  <div
-                    className="bg-brand-600 h-2 rounded-full transition-all duration-500 ease-out"
-                    style={{ width: `${Math.min(99, Math.max(8, generationProgress))}%` }}
-                  />
-                </div>
-                <p className="text-xs text-gray-500 text-center animate-pulse">{generationStatusText}</p>
-              </div>
-            </div>
-          )}
-
-          {resultImage && !isGenerating && (
-            <img
-              src={resultImage}
-              alt="Interior Rendered Result"
-              className="h-full w-auto max-w-full max-h-full rounded-lg shadow-2xl object-contain mx-auto"
-            />
-          )}
-        </div>
-
-        <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3">
-          {resultSummary && (
-            <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 mb-3 max-h-24 overflow-y-auto">
-              <p className="text-xs font-semibold text-brand-700 mb-1">AI 設計說明</p>
-              <p className="text-xs text-brand-800 leading-relaxed whitespace-pre-wrap">{resultSummary}</p>
-              {resultMeta && <p className="text-[10px] text-brand-600 mt-2">{resultMeta}</p>}
-            </div>
-          )}
-          <div className="h-24 flex items-center gap-2 overflow-x-auto">
-            {renderHistory.length === 0 ? (
-              <div className="text-xs text-gray-400">
-                渲染歷史會顯示在這裡，並依使用者自動儲存至伺服器。
-              </div>
-            ) : (
-              renderHistory.map((item) => (
+        {viewMode === "single" ? (
+          <>
+            {resultImage && !isGenerating && (
+              <div className="absolute top-4 right-4 z-10">
                 <button
-                  key={item.id}
-                  onClick={() => handlePickHistory(item)}
-                  className="w-24 h-20 flex-shrink-0 bg-gray-100 rounded-lg border border-gray-200 hover:ring-2 hover:ring-brand-500 overflow-hidden"
-                  title={`${item.style} · ${item.roomType}`}
+                  onClick={handleDownload}
+                  className="p-2 bg-brand-600 rounded-lg shadow-sm hover:bg-brand-700 text-white"
+                  title="下載渲染結果"
                 >
-                  <img src={item.imageDataUrl} alt={`history-${item.id}`} className="w-full h-full object-contain bg-white" />
+                  <Download className="w-4 h-4" />
                 </button>
-              ))
+              </div>
             )}
-          </div>
-          {renderHistory.length > 0 && (
-            <div className="mt-2 flex items-center gap-1 text-[11px] text-gray-500">
-              <History className="w-3.5 h-3.5" />
-              點擊縮圖可快速回看歷史結果
+
+            <div className="flex-1 min-h-0 flex items-center justify-center p-4 lg:p-8 relative overflow-hidden">
+              {!uploadedImage && !isGenerating && !resultImage && (
+                <div className="text-center text-gray-400">
+                  <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <ImageIcon className="w-10 h-10" />
+                  </div>
+                  <p className="text-lg font-medium">尚未生成渲染圖</p>
+                  <p className="text-sm">請先上傳線稿或空間圖</p>
+                </div>
+              )}
+
+              {uploadedImage && !isGenerating && !resultImage && (
+                <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                  <img
+                    src={uploadedImage}
+                    alt="Sketch Preview"
+                    className="h-full w-auto max-w-full max-h-full rounded-lg shadow-lg object-contain mx-auto"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-lg">
+                    <span className="bg-white/90 px-4 py-2 rounded-full text-sm font-medium shadow-sm flex items-center gap-2">
+                      <Wand2 className="w-4 h-4 text-brand-600" /> 準備就緒，點擊生成渲染
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {isGenerating && (
+                <div className="flex flex-col items-center z-20 w-full max-w-md">
+                  <div className="w-full bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+                    <div className="flex justify-between text-sm font-medium text-gray-900 mb-2">
+                      <span>AI 運算中...</span>
+                      <span>{Math.min(99, Math.max(8, generationProgress))}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
+                      <div
+                        className="bg-brand-600 h-2 rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${Math.min(99, Math.max(8, generationProgress))}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 text-center animate-pulse">{generationStatusText}</p>
+                  </div>
+                </div>
+              )}
+
+              {resultImage && !isGenerating && (
+                <img
+                  src={resultImage}
+                  alt="Interior Rendered Result"
+                  className="h-full w-auto max-w-full max-h-full rounded-lg shadow-2xl object-contain mx-auto"
+                />
+              )}
             </div>
-          )}
-        </div>
+
+            <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+              {resultSummary && (
+                <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 mb-3 max-h-24 overflow-y-auto">
+                  <p className="text-xs font-semibold text-brand-700 mb-1">AI 設計說明</p>
+                  <p className="text-xs text-brand-800 leading-relaxed whitespace-pre-wrap">{resultSummary}</p>
+                  {resultMeta && <p className="text-[10px] text-brand-600 mt-2">{resultMeta}</p>}
+                </div>
+              )}
+              <div className="h-24 flex items-center gap-2 overflow-x-auto overflow-y-hidden">
+                {renderHistory.length === 0 ? (
+                  <div className="text-xs text-gray-400 shrink-0">
+                    渲染歷史會顯示在這裡，並依使用者自動儲存至伺服器。
+                  </div>
+                ) : (
+                  renderHistory.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => handlePickHistory(item)}
+                      className="w-24 h-20 flex-shrink-0 bg-gray-100 rounded-lg border border-gray-200 hover:ring-2 hover:ring-brand-500 overflow-hidden"
+                      title={`${item.style} · ${item.roomType}`}
+                    >
+                      <img src={item.imageDataUrl} alt={`history-${item.id}`} className="w-full h-full object-contain bg-white" />
+                    </button>
+                  ))
+                )}
+              </div>
+              {renderHistory.length > 0 && (
+                <div className="mt-2 flex items-center gap-1 text-[11px] text-gray-500">
+                  <History className="w-3.5 h-3.5" />
+                  點擊縮圖可快速回看歷史結果
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="px-4 py-3 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">多視角輸出</p>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  每張圖風格一致、內容物一致，依序生成
+                </p>
+              </div>
+              {multiViewResults.length > 0 && (
+                <span className="text-xs text-gray-500">
+                  {multiViewResults.filter((r) => r.status === "done").length} / {multiViewResults.length} 完成
+                </span>
+              )}
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto p-4">
+              {multiViewResults.length === 0 ? (
+                <div className="h-full min-h-[240px] flex items-center justify-center text-gray-400">
+                  <div className="text-center">
+                    <ImageIcon className="w-14 h-14 mx-auto mb-3 opacity-20" />
+                    <p className="text-sm font-medium">尚未開始多視角生成</p>
+                    <p className="text-xs mt-1 text-gray-400 max-w-xs">
+                      上傳底圖後，選擇需要輸出的房間場景，點擊左側「生成多視角圖」
+                    </p>
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-[11px] text-gray-500 max-w-xs mx-auto">
+                      {FIXED_VIEW_SLOTS.map((slot, i) => (
+                        <div key={slot.slotKey} className="bg-gray-100 rounded-lg px-2 py-1.5 text-center">
+                          <span className="font-medium text-gray-600">{i + 1}.</span> {slot.label}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {multiViewResults.map((result, index) => (
+                    <div
+                      key={result.slotKey}
+                      className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
+                    >
+                      <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold flex items-center justify-center shrink-0">
+                            {index + 1}
+                          </span>
+                          <span className="text-sm font-medium text-gray-700">{result.label}</span>
+                        </div>
+                        {result.status === "generating" && (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-600" />
+                        )}
+                        {result.status === "done" && result.imageDataUrl && (
+                          <button
+                            onClick={() => {
+                              const link = document.createElement("a");
+                              link.href = result.imageDataUrl!;
+                              link.download = `${result.label}-${formatFileDate()}.png`;
+                              link.click();
+                            }}
+                            className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-700 transition-colors"
+                            title="下載此視角圖"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="aspect-[4/3] bg-gray-50 flex items-center justify-center relative overflow-hidden">
+                        {result.status === "idle" && (
+                          <p className="text-xs text-gray-400">等待生成...</p>
+                        )}
+                        {result.status === "generating" && (
+                          <div className="text-center text-brand-600">
+                            <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-2" />
+                            <p className="text-xs">AI 生成中...</p>
+                          </div>
+                        )}
+                        {result.status === "done" && result.imageDataUrl && (
+                          <img
+                            src={result.imageDataUrl}
+                            alt={result.label}
+                            className="w-full h-full object-contain"
+                          />
+                        )}
+                        {result.status === "error" && (
+                          <div className="text-center text-red-500 px-4">
+                            <p className="text-xs font-medium">生成失敗</p>
+                            <p className="text-[11px] mt-1 text-red-400">{result.error}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
