@@ -3,6 +3,7 @@ import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
   Download,
+  Edit3,
   Image as ImageIcon,
   RefreshCw,
   Sliders,
@@ -11,6 +12,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { SlotImageEditor } from "./SlotImageEditor";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
 interface RenderHistoryItem {
@@ -265,16 +267,18 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     group: "section",
     referenceSource: "colored-handdrawn",
     prompt:
-      "Create a 3D bird's-eye view floor plan (剖透圖-俯視角度, bird's eye 3D floor plan). " +
+      "Create a 3D bird's-eye perspective view of this floor plan (剖透圖-俯視角度). " +
       "STRICT RULES: " +
       "(1) Keep every room and furniture piece in the EXACT same position as the input plan. " +
-      "(2) Camera is positioned HIGH ABOVE and tilted FORWARD — elevation angle approximately 60-70° from horizontal. " +
-      "You must be able to see the SIDE FACES of walls (wall thickness and height visible). " +
-      "The front wall of the building appears closer/larger than the back wall due to perspective. " +
-      "(3) Walls are full height (2.7m) with roof removed. 3D furniture inside. " +
-      "(4) This must look DIFFERENT from a flat top-down view — the slight forward tilt creates visible depth and perspective. " +
-      "(5) Clean background (white or light beige). Style = real estate 3D apartment floor plan visualization. " +
-      "(6) NOT 90° top-down. The camera MUST have a visible forward tilt showing wall sides.",
+      "(2) Camera elevation = approximately 50-55° from horizontal (looking down at a steep angle from one side). " +
+      "This means the camera is NOT directly above — it is clearly offset to one side, showing a STRONG perspective effect: " +
+      "rooms closer to camera appear LARGER, rooms farther away appear SMALLER. " +
+      "The BACK walls are clearly visible as vertical surfaces. Front walls are cut low or removed. " +
+      "(3) All walls rendered at full 2.7m height (not cut at 1m). Roof removed. " +
+      "You can see the TOP of furniture AND the FRONT/SIDE of furniture simultaneously. " +
+      "(4) This MUST look dramatically different from a flat top-down view. " +
+      "Imagine standing on a tall ladder at the edge of the apartment looking down and across. " +
+      "(5) Clean white/beige background. Photorealistic 3D rendering quality.",
   },
   {
     slotKey: "section-oblique",
@@ -405,6 +409,7 @@ export const AIStudio: React.FC = () => {
   const [labeledFloorPlan, setLabeledFloorPlan] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeCustomPrompt, setAnalyzeCustomPrompt] = useState("");
+  const [editingSlot, setEditingSlot] = useState<{ slotKey: string; imageDataUrl: string; label: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1039,6 +1044,83 @@ export const AIStudio: React.FC = () => {
     }
   }, [isAnalyzing, isMultiGenerating, uploadedImage, selectedModel, analyzeCustomPrompt, saveResultToServer, sessionPackageId, sessionPackageLabel]);
 
+  // 局部調整：將帶標記的圖片送回 AI 重新生成
+  const handleApplySlotEdit = useCallback(
+    async (annotatedImageDataUrl: string, editPrompt: string) => {
+      if (!editingSlot) return;
+      const slotKey = editingSlot.slotKey;
+
+      setMultiViewResults((prev) =>
+        prev.map((r) => (r.slotKey === slotKey ? { ...r, status: "generating" as const } : r))
+      );
+
+      const slotDef = FIXED_VIEW_SLOTS.find((s) => s.slotKey === slotKey);
+      const style = slotDef?.label || editingSlot.label;
+
+      try {
+        const response = await fetch("/api/ai/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageDataUrl: annotatedImageDataUrl,
+            roomType: "全室整合",
+            style: `${style} 局部調整`,
+            lockFace: false,
+            preserveIdentityStrict: false,
+            preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+            customPrompt:
+              "This image has areas highlighted with semi-transparent red brush strokes. " +
+              "ONLY modify the content INSIDE the red-marked areas according to this instruction: " +
+              editPrompt +
+              ". Keep everything OUTSIDE the red-marked areas COMPLETELY UNCHANGED — " +
+              "same furniture, same colors, same materials, same layout, pixel-level identical.",
+            creativity: 5,
+          }),
+        });
+        const raw = await response.text();
+        const payload = raw
+          ? (JSON.parse(raw) as Partial<{ imageDataUrl: string; summary: string; model: string; error: string }>)
+          : {};
+        if (!response.ok || !payload.imageDataUrl) {
+          throw new Error(payload.error || "局部調整失敗");
+        }
+
+        setMultiViewResults((prev) =>
+          prev.map((r) =>
+            r.slotKey === slotKey
+              ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary }
+              : r
+          )
+        );
+
+        // 如果是標示平面圖，更新 labeledFloorPlan
+        if (slotKey === "labeled-floor-plan" && payload.imageDataUrl) {
+          setLabeledFloorPlan(payload.imageDataUrl);
+        }
+
+        // 儲存
+        void saveResultToServer({
+          imageDataUrl: payload.imageDataUrl!,
+          summary: payload.summary || `${style} 局部調整完成`,
+          modelTag: payload.model || "Gemini",
+          packageId: sessionPackageId,
+          packageLabel: sessionPackageLabel,
+          slotLabel: `${style}（局部調整）`,
+        }).catch(() => {});
+      } catch (error) {
+        setMultiViewResults((prev) =>
+          prev.map((r) =>
+            r.slotKey === slotKey
+              ? { ...r, status: "done" as const, error: error instanceof Error ? error.message : "局部調整失敗" }
+              : r
+          )
+        );
+      }
+      setEditingSlot(null);
+    },
+    [editingSlot, selectedModel, saveResultToServer, sessionPackageId, sessionPackageLabel],
+  );
+
   // 一鍵生成所有剩餘（按照 slot 順序，使用本地 completedImages 確保鏈式一致性）
   const handleGenerateAllRemaining = useCallback(async () => {
     if (isMultiGenerating || !labeledFloorPlan) return;
@@ -1647,18 +1729,29 @@ export const AIStudio: React.FC = () => {
                               <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-600" />
                             )}
                             {result.status === "done" && result.imageDataUrl && (
-                              <button
-                                onClick={() => {
-                                  const link = document.createElement("a");
-                                  link.href = result.imageDataUrl!;
-                                  link.download = `${result.label}-${formatFileDate()}.png`;
-                                  link.click();
-                                }}
-                                className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-700 transition-colors"
-                                title="下載"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                              </button>
+                              <>
+                                <button
+                                  onClick={() =>
+                                    setEditingSlot({ slotKey: result.slotKey, imageDataUrl: result.imageDataUrl!, label: result.label })
+                                  }
+                                  className="p-1 hover:bg-brand-100 rounded text-gray-400 hover:text-brand-600 transition-colors"
+                                  title="局部調整"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const link = document.createElement("a");
+                                    link.href = result.imageDataUrl!;
+                                    link.download = `${result.label}-${formatFileDate()}.png`;
+                                    link.click();
+                                  }}
+                                  className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-700 transition-colors"
+                                  title="下載"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -1790,6 +1883,16 @@ export const AIStudio: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* 局部調整編輯器 */}
+      {editingSlot && (
+        <SlotImageEditor
+          imageDataUrl={editingSlot.imageDataUrl}
+          slotLabel={editingSlot.label}
+          onApply={handleApplySlotEdit}
+          onClose={() => setEditingSlot(null)}
+        />
+      )}
     </div>
   );
 };
