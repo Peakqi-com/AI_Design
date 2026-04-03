@@ -237,13 +237,14 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     slotKey: "section-birds-eye",
     label: "剖透圖-俯視角度",
     group: "section",
-    referenceSource: "section-top",
+    referenceSource: "colored-handdrawn",
     prompt:
-      "根據這張 3D 上視剖透圖，生成「剖透圖-俯視角度」。" +
+      "根據這張彩色俯視平面圖，生成「3D 剖透圖-俯視角度」（bird's eye 3D floor plan）。" +
       "嚴格保持所有房間格局、傢具位置與數量完全不變。" +
-      "渲染角度：相機從頂視向下傾斜 25-30 度（俯仰角約 60-65°），從正上偏前方的角度俯瞰整個空間，" +
-      "可清楚看到牆面厚度側面與地板，3D 立體感明顯，風格類似「3D apartment floor plan bird's eye view」，" +
-      "整棟建築可見，白色或米色背景。",
+      "渲染方式：相機從空間正上方向斜前方傾斜 30-40 度（俯仰角約 55-60°），建築四面牆保留至 2.7 公尺高，" +
+      "從略高於屋頂的前斜方俯瞰，能同時看到牆面厚度側面與地板，所有傢具立體 3D 呈現。" +
+      "整棟建築清晰可見，乾淨米白或淺灰背景，風格類似「3D apartment floor plan」標準展示圖，" +
+      "不能是正上方 90 度俯視，相機必須有明顯的前傾斜角。",
   },
   {
     slotKey: "section-oblique",
@@ -357,7 +358,11 @@ export const AIStudio: React.FC = () => {
   const [isMultiGenerating, setIsMultiGenerating] = useState(false);
   const [currentMultiSlot, setCurrentMultiSlot] = useState("");
   // 多視角三階段流程
-  const [multiPhase, setMultiPhase] = useState<"setup" | "analyzing" | "review" | "generating" | "done">("setup");
+  const [multiPhase, setMultiPhase] = useState<"setup" | "analyzing" | "review" | "steps" | "done">("setup");
+  const [sessionPackageId, setSessionPackageId] = useState("");
+  const [sessionPackageLabel, setSessionPackageLabel] = useState("");
+  const [slotCustomPrompts, setSlotCustomPrompts] = useState<Record<string, string>>({});
+  const [slotPromptExpanded, setSlotPromptExpanded] = useState<Record<string, boolean>>({});
   const [labeledFloorPlan, setLabeledFloorPlan] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -534,6 +539,12 @@ export const AIStudio: React.FC = () => {
     },
     [designerPrompt, projects, selectedFunction.name, selectedProjectId, selectedRoomType],
   );
+
+  const getCompletedImageDataUrl = useCallback((slotKey: string): string | null => {
+    if (slotKey === "labeled-floor-plan") return labeledFloorPlan;
+    const r = multiViewResults.find((x) => x.slotKey === slotKey);
+    return r?.status === "done" && r.imageDataUrl ? r.imageDataUrl : null;
+  }, [labeledFloorPlan, multiViewResults]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -804,12 +815,12 @@ export const AIStudio: React.FC = () => {
     }
   };
 
-  // 第二步：依 8 種固定視角（2 條生成鏈）依序生成
-  const handleMultiGenerate = async () => {
-    if (!labeledFloorPlan || isMultiGenerating) return;
-
+  // 第二步：確認標示圖後進入逐步生成模式
+  const handleStartSteps = useCallback(() => {
+    if (!labeledFloorPlan) return;
     const { packageId, packageLabel } = generatePackageId();
-
+    setSessionPackageId(packageId);
+    setSessionPackageLabel(packageLabel);
     const initialResults: MultiViewResult[] = [
       {
         slotKey: "labeled-floor-plan",
@@ -821,39 +832,109 @@ export const AIStudio: React.FC = () => {
       ...FIXED_VIEW_SLOTS.map((slot) => ({ slotKey: slot.slotKey, label: slot.label, status: "idle" as const })),
     ];
     setMultiViewResults(initialResults);
-    setIsMultiGenerating(true);
-    setMultiPhase("generating");
+    setMultiPhase("steps");
     setErrorMessage(null);
+    void saveResultToServer({
+      imageDataUrl: labeledFloorPlan,
+      summary: "AI 標示平面圖",
+      modelTag: selectedModel || "Gemini",
+      packageId,
+      packageLabel,
+      slotLabel: "標示平面圖",
+    }).catch(() => {});
+  }, [labeledFloorPlan, saveResultToServer, selectedModel]);
 
-    // 儲存標示平面圖
+  // 生成單一視角
+  const handleGenerateSingleSlot = useCallback(async (slot: ViewSlotDef) => {
+    if (isMultiGenerating) return;
+    const referenceImage = getCompletedImageDataUrl(slot.referenceSource);
+    if (!referenceImage) return;
+
+    setIsMultiGenerating(true);
+    setCurrentMultiSlot(slot.slotKey);
+    setMultiViewResults((prev) =>
+      prev.map((r) => (r.slotKey === slot.slotKey ? { ...r, status: "generating" as const } : r))
+    );
+
+    const customExtra = (slotCustomPrompts[slot.slotKey] || "").trim();
+    const mergedPrompt = [slot.prompt, customExtra, designerPrompt.trim()].filter(Boolean).join("\n");
+
     try {
-      await saveResultToServer({
-        imageDataUrl: labeledFloorPlan,
-        summary: "AI 標示平面圖",
-        modelTag: selectedModel || "Gemini",
-        packageId,
-        packageLabel,
-        slotLabel: "標示平面圖",
+      const response = await fetch("/api/ai/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: referenceImage,
+          roomType: "全室整合",
+          style: slot.label,
+          lockFace: false,
+          preserveIdentityStrict: false,
+          preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+          customPrompt: mergedPrompt,
+          creativity: 5,
+        }),
       });
-    } catch {
-      // 忽略儲存錯誤
-    }
+      const raw = await response.text();
+      const payload = raw ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string }) : {};
+      if (!response.ok || !payload.imageDataUrl) throw new Error(payload.error || "AI 渲染失敗");
 
-    // 記錄每個 slotKey 對應的生成結果 imageDataUrl，供後續 slot 引用（串聯一致性）
+      setMultiViewResults((prev) =>
+        prev.map((r) =>
+          r.slotKey === slot.slotKey
+            ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary }
+            : r
+        )
+      );
+      void saveResultToServer({
+        imageDataUrl: payload.imageDataUrl!,
+        summary: payload.summary || `${slot.label} 完成`,
+        modelTag: payload.model || "Gemini",
+        packageId: sessionPackageId,
+        packageLabel: sessionPackageLabel,
+        slotLabel: slot.label,
+      }).catch(() => {});
+    } catch (error) {
+      setMultiViewResults((prev) =>
+        prev.map((r) =>
+          r.slotKey === slot.slotKey
+            ? { ...r, status: "error" as const, error: error instanceof Error ? error.message : "生成失敗" }
+            : r
+        )
+      );
+    } finally {
+      setIsMultiGenerating(false);
+      setCurrentMultiSlot("");
+    }
+  }, [isMultiGenerating, getCompletedImageDataUrl, slotCustomPrompts, designerPrompt, selectedModel, saveResultToServer, sessionPackageId, sessionPackageLabel]);
+
+  // 一鍵生成所有剩餘（按照 slot 順序，使用本地 completedImages 確保鏈式一致性）
+  const handleGenerateAllRemaining = useCallback(async () => {
+    if (isMultiGenerating || !labeledFloorPlan) return;
+
     const completedImages = new Map<string, string>();
     completedImages.set("labeled-floor-plan", labeledFloorPlan);
+    multiViewResults.forEach((r) => {
+      if (r.status === "done" && r.imageDataUrl) completedImages.set(r.slotKey, r.imageDataUrl);
+    });
+
+    setIsMultiGenerating(true);
 
     for (const slot of FIXED_VIEW_SLOTS) {
-      setCurrentMultiSlot(slot.label);
+      const existing = multiViewResults.find((r) => r.slotKey === slot.slotKey);
+      if (existing?.status === "done") continue;
+
+      const referenceImage = completedImages.get(slot.referenceSource);
+      if (!referenceImage) continue;
+
+      setCurrentMultiSlot(slot.slotKey);
       setMultiViewResults((prev) =>
         prev.map((r) => (r.slotKey === slot.slotKey ? { ...r, status: "generating" as const } : r))
       );
 
-      // 選取參考圖：優先用前一張已生成的結果，確保格局嚴格一致
-      const referenceImage = completedImages.get(slot.referenceSource) ?? labeledFloorPlan;
+      const customExtra = (slotCustomPrompts[slot.slotKey] || "").trim();
+      const mergedPrompt = [slot.prompt, customExtra, designerPrompt.trim()].filter(Boolean).join("\n");
 
       try {
-        const mergedPrompt = [slot.prompt, designerPrompt.trim()].filter(Boolean).join("\n");
         const response = await fetch("/api/ai/render", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -865,18 +946,14 @@ export const AIStudio: React.FC = () => {
             preserveIdentityStrict: false,
             preferredModel: selectedModel === "auto" ? undefined : selectedModel,
             customPrompt: mergedPrompt,
-            creativity: 5, // 極低創意度，確保格局高度一致
+            creativity: 5,
           }),
         });
         const raw = await response.text();
         const payload = raw ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string }) : {};
-        if (!response.ok || !payload.imageDataUrl) {
-          throw new Error(payload.error || "AI 渲染失敗");
-        }
+        if (!response.ok || !payload.imageDataUrl) throw new Error(payload.error || "AI 渲染失敗");
 
-        // 將此結果存入 map，供後續 slot 引用
         completedImages.set(slot.slotKey, payload.imageDataUrl);
-
         setMultiViewResults((prev) =>
           prev.map((r) =>
             r.slotKey === slot.slotKey
@@ -884,18 +961,14 @@ export const AIStudio: React.FC = () => {
               : r
           )
         );
-        try {
-          await saveResultToServer({
-            imageDataUrl: payload.imageDataUrl!,
-            summary: payload.summary || `${slot.label} 完成`,
-            modelTag: payload.model || "Gemini",
-            packageId,
-            packageLabel,
-            slotLabel: slot.label,
-          });
-        } catch {
-          // 忽略個別視角儲存錯誤
-        }
+        void saveResultToServer({
+          imageDataUrl: payload.imageDataUrl!,
+          summary: payload.summary || `${slot.label} 完成`,
+          modelTag: payload.model || "Gemini",
+          packageId: sessionPackageId,
+          packageLabel: sessionPackageLabel,
+          slotLabel: slot.label,
+        }).catch(() => {});
       } catch (error) {
         setMultiViewResults((prev) =>
           prev.map((r) =>
@@ -910,12 +983,16 @@ export const AIStudio: React.FC = () => {
     setIsMultiGenerating(false);
     setCurrentMultiSlot("");
     setMultiPhase("done");
-  };
+  }, [isMultiGenerating, labeledFloorPlan, multiViewResults, slotCustomPrompts, designerPrompt, selectedModel, saveResultToServer, sessionPackageId, sessionPackageLabel]);
 
   const handleMultiReset = () => {
     setMultiPhase("setup");
     setLabeledFloorPlan(null);
     setMultiViewResults([]);
+    setSessionPackageId("");
+    setSessionPackageLabel("");
+    setSlotCustomPrompts({});
+    setSlotPromptExpanded({});
     setErrorMessage(null);
   };
 
@@ -1167,16 +1244,16 @@ export const AIStudio: React.FC = () => {
           ) : multiPhase === "review" ? (
             <>
               <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                <span>第二步・確認後生成 8 張</span>
+                <span>第二步・確認格局</span>
                 <span className="font-bold text-brand-600">16 點</span>
               </div>
               <Button
                 fullWidth
-                onClick={handleMultiGenerate}
+                onClick={handleStartSteps}
               >
                 <span className="flex items-center gap-2">
                   <Wand2 className="w-4 h-4" />
-                  開始生成（彩色 4 + 剖透 4）
+                  確認，進入逐步生成
                 </span>
               </Button>
               <button
@@ -1186,13 +1263,33 @@ export const AIStudio: React.FC = () => {
                 重新分析
               </button>
             </>
-          ) : multiPhase === "generating" ? (
-            <Button fullWidth disabled>
-              <span className="flex items-center gap-2">
-                <RefreshCw className="animate-spin w-4 h-4" />
-                生成中：{currentMultiSlot}
-              </span>
-            </Button>
+          ) : multiPhase === "steps" ? (
+            <>
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                <span>
+                  {multiViewResults.filter((r) => r.slotKey !== "labeled-floor-plan" && r.status === "done").length} / 8 完成
+                </span>
+                {isMultiGenerating && (
+                  <span className="text-brand-600 font-medium animate-pulse text-[11px]">生成中...</span>
+                )}
+              </div>
+              <Button
+                fullWidth
+                onClick={() => void handleGenerateAllRemaining()}
+                disabled={isMultiGenerating}
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  一鍵生成剩餘
+                </span>
+              </Button>
+              <button
+                onClick={handleMultiReset}
+                className="w-full mt-2 text-xs text-gray-400 hover:text-gray-600 py-1"
+              >
+                重新開始
+              </button>
+            </>
           ) : (
             <>
               <div className="text-xs text-green-600 text-center mb-2 font-medium">
@@ -1294,14 +1391,14 @@ export const AIStudio: React.FC = () => {
               <div>
                 <p className="text-sm font-semibold text-gray-800">多視角輸出</p>
                 <p className="text-[11px] text-gray-500 mt-0.5">
-                  {multiPhase === "setup" && "上傳平面圖 → AI 識別空間 → 依序生成"}
-                  {multiPhase === "analyzing" && "AI 正在分析平面圖空間配置..."}
-                  {multiPhase === "review" && "標示平面圖已完成，確認後生成 8 張視角圖"}
-                  {multiPhase === "generating" && `生成中：${currentMultiSlot}`}
+                  {multiPhase === "setup" && "上傳平面圖 → AI 標示空間 → 逐步生成"}
+                  {multiPhase === "analyzing" && "AI 正在分析平面圖..."}
+                  {multiPhase === "review" && "標示平面圖已完成，確認格局後進入逐步生成"}
+                  {multiPhase === "steps" && (isMultiGenerating ? `生成中：${currentMultiSlot}` : "點擊各視角的「生成」按鈕，或一鍵生成剩餘")}
                   {multiPhase === "done" && "全部生成完成，已儲存至媒體庫"}
                 </p>
               </div>
-              {(multiPhase === "generating" || multiPhase === "done") && multiViewResults.length > 0 && (
+              {(multiPhase === "steps" || multiPhase === "done") && multiViewResults.length > 0 && (
                 <span className="text-xs text-gray-500 shrink-0">
                   {multiViewResults.filter((r) => r.status === "done").length} / {multiViewResults.length} 完成
                 </span>
@@ -1368,59 +1465,115 @@ export const AIStudio: React.FC = () => {
                 </div>
               )}
 
-              {/* 生成中 / 完成：顯示結果 grid */}
-              {(multiPhase === "generating" || multiPhase === "done") && (
+              {/* 逐步生成 / 完成：顯示每個 slot 卡片 */}
+              {(multiPhase === "steps" || multiPhase === "done") && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {multiViewResults.map((result, index) => (
-                    <div
-                      key={result.slotKey}
-                      className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
-                    >
-                      <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold flex items-center justify-center shrink-0">
-                            {index + 1}
-                          </span>
-                          <span className="text-sm font-medium text-gray-700">{result.label}</span>
+                  {multiViewResults.map((result, index) => {
+                    const slotDef = FIXED_VIEW_SLOTS.find((s) => s.slotKey === result.slotKey);
+                    const refDone = slotDef ? getCompletedImageDataUrl(slotDef.referenceSource) !== null : true;
+                    const canGenerate = slotDef && refDone && result.status !== "generating" && result.status !== "done" && !isMultiGenerating;
+                    const isExpanded = slotPromptExpanded[result.slotKey] || false;
+                    return (
+                      <div
+                        key={result.slotKey}
+                        className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
+                      >
+                        {/* 卡片標頭 */}
+                        <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0 ${result.status === "done" ? "bg-green-100 text-green-700" : "bg-brand-100 text-brand-700"}`}>
+                              {result.status === "done" ? "✓" : index + 1}
+                            </span>
+                            <span className="text-sm font-medium text-gray-700 truncate">{result.label}</span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {result.status === "generating" && (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-600" />
+                            )}
+                            {result.status === "done" && result.imageDataUrl && (
+                              <button
+                                onClick={() => {
+                                  const link = document.createElement("a");
+                                  link.href = result.imageDataUrl!;
+                                  link.download = `${result.label}-${formatFileDate()}.png`;
+                                  link.click();
+                                }}
+                                className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-700 transition-colors"
+                                title="下載"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        {result.status === "generating" && (
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-600" />
-                        )}
-                        {result.status === "done" && result.imageDataUrl && (
-                          <button
-                            onClick={() => {
-                              const link = document.createElement("a");
-                              link.href = result.imageDataUrl!;
-                              link.download = `${result.label}-${formatFileDate()}.png`;
-                              link.click();
-                            }}
-                            className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-700 transition-colors"
-                            title="下載此視角圖"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                      <div className="aspect-[4/3] bg-gray-50 flex items-center justify-center relative overflow-hidden">
-                        {result.status === "idle" && <p className="text-xs text-gray-400">等待生成...</p>}
-                        {result.status === "generating" && (
-                          <div className="text-center text-brand-600">
-                            <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-2" />
-                            <p className="text-xs">AI 生成中...</p>
+
+                        {/* 圖片區 */}
+                        <div className="aspect-[4/3] bg-gray-50 flex items-center justify-center relative overflow-hidden">
+                          {result.status === "idle" && (
+                            <p className="text-xs text-gray-400">{refDone ? "準備就緒" : "等待前置視角完成"}</p>
+                          )}
+                          {result.status === "generating" && (
+                            <div className="text-center text-brand-600">
+                              <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-2" />
+                              <p className="text-xs">AI 生成中...</p>
+                            </div>
+                          )}
+                          {result.status === "done" && result.imageDataUrl && (
+                            <img src={result.imageDataUrl} alt={result.label} className="w-full h-full object-contain" />
+                          )}
+                          {result.status === "error" && (
+                            <div className="text-center text-red-500 px-4">
+                              <p className="text-xs font-medium">生成失敗</p>
+                              <p className="text-[11px] mt-1 text-red-400">{result.error}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 自定義提示詞 + 生成按鈕（idle / error 狀態才顯示） */}
+                        {slotDef && (result.status === "idle" || result.status === "error") && (
+                          <div className="px-3 py-2 border-t border-gray-100 space-y-2">
+                            <button
+                              onClick={() =>
+                                setSlotPromptExpanded((prev) => ({ ...prev, [result.slotKey]: !isExpanded }))
+                              }
+                              className="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-1"
+                            >
+                              ✏️ {isExpanded ? "收起提示詞" : "調整提示詞（選填）"}
+                            </button>
+                            {isExpanded && (
+                              <textarea
+                                value={slotCustomPrompts[result.slotKey] || ""}
+                                onChange={(e) =>
+                                  setSlotCustomPrompts((prev) => ({ ...prev, [result.slotKey]: e.target.value }))
+                                }
+                                placeholder="補充風格、材質、色調等調整指令..."
+                                className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border h-16 resize-none"
+                              />
+                            )}
+                            <button
+                              onClick={() => void handleGenerateSingleSlot(slotDef)}
+                              disabled={!canGenerate}
+                              className={`w-full py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                                canGenerate
+                                  ? "bg-brand-600 text-white hover:bg-brand-700"
+                                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                              }`}
+                            >
+                              {result.status === "error" ? (
+                                <>
+                                  <RefreshCw className="w-3 h-3" /> 重新生成
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="w-3 h-3" /> 生成
+                                </>
+                              )}
+                            </button>
                           </div>
                         )}
-                        {result.status === "done" && result.imageDataUrl && (
-                          <img src={result.imageDataUrl} alt={result.label} className="w-full h-full object-contain" />
-                        )}
-                        {result.status === "error" && (
-                          <div className="text-center text-red-500 px-4">
-                            <p className="text-xs font-medium">生成失敗</p>
-                            <p className="text-[11px] mt-1 text-red-400">{result.error}</p>
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
