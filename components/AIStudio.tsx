@@ -166,22 +166,103 @@ const OUTPUT_QUALITY_OPTIONS = [
 ] as const;
 
 const ANALYZE_FLOOR_PLAN_PROMPT =
-  "請仔細分析這張建築平面圖，輸出一張清晰的標示版平面圖：(1) 保留所有牆面、門窗、傢具輪廓，以黑白線條呈現俯視圖。(2) 根據平面圖實際內容，在每個空間內用繁體中文標示空間名稱，不要憑空新增不存在的空間。(3) 說明文字最後請加入以下格式的空間清單：SPACES_JSON:{\"spaces\":[\"空間名稱1\",\"空間名稱2\",...]}";
+  "請仔細分析這張建築平面圖，輸出一張清晰的標示版平面圖：保留所有牆面、門窗、傢具輪廓，以黑白線條呈現正上方俯視圖，根據平面圖實際內容在每個空間內用繁體中文標示空間名稱，不要新增不存在的空間，確保格局與原圖完全一致。";
 
-const FIXED_VIEW_SLOTS = [
+interface ViewSlotDef {
+  slotKey: string;
+  label: string;
+  group: "colored" | "section";
+  referenceSource: string; // "labeled-floor-plan" 或前一個 slotKey
+  prompt: string;
+}
+
+const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
   {
-    slotKey: "vray",
-    label: "VRay 全室渲染",
+    slotKey: "colored-handdrawn",
+    label: "彩色平面圖-手繪",
+    group: "colored",
+    referenceSource: "labeled-floor-plan",
     prompt:
-      "根據這張已標示的平面圖，生成整體空間的 VRay 寫實效果圖。嚴格依照平面圖的空間格局、傢具數量與位置，不添加平面圖中沒有的物件，加入精確燈光計算、材質反射與陰影層次，輸出高品質全室視角效果圖。",
+      "請將這張標示版平面圖轉換成台灣室內設計慣用的「彩色手繪平面圖」風格。" +
+      "嚴格規則：(1) 保持原始平面圖所有牆面走向、門窗位置、每件傢具的擺放位置與數量完全不變，不得新增、移除或移動任何物件。" +
+      "(2) 以溫潤水彩筆觸填色，傢具從正上方俯視繪製，呈現設計師手繪提案圖的專業質感。" +
+      "(3) 視角必須是嚴格正上方俯視（90度，不允許任何透視傾斜）。",
   },
   {
-    slotKey: "2d5-view",
-    label: "2.5D 俯視透視",
+    slotKey: "colored-cartoon",
+    label: "彩色平面圖-卡通",
+    group: "colored",
+    referenceSource: "colored-handdrawn",
     prompt:
-      "將此平面圖以 2.5D 等角俯視方式立體化，略微傾斜約 25 度，完整保留平面圖中所有傢具配置、牆面結構與格局，輸出等角投影立體平面圖，不要生成透視室內實景圖。",
+      "請將這張彩色手繪平面圖轉換成「卡通平面圖」風格。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 改用扁平化卡通插圖風格，色彩明亮飽和，線條乾淨粗獷。" +
+      "(3) 視角保持正上方俯視（90度）。",
   },
-] as const;
+  {
+    slotKey: "colored-noshadow",
+    label: "彩色平面圖-無陰影",
+    group: "colored",
+    referenceSource: "colored-handdrawn",
+    prompt:
+      "請將這張彩色手繪平面圖轉換成「無陰影彩色平面圖」風格。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 移除所有陰影與漸層，改用完全扁平純色填充，呈現乾淨 CAD 彩圖風格。" +
+      "(3) 視角保持正上方俯視（90度）。",
+  },
+  {
+    slotKey: "colored-realistic",
+    label: "彩色平面圖-擬真",
+    group: "colored",
+    referenceSource: "colored-handdrawn",
+    prompt:
+      "請將這張彩色手繪平面圖轉換成「擬真俯視平面渲染圖」風格。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 以照片寫實材質呈現地板、傢具（真實木紋、石材、布料紋理），加入自然光由上照射的陰影。" +
+      "(3) 視角保持正上方俯視（90度）。",
+  },
+  {
+    slotKey: "section-top",
+    label: "剖透圖-上視角度",
+    group: "section",
+    referenceSource: "colored-handdrawn",
+    prompt:
+      "請將這張彩色平面圖轉換成「3D 剖透圖-上視角度」。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 牆面在 1 公尺高度橫向剖切，相機從正上方（90度）俯視，傢具立體化但從正上方看，白色或淺灰牆面。" +
+      "(3) 風格參考專業「3D Floor Plan」產品圖。",
+  },
+  {
+    slotKey: "section-birds-eye",
+    label: "剖透圖-俯視角度",
+    group: "section",
+    referenceSource: "section-top",
+    prompt:
+      "請將這張 3D 上視剖透圖轉換成「剖透圖-俯視角度」（略微傾斜視角）。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 相機從正上方向下傾斜約 15-20 度，讓空間帶有輕微立體透視感，能看到部分牆面高度。",
+  },
+  {
+    slotKey: "section-oblique",
+    label: "剖透圖-斜角度",
+    group: "section",
+    referenceSource: "section-top",
+    prompt:
+      "請將這張 3D 上視剖透圖轉換成「剖透圖-斜角度」（45度斜視角）。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 相機調整至約 45 度斜角，從空間對角方向觀看，可看到完整牆面高度與室內立體配置，呈現 isometric 3D 剖透圖效果。",
+  },
+  {
+    slotKey: "section-3d",
+    label: "剖透圖-立體模型",
+    group: "section",
+    referenceSource: "section-top",
+    prompt:
+      "請將這張 3D 上視剖透圖轉換成「全 3D 立體模型展示圖」。" +
+      "嚴格規則：(1) 所有傢具位置、牆面格局、門窗位置必須與輸入圖完全一致，不得移動、新增或移除任何物件。" +
+      "(2) 以完整 3D 建築模型方式呈現，顯示完整牆高、室內傢具細節，isometric 展示角度，質感達到 SketchUp/3ds Max 建築模型水準。",
+  },
+];
 
 const SAMPLE_SKETCH_URL =
   "https://images.unsplash.com/photo-1460317442991-0ec209397118?auto=format&fit=crop&q=80&w=1600";
@@ -269,9 +350,7 @@ export const AIStudio: React.FC = () => {
   // 多視角三階段流程
   const [multiPhase, setMultiPhase] = useState<"setup" | "analyzing" | "review" | "generating" | "done">("setup");
   const [labeledFloorPlan, setLabeledFloorPlan] = useState<string | null>(null);
-  const [identifiedSpaces, setIdentifiedSpaces] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [newSpaceInput, setNewSpaceInput] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -699,23 +778,6 @@ export const AIStudio: React.FC = () => {
         throw new Error(payload.error || "分析失敗，請重試");
       }
       setLabeledFloorPlan(payload.imageDataUrl);
-
-      // 從 summary 解析空間清單
-      let spaces: string[] = [];
-      try {
-        const match = payload.summary?.match(/SPACES_JSON:\s*(\{[^}]*\})/);
-        if (match) {
-          const parsed = JSON.parse(match[1]) as { spaces?: string[] };
-          spaces = parsed.spaces || [];
-        }
-      } catch {
-        // fallback: 使用預設空間
-      }
-      // 若 AI 無法解析，使用常見預設值
-      if (spaces.length === 0) {
-        spaces = ["客廳", "主臥室", "廚房", "衛浴"];
-      }
-      setIdentifiedSpaces(spaces);
       setMultiPhase("review");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "平面圖分析失敗，請重試");
@@ -725,21 +787,12 @@ export const AIStudio: React.FC = () => {
     }
   };
 
-  // 第二步：依識別空間生成所有視角
+  // 第二步：依 8 種固定視角（2 條生成鏈）依序生成
   const handleMultiGenerate = async () => {
-    if (!labeledFloorPlan || isMultiGenerating || identifiedSpaces.length === 0) return;
+    if (!labeledFloorPlan || isMultiGenerating) return;
 
     const { packageId, packageLabel } = generatePackageId();
 
-    const roomSlots = identifiedSpaces.map((space) => ({
-      slotKey: `room-${space}`,
-      label: space,
-      prompt: `根據這張已標示的平面圖，生成「${space}」空間的室內透視效果圖。嚴格按照平面圖中${space}區域的實際位置、大小、傢具數量與類型，不添加平面圖中沒有的傢具或裝飾，整體材質、色調與設計語言統一。`,
-    }));
-
-    const allSlots = [...FIXED_VIEW_SLOTS, ...roomSlots];
-
-    // 將已分析的標示平面圖作為第一張（已完成）
     const initialResults: MultiViewResult[] = [
       {
         slotKey: "labeled-floor-plan",
@@ -748,14 +801,14 @@ export const AIStudio: React.FC = () => {
         imageDataUrl: labeledFloorPlan,
         summary: "AI 已識別空間並標示完成",
       },
-      ...allSlots.map((slot) => ({ slotKey: slot.slotKey, label: slot.label, status: "idle" as const })),
+      ...FIXED_VIEW_SLOTS.map((slot) => ({ slotKey: slot.slotKey, label: slot.label, status: "idle" as const })),
     ];
     setMultiViewResults(initialResults);
     setIsMultiGenerating(true);
     setMultiPhase("generating");
     setErrorMessage(null);
 
-    // 先儲存標示平面圖
+    // 儲存標示平面圖
     try {
       await saveResultToServer({
         imageDataUrl: labeledFloorPlan,
@@ -769,25 +822,33 @@ export const AIStudio: React.FC = () => {
       // 忽略儲存錯誤
     }
 
-    for (const slot of allSlots) {
+    // 記錄每個 slotKey 對應的生成結果 imageDataUrl，供後續 slot 引用（串聯一致性）
+    const completedImages = new Map<string, string>();
+    completedImages.set("labeled-floor-plan", labeledFloorPlan);
+
+    for (const slot of FIXED_VIEW_SLOTS) {
       setCurrentMultiSlot(slot.label);
       setMultiViewResults((prev) =>
         prev.map((r) => (r.slotKey === slot.slotKey ? { ...r, status: "generating" as const } : r))
       );
+
+      // 選取參考圖：優先用前一張已生成的結果，確保格局嚴格一致
+      const referenceImage = completedImages.get(slot.referenceSource) ?? labeledFloorPlan;
+
       try {
         const mergedPrompt = [slot.prompt, designerPrompt.trim()].filter(Boolean).join("\n");
         const response = await fetch("/api/ai/render", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imageDataUrl: labeledFloorPlan,
-            roomType: slot.slotKey.startsWith("room-") ? slot.label : "全室整合",
-            style: selectedFunction.name,
+            imageDataUrl: referenceImage,
+            roomType: "全室整合",
+            style: slot.label,
             lockFace: false,
             preserveIdentityStrict: false,
             preferredModel: selectedModel === "auto" ? undefined : selectedModel,
             customPrompt: mergedPrompt,
-            creativity,
+            creativity: 5, // 極低創意度，確保格局高度一致
           }),
         });
         const raw = await response.text();
@@ -795,6 +856,10 @@ export const AIStudio: React.FC = () => {
         if (!response.ok || !payload.imageDataUrl) {
           throw new Error(payload.error || "AI 渲染失敗");
         }
+
+        // 將此結果存入 map，供後續 slot 引用
+        completedImages.set(slot.slotKey, payload.imageDataUrl);
+
         setMultiViewResults((prev) =>
           prev.map((r) =>
             r.slotKey === slot.slotKey
@@ -805,14 +870,14 @@ export const AIStudio: React.FC = () => {
         try {
           await saveResultToServer({
             imageDataUrl: payload.imageDataUrl!,
-            summary: payload.summary || `${slot.label} 渲染完成`,
+            summary: payload.summary || `${slot.label} 完成`,
             modelTag: payload.model || "Gemini",
             packageId,
             packageLabel,
             slotLabel: slot.label,
           });
         } catch {
-          // 忽略個別視角的儲存錯誤
+          // 忽略個別視角儲存錯誤
         }
       } catch (error) {
         setMultiViewResults((prev) =>
@@ -833,7 +898,6 @@ export const AIStudio: React.FC = () => {
   const handleMultiReset = () => {
     setMultiPhase("setup");
     setLabeledFloorPlan(null);
-    setIdentifiedSpaces([]);
     setMultiViewResults([]);
     setErrorMessage(null);
   };
@@ -1030,56 +1094,6 @@ export const AIStudio: React.FC = () => {
             </div>
           </div>
 
-          {/* 多視角：review 階段的空間確認 */}
-          {viewMode === "multi" && multiPhase === "review" && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">已識別空間</label>
-              <p className="text-[11px] text-gray-500 mb-2">
-                AI 從平面圖識別出以下空間，可新增或移除後再生成
-              </p>
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {identifiedSpaces.map((space) => (
-                  <span
-                    key={space}
-                    className="inline-flex items-center gap-1 px-2 py-1 bg-brand-50 border border-brand-200 text-brand-700 text-xs rounded-full"
-                  >
-                    {space}
-                    <button
-                      onClick={() => setIdentifiedSpaces((prev) => prev.filter((s) => s !== space))}
-                      className="text-brand-400 hover:text-red-500 transition-colors"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-1.5">
-                <input
-                  value={newSpaceInput}
-                  onChange={(e) => setNewSpaceInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && newSpaceInput.trim()) {
-                      setIdentifiedSpaces((prev) => [...prev, newSpaceInput.trim()]);
-                      setNewSpaceInput("");
-                    }
-                  }}
-                  placeholder="新增空間名稱..."
-                  className="flex-1 text-xs border-gray-300 rounded-lg p-2 bg-white border"
-                />
-                <button
-                  onClick={() => {
-                    if (newSpaceInput.trim()) {
-                      setIdentifiedSpaces((prev) => [...prev, newSpaceInput.trim()]);
-                      setNewSpaceInput("");
-                    }
-                  }}
-                  className="px-3 py-2 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700"
-                >
-                  新增
-                </button>
-              </div>
-            </div>
-          )}
 
           {errorMessage && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -1136,17 +1150,16 @@ export const AIStudio: React.FC = () => {
           ) : multiPhase === "review" ? (
             <>
               <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                <span>第二步</span>
-                <span className="font-bold text-brand-600">{(2 + identifiedSpaces.length) * 2} 點</span>
+                <span>第二步・確認後生成 8 張</span>
+                <span className="font-bold text-brand-600">16 點</span>
               </div>
               <Button
                 fullWidth
                 onClick={handleMultiGenerate}
-                disabled={identifiedSpaces.length === 0}
               >
                 <span className="flex items-center gap-2">
                   <Wand2 className="w-4 h-4" />
-                  開始生成（{2 + identifiedSpaces.length} 張）
+                  開始生成（彩色 4 + 剖透 4）
                 </span>
               </Button>
               <button
@@ -1266,7 +1279,7 @@ export const AIStudio: React.FC = () => {
                 <p className="text-[11px] text-gray-500 mt-0.5">
                   {multiPhase === "setup" && "上傳平面圖 → AI 識別空間 → 依序生成"}
                   {multiPhase === "analyzing" && "AI 正在分析平面圖空間配置..."}
-                  {multiPhase === "review" && `已識別 ${identifiedSpaces.length} 個空間，確認後即可生成`}
+                  {multiPhase === "review" && "標示平面圖已完成，確認後生成 8 張視角圖"}
                   {multiPhase === "generating" && `生成中：${currentMultiSlot}`}
                   {multiPhase === "done" && "全部生成完成，已儲存至媒體庫"}
                 </p>
@@ -1329,8 +1342,11 @@ export const AIStudio: React.FC = () => {
                       className="w-full object-contain max-h-96"
                     />
                   </div>
-                  <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-xs text-brand-700">
-                    將生成：標示平面圖（已完成）+ VRay 全室渲染 + 2.5D 俯視 + {identifiedSpaces.length} 個空間場景，共 {2 + identifiedSpaces.length + 1} 張
+                  <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-xs text-brand-700 space-y-1">
+                    <p className="font-semibold">將生成 8 張（2 條串聯生成鏈）</p>
+                    <p className="text-brand-600">彩色鏈：手繪 → 卡通 → 無陰影 → 擬真</p>
+                    <p className="text-brand-600">剖透鏈：上視 → 俯視 → 斜角 → 立體模型</p>
+                    <p className="text-[11px] text-brand-500 mt-1">每張圖以前一張為參考，確保傢具格局嚴格一致</p>
                   </div>
                 </div>
               )}
