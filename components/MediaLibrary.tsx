@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Download, Film, FolderOpen, Image as ImageIcon, RefreshCw, X } from "lucide-react";
+import { Download, Film, FolderOpen, Image as ImageIcon, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
 interface AssetMeta {
@@ -22,6 +22,7 @@ interface MediaAsset {
   kind: "image" | "video";
   url: string;
   createdAt: string;
+  deletedAt?: string;
   meta?: AssetMeta;
 }
 
@@ -32,7 +33,7 @@ interface AssetPackage {
   createdAt: string;
 }
 
-type Tab = "single" | "packages" | "videos";
+type Tab = "single" | "packages" | "videos" | "trash";
 
 export const MediaLibrary: React.FC = () => {
   const { data: session } = useSession();
@@ -42,6 +43,8 @@ export const MediaLibrary: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("single");
   const [expandedPackageId, setExpandedPackageId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<MediaAsset | null>(null);
+  const [trashItems, setTrashItems] = useState<MediaAsset[]>([]);
+  const [isTrashLoading, setIsTrashLoading] = useState(false);
 
   useEffect(() => {
     const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
@@ -64,9 +67,49 @@ export const MediaLibrary: React.FC = () => {
     }
   }, [userScopeId]);
 
+  const loadTrash = useCallback(async () => {
+    if (!userScopeId) return;
+    setIsTrashLoading(true);
+    try {
+      const res = await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&limit=200&trash=1`);
+      const data = (await res.json()) as { items?: MediaAsset[] };
+      setTrashItems(data.items || []);
+    } catch {
+      // ignore
+    } finally {
+      setIsTrashLoading(false);
+    }
+  }, [userScopeId]);
+
+  const handleDelete = useCallback(async (assetId: string) => {
+    await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&assetId=${encodeURIComponent(assetId)}`, { method: "DELETE" });
+    setAssets((prev) => prev.filter((a) => a.id !== assetId));
+  }, [userScopeId]);
+
+  const handleRestore = useCallback(async (assetId: string) => {
+    await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&assetId=${encodeURIComponent(assetId)}`, { method: "PATCH" });
+    setTrashItems((prev) => prev.filter((a) => a.id !== assetId));
+    void loadAssets();
+  }, [userScopeId, loadAssets]);
+
+  const handlePermanentDelete = useCallback(async (assetId: string) => {
+    await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&assetId=${encodeURIComponent(assetId)}&permanent=1`, { method: "DELETE" });
+    setTrashItems((prev) => prev.filter((a) => a.id !== assetId));
+  }, [userScopeId]);
+
+  const handleEmptyTrash = useCallback(async () => {
+    if (!confirm("確定要清除所有垃圾桶內容嗎？此操作無法復原。")) return;
+    await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&action=empty-trash`, { method: "DELETE" });
+    setTrashItems([]);
+  }, [userScopeId]);
+
   useEffect(() => {
     void loadAssets();
   }, [loadAssets]);
+
+  useEffect(() => {
+    if (activeTab === "trash") void loadTrash();
+  }, [activeTab, loadTrash]);
 
   // 分類素材
   const singleImages = assets.filter(
@@ -141,6 +184,10 @@ export const MediaLibrary: React.FC = () => {
           <Film className="w-3.5 h-3.5" />
           影片（{videos.length}）
         </button>
+        <button onClick={() => setActiveTab("trash")} className={tabCls("trash")}>
+          <Trash2 className="w-3.5 h-3.5" />
+          垃圾桶{trashItems.length > 0 ? `（${trashItems.length}）` : ""}
+        </button>
       </div>
 
       {/* 內容區 */}
@@ -158,7 +205,7 @@ export const MediaLibrary: React.FC = () => {
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   {singleImages.map((item) => (
-                    <ImageCard key={item.id} item={item} onPreview={setPreviewItem} onDownload={handleDownload} />
+                    <ImageCard key={item.id} item={item} onPreview={setPreviewItem} onDownload={handleDownload} onDelete={handleDelete} />
                   ))}
                 </div>
               )
@@ -215,6 +262,7 @@ export const MediaLibrary: React.FC = () => {
                                 item={item}
                                 onPreview={setPreviewItem}
                                 onDownload={handleDownload}
+                                onDelete={handleDelete}
                               />
                             ))}
                           </div>
@@ -233,8 +281,41 @@ export const MediaLibrary: React.FC = () => {
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {videos.map((item) => (
-                    <VideoCard key={item.id} item={item} onDownload={handleDownload} />
+                    <VideoCard key={item.id} item={item} onDownload={handleDownload} onDelete={handleDelete} />
                   ))}
+                </div>
+              )
+            )}
+
+            {/* 垃圾桶 */}
+            {activeTab === "trash" && (
+              isTrashLoading ? (
+                <div className="flex items-center justify-center h-40">
+                  <RefreshCw className="w-6 h-6 animate-spin text-brand-600" />
+                </div>
+              ) : trashItems.length === 0 ? (
+                <EmptyState icon={<Trash2 className="w-10 h-10 opacity-20" />} label="垃圾桶是空的" hint="刪除的素材會保留 30 天，到期後自動永久刪除" />
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-500">共 {trashItems.length} 個項目・30 天後自動永久刪除</p>
+                    <button
+                      onClick={() => void handleEmptyTrash()}
+                      className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-3 py-1 rounded-lg transition-colors"
+                    >
+                      清除垃圾桶
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {trashItems.map((item) => (
+                      <TrashCard
+                        key={item.id}
+                        item={item}
+                        onRestore={handleRestore}
+                        onPermanentDelete={handlePermanentDelete}
+                      />
+                    ))}
+                  </div>
                 </div>
               )
             )}
@@ -316,7 +397,8 @@ const ImageCard: React.FC<{
   item: MediaAsset;
   onPreview: (item: MediaAsset) => void;
   onDownload: (url: string, name: string) => void;
-}> = ({ item, onPreview, onDownload }) => (
+  onDelete?: (id: string) => void;
+}> = ({ item, onPreview, onDownload, onDelete }) => (
   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
     <button
       className="block w-full aspect-[4/3] bg-gray-100 overflow-hidden"
@@ -350,6 +432,18 @@ const ImageCard: React.FC<{
       >
         <Download className="w-3.5 h-3.5" />
       </button>
+      {onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(item.id);
+          }}
+          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md shrink-0 transition-colors"
+          title="移至垃圾桶"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   </div>
 );
@@ -357,7 +451,8 @@ const ImageCard: React.FC<{
 const VideoCard: React.FC<{
   item: MediaAsset;
   onDownload: (url: string, name: string) => void;
-}> = ({ item, onDownload }) => (
+  onDelete?: (id: string) => void;
+}> = ({ item, onDownload, onDelete }) => (
   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
     <div className="relative aspect-video bg-gray-900 overflow-hidden">
       <video
@@ -395,6 +490,62 @@ const VideoCard: React.FC<{
       >
         <Download className="w-3.5 h-3.5" />
       </button>
+      {onDelete && (
+        <button
+          onClick={() => onDelete(item.id)}
+          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md shrink-0 transition-colors"
+          title="移至垃圾桶"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   </div>
 );
+
+const TrashCard: React.FC<{
+  item: MediaAsset;
+  onRestore: (id: string) => void;
+  onPermanentDelete: (id: string) => void;
+}> = ({ item, onRestore, onPermanentDelete }) => {
+  const daysLeft = item.deletedAt
+    ? Math.max(0, 30 - Math.floor((Date.now() - new Date(item.deletedAt).getTime()) / (1000 * 60 * 60 * 24)))
+    : 30;
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden group opacity-75 hover:opacity-100 transition-opacity">
+      <div className="aspect-[4/3] bg-gray-100 flex items-center justify-center overflow-hidden relative">
+        {item.kind === "video" ? (
+          <video src={item.url} className="w-full h-full object-contain" muted preload="metadata" />
+        ) : (
+          <img src={item.url} alt="trash" className="w-full h-full object-cover" />
+        )}
+        <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 text-white text-[9px] rounded">
+          {daysLeft} 天後刪除
+        </div>
+      </div>
+      <div className="px-2.5 py-2">
+        <p className="text-[10px] text-gray-500 truncate mb-1.5">
+          {item.meta?.slotLabel || item.meta?.style || (item.kind === "video" ? "影片" : "圖片")}
+        </p>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => onRestore(item.id)}
+            className="flex-1 flex items-center justify-center gap-1 py-1 text-[11px] bg-brand-50 text-brand-700 hover:bg-brand-100 rounded-md transition-colors"
+            title="還原"
+          >
+            <RotateCcw className="w-3 h-3" /> 還原
+          </button>
+          <button
+            onClick={() => {
+              if (confirm("確定永久刪除？此操作無法復原。")) onPermanentDelete(item.id);
+            }}
+            className="flex-1 flex items-center justify-center gap-1 py-1 text-[11px] bg-red-50 text-red-600 hover:bg-red-100 rounded-md transition-colors"
+            title="永久刪除"
+          >
+            <Trash2 className="w-3 h-3" /> 永久刪除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

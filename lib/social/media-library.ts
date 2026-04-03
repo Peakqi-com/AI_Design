@@ -57,6 +57,7 @@ interface SocialAssetRecord {
   mimeType: string;
   size: number;
   createdAt: string;
+  deletedAt?: string; // soft-delete timestamp; undefined = active
   meta: SocialAssetMeta;
   storage: SocialAssetStorage;
 }
@@ -74,6 +75,7 @@ export interface SocialAssetItem {
   mimeType: string;
   size: number;
   createdAt: string;
+  deletedAt?: string;
   url: string;
   meta: SocialAssetMeta;
 }
@@ -219,6 +221,7 @@ const toClientItem = (record: SocialAssetRecord): SocialAssetItem => ({
   mimeType: record.mimeType,
   size: record.size,
   createdAt: record.createdAt,
+  deletedAt: record.deletedAt,
   url: `/api/social/assets/${record.id}/file?userId=${encodeURIComponent(record.userId)}`,
   meta: record.meta || {},
 });
@@ -383,16 +386,36 @@ const persistAssetDataToFileOrInline = async (
   }
 };
 
+const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 export async function listSocialAssets(input: {
   userId: string;
   kind?: SocialAssetKind;
   limit?: number;
+  trash?: boolean; // true = list trash items only
 }): Promise<SocialAssetItem[]> {
   const userId = normalizeUserId(input.userId);
   const store = await getStore();
-  const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 24)));
+  const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 24)));
+  const now = Date.now();
+
+  // Auto-purge items that have been in trash > 30 days
+  const autoPurged: SocialAssetRecord[] = [];
+  store.items = store.items.filter((item) => {
+    if (item.deletedAt && now - new Date(item.deletedAt).getTime() > TRASH_TTL_MS) {
+      autoPurged.push(item);
+      return false;
+    }
+    return true;
+  });
+  if (autoPurged.length > 0) {
+    await saveStore(store);
+    await Promise.all(autoPurged.map((item) => removeAssetFileSafe(item)));
+  }
+
   const filtered = store.items
     .filter((item) => item.userId === userId)
+    .filter((item) => (input.trash ? Boolean(item.deletedAt) : !item.deletedAt))
     .filter((item) => (input.kind ? item.kind === input.kind : true))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, limit);
@@ -498,4 +521,54 @@ export async function readSocialAssetFile(input: {
   }
 
   return null;
+}
+
+export async function softDeleteSocialAsset(input: {
+  assetId: string;
+  userId: string;
+}): Promise<boolean> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const record = store.items.find((item) => item.id === input.assetId && item.userId === userId && !item.deletedAt);
+  if (!record) return false;
+  record.deletedAt = new Date().toISOString();
+  await saveStore(store);
+  return true;
+}
+
+export async function restoreSocialAsset(input: {
+  assetId: string;
+  userId: string;
+}): Promise<boolean> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const record = store.items.find((item) => item.id === input.assetId && item.userId === userId && item.deletedAt);
+  if (!record) return false;
+  delete record.deletedAt;
+  await saveStore(store);
+  return true;
+}
+
+export async function permanentDeleteSocialAsset(input: {
+  assetId: string;
+  userId: string;
+}): Promise<boolean> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const idx = store.items.findIndex((item) => item.id === input.assetId && item.userId === userId);
+  if (idx === -1) return false;
+  const [removed] = store.items.splice(idx, 1);
+  await saveStore(store);
+  await removeAssetFileSafe(removed);
+  return true;
+}
+
+export async function emptyTrash(input: { userId: string }): Promise<number> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const toDelete = store.items.filter((item) => item.userId === userId && item.deletedAt);
+  store.items = store.items.filter((item) => !(item.userId === userId && item.deletedAt));
+  await saveStore(store);
+  await Promise.all(toDelete.map((item) => removeAssetFileSafe(item)));
+  return toDelete.length;
 }
