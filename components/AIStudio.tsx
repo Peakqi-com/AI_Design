@@ -757,10 +757,14 @@ export const AIStudio: React.FC = () => {
     setMultiPhase("analyzing");
     setErrorMessage(null);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 110_000); // 110 秒前端逾時
+
     try {
       const response = await fetch("/api/ai/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           imageDataUrl: uploadedImage,
           roomType: "全室整合",
@@ -780,9 +784,13 @@ export const AIStudio: React.FC = () => {
       setLabeledFloorPlan(payload.imageDataUrl);
       setMultiPhase("review");
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "平面圖分析失敗，請重試");
+      const msg = err instanceof Error
+        ? (err.name === "AbortError" ? "分析超時（逾 110 秒），請重試或換較小的圖片" : err.message)
+        : "平面圖分析失敗，請重試";
+      setErrorMessage(msg);
       setMultiPhase("setup");
     } finally {
+      clearTimeout(timeoutId);
       setIsAnalyzing(false);
     }
   };
@@ -1323,7 +1331,7 @@ export const AIStudio: React.FC = () => {
                   <div className="text-center">
                     <RefreshCw className="w-10 h-10 animate-spin text-brand-600 mx-auto mb-3" />
                     <p className="text-sm font-medium text-gray-700">AI 正在分析平面圖...</p>
-                    <p className="text-xs text-gray-400 mt-1">識別空間名稱與配置，約需 20–40 秒</p>
+                    <p className="text-xs text-gray-400 mt-1">生成標示版底圖，約需 40–90 秒，請耐心等待</p>
                   </div>
                 </div>
               )}

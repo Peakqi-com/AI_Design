@@ -4,6 +4,7 @@ import { generateInteriorRender } from "@/lib/ai/interior-render";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 type RenderBody = {
   imageDataUrl?: string;
