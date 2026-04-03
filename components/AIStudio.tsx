@@ -165,24 +165,21 @@ const OUTPUT_QUALITY_OPTIONS = [
   { value: "hd2x", label: "高清 2x（較清晰）" },
 ] as const;
 
+const ANALYZE_FLOOR_PLAN_PROMPT =
+  "請仔細分析這張建築平面圖，輸出一張清晰的標示版平面圖：(1) 保留所有牆面、門窗、傢具輪廓，以黑白線條呈現俯視圖。(2) 根據平面圖實際內容，在每個空間內用繁體中文標示空間名稱，不要憑空新增不存在的空間。(3) 說明文字最後請加入以下格式的空間清單：SPACES_JSON:{\"spaces\":[\"空間名稱1\",\"空間名稱2\",...]}";
+
 const FIXED_VIEW_SLOTS = [
   {
-    slotKey: "linedrawing",
-    label: "線稿平面圖",
-    prompt:
-      "將圖片解讀為室內平面規劃，以清晰線條標示牆面、開口、傢具配置與動線，保留原始空間比例，輸出乾淨的線稿風格平面圖。",
-  },
-  {
     slotKey: "vray",
-    label: "VRay 渲染圖",
+    label: "VRay 全室渲染",
     prompt:
-      "以 VRay 寫實渲染風格重建空間，加入精確的燈光計算、材質反射、陰影層次，輸出高品質室內效果圖，與原始空間風格一致。",
+      "根據這張已標示的平面圖，生成整體空間的 VRay 寫實效果圖。嚴格依照平面圖的空間格局、傢具數量與位置，不添加平面圖中沒有的物件，加入精確燈光計算、材質反射與陰影層次，輸出高品質全室視角效果圖。",
   },
   {
-    slotKey: "3d-angle",
+    slotKey: "2d5-view",
     label: "2.5D 俯視透視",
     prompt:
-      "將此平面圖以 2.5D 等角俯視方式呈現，保持從正上方略微傾斜約 25 度的視角，維持平面圖內所有傢具配置、牆面結構與格局完全不變，輸出立體化的等角投影平面圖，不要生成透視室內實景圖。",
+      "將此平面圖以 2.5D 等角俯視方式立體化，略微傾斜約 25 度，完整保留平面圖中所有傢具配置、牆面結構與格局，輸出等角投影立體平面圖，不要生成透視室內實景圖。",
   },
 ] as const;
 
@@ -267,9 +264,14 @@ export const AIStudio: React.FC = () => {
   const [projectRecordNotice, setProjectRecordNotice] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"single" | "multi">("single");
   const [multiViewResults, setMultiViewResults] = useState<MultiViewResult[]>([]);
-  const [selectedMultiRooms, setSelectedMultiRooms] = useState<string[]>(["客廳", "主臥"]);
   const [isMultiGenerating, setIsMultiGenerating] = useState(false);
   const [currentMultiSlot, setCurrentMultiSlot] = useState("");
+  // 多視角三階段流程
+  const [multiPhase, setMultiPhase] = useState<"setup" | "analyzing" | "review" | "generating" | "done">("setup");
+  const [labeledFloorPlan, setLabeledFloorPlan] = useState<string | null>(null);
+  const [identifiedSpaces, setIdentifiedSpaces] = useState<string[]>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [newSpaceInput, setNewSpaceInput] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -669,24 +671,103 @@ export const AIStudio: React.FC = () => {
     setResultMeta(`${item.model} · ${item.roomType} · ${item.style}`);
   };
 
+  // 第一步：分析平面圖空間
+  const handleAnalyzeFloorPlan = async () => {
+    if (!uploadedImage || isAnalyzing) return;
+    setIsAnalyzing(true);
+    setMultiPhase("analyzing");
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/ai/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: uploadedImage,
+          roomType: "全室整合",
+          style: "平面圖分析",
+          lockFace: false,
+          preserveIdentityStrict: false,
+          preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+          customPrompt: ANALYZE_FLOOR_PLAN_PROMPT,
+          creativity: 10,
+        }),
+      });
+      const raw = await response.text();
+      const payload = raw ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string }) : {};
+      if (!response.ok || !payload.imageDataUrl) {
+        throw new Error(payload.error || "分析失敗，請重試");
+      }
+      setLabeledFloorPlan(payload.imageDataUrl);
+
+      // 從 summary 解析空間清單
+      let spaces: string[] = [];
+      try {
+        const match = payload.summary?.match(/SPACES_JSON:\s*(\{[^}]*\})/);
+        if (match) {
+          const parsed = JSON.parse(match[1]) as { spaces?: string[] };
+          spaces = parsed.spaces || [];
+        }
+      } catch {
+        // fallback: 使用預設空間
+      }
+      // 若 AI 無法解析，使用常見預設值
+      if (spaces.length === 0) {
+        spaces = ["客廳", "主臥室", "廚房", "衛浴"];
+      }
+      setIdentifiedSpaces(spaces);
+      setMultiPhase("review");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "平面圖分析失敗，請重試");
+      setMultiPhase("setup");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 第二步：依識別空間生成所有視角
   const handleMultiGenerate = async () => {
-    if (!uploadedImage || isMultiGenerating) return;
+    if (!labeledFloorPlan || isMultiGenerating || identifiedSpaces.length === 0) return;
 
     const { packageId, packageLabel } = generatePackageId();
 
-    const roomSlots = selectedMultiRooms.map((room) => ({
-      slotKey: `room-${room}`,
-      label: `${room}場景`,
-      prompt: `針對${room}空間，維持原始設計風格與材質選材，輸出獨立場景的室內渲染圖，確保傢具、色調、設計語言與其他視角保持一致。`,
+    const roomSlots = identifiedSpaces.map((space) => ({
+      slotKey: `room-${space}`,
+      label: space,
+      prompt: `根據這張已標示的平面圖，生成「${space}」空間的室內透視效果圖。嚴格按照平面圖中${space}區域的實際位置、大小、傢具數量與類型，不添加平面圖中沒有的傢具或裝飾，整體材質、色調與設計語言統一。`,
     }));
 
     const allSlots = [...FIXED_VIEW_SLOTS, ...roomSlots];
 
-    setMultiViewResults(
-      allSlots.map((slot) => ({ slotKey: slot.slotKey, label: slot.label, status: "idle" as const }))
-    );
+    // 將已分析的標示平面圖作為第一張（已完成）
+    const initialResults: MultiViewResult[] = [
+      {
+        slotKey: "labeled-floor-plan",
+        label: "標示平面圖",
+        status: "done",
+        imageDataUrl: labeledFloorPlan,
+        summary: "AI 已識別空間並標示完成",
+      },
+      ...allSlots.map((slot) => ({ slotKey: slot.slotKey, label: slot.label, status: "idle" as const })),
+    ];
+    setMultiViewResults(initialResults);
     setIsMultiGenerating(true);
+    setMultiPhase("generating");
     setErrorMessage(null);
+
+    // 先儲存標示平面圖
+    try {
+      await saveResultToServer({
+        imageDataUrl: labeledFloorPlan,
+        summary: "AI 標示平面圖",
+        modelTag: selectedModel || "Gemini",
+        packageId,
+        packageLabel,
+        slotLabel: "標示平面圖",
+      });
+    } catch {
+      // 忽略儲存錯誤
+    }
 
     for (const slot of allSlots) {
       setCurrentMultiSlot(slot.label);
@@ -694,17 +775,13 @@ export const AIStudio: React.FC = () => {
         prev.map((r) => (r.slotKey === slot.slotKey ? { ...r, status: "generating" as const } : r))
       );
       try {
-        const mergedPrompt = [slot.prompt, selectedFunction.prompt, designerPrompt.trim()]
-          .filter(Boolean)
-          .join("\n");
+        const mergedPrompt = [slot.prompt, designerPrompt.trim()].filter(Boolean).join("\n");
         const response = await fetch("/api/ai/render", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imageDataUrl: uploadedImage,
-            roomType: slot.slotKey.startsWith("room-")
-              ? slot.label.replace("場景", "")
-              : selectedRoomType,
+            imageDataUrl: labeledFloorPlan,
+            roomType: slot.slotKey.startsWith("room-") ? slot.label : "全室整合",
             style: selectedFunction.name,
             lockFace: false,
             preserveIdentityStrict: false,
@@ -714,9 +791,7 @@ export const AIStudio: React.FC = () => {
           }),
         });
         const raw = await response.text();
-        const payload = raw
-          ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string })
-          : {};
+        const payload = raw ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string }) : {};
         if (!response.ok || !payload.imageDataUrl) {
           throw new Error(payload.error || "AI 渲染失敗");
         }
@@ -743,11 +818,7 @@ export const AIStudio: React.FC = () => {
         setMultiViewResults((prev) =>
           prev.map((r) =>
             r.slotKey === slot.slotKey
-              ? {
-                  ...r,
-                  status: "error" as const,
-                  error: error instanceof Error ? error.message : "生成失敗",
-                }
+              ? { ...r, status: "error" as const, error: error instanceof Error ? error.message : "生成失敗" }
               : r
           )
         );
@@ -756,6 +827,15 @@ export const AIStudio: React.FC = () => {
 
     setIsMultiGenerating(false);
     setCurrentMultiSlot("");
+    setMultiPhase("done");
+  };
+
+  const handleMultiReset = () => {
+    setMultiPhase("setup");
+    setLabeledFloorPlan(null);
+    setIdentifiedSpaces([]);
+    setMultiViewResults([]);
+    setErrorMessage(null);
   };
 
   return (
@@ -928,7 +1008,7 @@ export const AIStudio: React.FC = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">輸出模式</label>
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => setViewMode("single")}
+                onClick={() => { setViewMode("single"); handleMultiReset(); }}
                 className={`p-2.5 rounded-lg border text-sm font-medium transition-colors ${
                   viewMode === "single"
                     ? "border-brand-500 bg-brand-50 text-brand-700 ring-1 ring-brand-500"
@@ -950,30 +1030,53 @@ export const AIStudio: React.FC = () => {
             </div>
           </div>
 
-          {viewMode === "multi" && (
-            <div className={!uploadedImage ? "opacity-50 pointer-events-none" : ""}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">視角 4+ 房間選擇</label>
+          {/* 多視角：review 階段的空間確認 */}
+          {viewMode === "multi" && multiPhase === "review" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">已識別空間</label>
               <p className="text-[11px] text-gray-500 mb-2">
-                前三個視角（線稿、VRay、3D）固定生成，請選擇需要獨立輸出的房間場景
+                AI 從平面圖識別出以下空間，可新增或移除後再生成
               </p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {ROOM_TYPE_OPTIONS.map((room) => (
-                  <button
-                    key={room}
-                    onClick={() =>
-                      setSelectedMultiRooms((prev) =>
-                        prev.includes(room) ? prev.filter((r) => r !== room) : [...prev, room]
-                      )
-                    }
-                    className={`p-1.5 text-xs rounded-lg border transition-colors ${
-                      selectedMultiRooms.includes(room)
-                        ? "border-brand-500 bg-brand-50 text-brand-700"
-                        : "border-gray-200 text-gray-600 hover:border-brand-300"
-                    }`}
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {identifiedSpaces.map((space) => (
+                  <span
+                    key={space}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-brand-50 border border-brand-200 text-brand-700 text-xs rounded-full"
                   >
-                    {room}
-                  </button>
+                    {space}
+                    <button
+                      onClick={() => setIdentifiedSpaces((prev) => prev.filter((s) => s !== space))}
+                      className="text-brand-400 hover:text-red-500 transition-colors"
+                    >
+                      ×
+                    </button>
+                  </span>
                 ))}
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  value={newSpaceInput}
+                  onChange={(e) => setNewSpaceInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newSpaceInput.trim()) {
+                      setIdentifiedSpaces((prev) => [...prev, newSpaceInput.trim()]);
+                      setNewSpaceInput("");
+                    }
+                  }}
+                  placeholder="新增空間名稱..."
+                  className="flex-1 text-xs border-gray-300 rounded-lg p-2 bg-white border"
+                />
+                <button
+                  onClick={() => {
+                    if (newSpaceInput.trim()) {
+                      setIdentifiedSpaces((prev) => [...prev, newSpaceInput.trim()]);
+                      setNewSpaceInput("");
+                    }
+                  }}
+                  className="px-3 py-2 bg-brand-600 text-white text-xs rounded-lg hover:bg-brand-700"
+                >
+                  新增
+                </button>
               </div>
             </div>
           )}
@@ -1010,31 +1113,67 @@ export const AIStudio: React.FC = () => {
                 )}
               </Button>
             </>
-          ) : (
+          ) : multiPhase === "setup" ? (
             <>
               <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                <span>估計點數</span>
-                <span className="font-bold text-brand-600">
-                  {(3 + selectedMultiRooms.length) * 2} 點
-                </span>
+                <span>第一步</span>
+                <span className="text-gray-400">識別空間後再生成</span>
+              </div>
+              <Button fullWidth onClick={handleAnalyzeFloorPlan} disabled={!uploadedImage || isAnalyzing}>
+                {isAnalyzing ? (
+                  <span className="flex items-center gap-2">
+                    <RefreshCw className="animate-spin w-4 h-4" />
+                    AI 分析平面圖中...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    分析平面圖空間
+                  </span>
+                )}
+              </Button>
+            </>
+          ) : multiPhase === "review" ? (
+            <>
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                <span>第二步</span>
+                <span className="font-bold text-brand-600">{(2 + identifiedSpaces.length) * 2} 點</span>
               </div>
               <Button
                 fullWidth
                 onClick={handleMultiGenerate}
-                disabled={!uploadedImage || isMultiGenerating}
+                disabled={identifiedSpaces.length === 0}
               >
-                {isMultiGenerating ? (
-                  <span className="flex items-center gap-2">
-                    <RefreshCw className="animate-spin w-4 h-4" />
-                    生成中：{currentMultiSlot}
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <Wand2 className="w-4 h-4" />
-                    生成多視角圖（{3 + selectedMultiRooms.length} 張）
-                  </span>
-                )}
+                <span className="flex items-center gap-2">
+                  <Wand2 className="w-4 h-4" />
+                  開始生成（{2 + identifiedSpaces.length} 張）
+                </span>
               </Button>
+              <button
+                onClick={handleMultiReset}
+                className="w-full mt-2 text-xs text-gray-400 hover:text-gray-600 py-1"
+              >
+                重新分析
+              </button>
+            </>
+          ) : multiPhase === "generating" ? (
+            <Button fullWidth disabled>
+              <span className="flex items-center gap-2">
+                <RefreshCw className="animate-spin w-4 h-4" />
+                生成中：{currentMultiSlot}
+              </span>
+            </Button>
+          ) : (
+            <>
+              <div className="text-xs text-green-600 text-center mb-2 font-medium">
+                ✓ 全部生成完成，已儲存至媒體庫
+              </div>
+              <button
+                onClick={handleMultiReset}
+                className="w-full py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                重新開始
+              </button>
             </>
           )}
         </div>
@@ -1120,39 +1259,84 @@ export const AIStudio: React.FC = () => {
           </>
         ) : (
           <>
+            {/* 頂部狀態列 */}
             <div className="px-4 py-3 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
               <div>
                 <p className="text-sm font-semibold text-gray-800">多視角輸出</p>
                 <p className="text-[11px] text-gray-500 mt-0.5">
-                  每張圖風格一致、內容物一致，依序生成
+                  {multiPhase === "setup" && "上傳平面圖 → AI 識別空間 → 依序生成"}
+                  {multiPhase === "analyzing" && "AI 正在分析平面圖空間配置..."}
+                  {multiPhase === "review" && `已識別 ${identifiedSpaces.length} 個空間，確認後即可生成`}
+                  {multiPhase === "generating" && `生成中：${currentMultiSlot}`}
+                  {multiPhase === "done" && "全部生成完成，已儲存至媒體庫"}
                 </p>
               </div>
-              {multiViewResults.length > 0 && (
-                <span className="text-xs text-gray-500">
+              {(multiPhase === "generating" || multiPhase === "done") && multiViewResults.length > 0 && (
+                <span className="text-xs text-gray-500 shrink-0">
                   {multiViewResults.filter((r) => r.status === "done").length} / {multiViewResults.length} 完成
                 </span>
               )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto p-4">
-              {multiViewResults.length === 0 ? (
+              {/* 初始狀態 */}
+              {multiPhase === "setup" && (
                 <div className="h-full min-h-[240px] flex items-center justify-center text-gray-400">
                   <div className="text-center">
                     <ImageIcon className="w-14 h-14 mx-auto mb-3 opacity-20" />
-                    <p className="text-sm font-medium">尚未開始多視角生成</p>
-                    <p className="text-xs mt-1 text-gray-400 max-w-xs">
-                      上傳底圖後，選擇需要輸出的房間場景，點擊左側「生成多視角圖」
-                    </p>
-                    <div className="mt-4 grid grid-cols-3 gap-2 text-[11px] text-gray-500 max-w-xs mx-auto">
-                      {FIXED_VIEW_SLOTS.map((slot, i) => (
-                        <div key={slot.slotKey} className="bg-gray-100 rounded-lg px-2 py-1.5 text-center">
-                          <span className="font-medium text-gray-600">{i + 1}.</span> {slot.label}
+                    <p className="text-sm font-medium text-gray-600">步驟說明</p>
+                    <div className="mt-4 space-y-2 text-left max-w-xs mx-auto">
+                      {[
+                        { step: "1", text: "上傳平面圖（線稿或 CAD 圖）" },
+                        { step: "2", text: "點擊「分析平面圖空間」—— AI 識別空間並標示" },
+                        { step: "3", text: "確認空間清單，按下「開始生成」" },
+                        { step: "4", text: "AI 依序輸出每個空間的渲染圖" },
+                      ].map(({ step, text }) => (
+                        <div key={step} className="flex items-start gap-2 text-xs text-gray-500">
+                          <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                            {step}
+                          </span>
+                          {text}
                         </div>
                       ))}
                     </div>
                   </div>
                 </div>
-              ) : (
+              )}
+
+              {/* 分析中 */}
+              {multiPhase === "analyzing" && (
+                <div className="h-full min-h-[240px] flex items-center justify-center">
+                  <div className="text-center">
+                    <RefreshCw className="w-10 h-10 animate-spin text-brand-600 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-gray-700">AI 正在分析平面圖...</p>
+                    <p className="text-xs text-gray-400 mt-1">識別空間名稱與配置，約需 20–40 秒</p>
+                  </div>
+                </div>
+              )}
+
+              {/* 審核階段：顯示標示平面圖 */}
+              {multiPhase === "review" && labeledFloorPlan && (
+                <div className="space-y-4">
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                    <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-green-100 text-green-700 text-[10px] font-bold flex items-center justify-center">✓</span>
+                      <span className="text-sm font-medium text-gray-700">AI 標示平面圖（作為所有視角的參考底圖）</span>
+                    </div>
+                    <img
+                      src={labeledFloorPlan}
+                      alt="標示平面圖"
+                      className="w-full object-contain max-h-96"
+                    />
+                  </div>
+                  <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-xs text-brand-700">
+                    將生成：標示平面圖（已完成）+ VRay 全室渲染 + 2.5D 俯視 + {identifiedSpaces.length} 個空間場景，共 {2 + identifiedSpaces.length + 1} 張
+                  </div>
+                </div>
+              )}
+
+              {/* 生成中 / 完成：顯示結果 grid */}
+              {(multiPhase === "generating" || multiPhase === "done") && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {multiViewResults.map((result, index) => (
                     <div
@@ -1185,9 +1369,7 @@ export const AIStudio: React.FC = () => {
                         )}
                       </div>
                       <div className="aspect-[4/3] bg-gray-50 flex items-center justify-center relative overflow-hidden">
-                        {result.status === "idle" && (
-                          <p className="text-xs text-gray-400">等待生成...</p>
-                        )}
+                        {result.status === "idle" && <p className="text-xs text-gray-400">等待生成...</p>}
                         {result.status === "generating" && (
                           <div className="text-center text-brand-600">
                             <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-2" />
@@ -1195,11 +1377,7 @@ export const AIStudio: React.FC = () => {
                           </div>
                         )}
                         {result.status === "done" && result.imageDataUrl && (
-                          <img
-                            src={result.imageDataUrl}
-                            alt={result.label}
-                            className="w-full h-full object-contain"
-                          />
+                          <img src={result.imageDataUrl} alt={result.label} className="w-full h-full object-contain" />
                         )}
                         {result.status === "error" && (
                           <div className="text-center text-red-500 px-4">
