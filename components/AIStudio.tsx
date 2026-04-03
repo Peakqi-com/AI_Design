@@ -365,6 +365,7 @@ export const AIStudio: React.FC = () => {
   const [slotPromptExpanded, setSlotPromptExpanded] = useState<Record<string, boolean>>({});
   const [labeledFloorPlan, setLabeledFloorPlan] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeCustomPrompt, setAnalyzeCustomPrompt] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -539,6 +540,17 @@ export const AIStudio: React.FC = () => {
     },
     [designerPrompt, projects, selectedFunction.name, selectedProjectId, selectedRoomType],
   );
+
+  // 取得某個 slotKey 的所有下游 slot（遞迴）
+  const getDownstreamSlotKeys = useCallback((slotKey: string): string[] => {
+    const direct = FIXED_VIEW_SLOTS.filter((s) => s.referenceSource === slotKey);
+    const all: string[] = [];
+    for (const s of direct) {
+      all.push(s.slotKey);
+      all.push(...getDownstreamSlotKeys(s.slotKey));
+    }
+    return all;
+  }, []);
 
   const getCompletedImageDataUrl = useCallback((slotKey: string): string | null => {
     if (slotKey === "labeled-floor-plan") return labeledFloorPlan;
@@ -792,7 +804,7 @@ export const AIStudio: React.FC = () => {
           lockFace: false,
           preserveIdentityStrict: false,
           preferredModel: selectedModel === "auto" ? undefined : selectedModel,
-          customPrompt: ANALYZE_FLOOR_PLAN_PROMPT,
+          customPrompt: [ANALYZE_FLOOR_PLAN_PROMPT, analyzeCustomPrompt.trim()].filter(Boolean).join("\n"),
           creativity: 10,
         }),
       });
@@ -907,6 +919,87 @@ export const AIStudio: React.FC = () => {
     }
   }, [isMultiGenerating, getCompletedImageDataUrl, slotCustomPrompts, designerPrompt, selectedModel, saveResultToServer, sessionPackageId, sessionPackageLabel]);
 
+  // 重新生成已完成的 slot：先重置自身 + 所有下游，再觸發生成
+  const handleRegenerateSingleSlot = useCallback(async (slot: ViewSlotDef) => {
+    if (isMultiGenerating) return;
+    const downstreamKeys = getDownstreamSlotKeys(slot.slotKey);
+    setMultiViewResults((prev) =>
+      prev.map((r) =>
+        r.slotKey === slot.slotKey || downstreamKeys.includes(r.slotKey)
+          ? { ...r, status: "idle" as const, imageDataUrl: undefined, summary: undefined, error: undefined }
+          : r
+      )
+    );
+    // 等 state 更新後再觸發（nextTick）
+    setTimeout(() => void handleGenerateSingleSlot(slot), 50);
+  }, [isMultiGenerating, getDownstreamSlotKeys, handleGenerateSingleSlot]);
+
+  // 重新分析標示平面圖（steps 階段）：重置所有 slot
+  const handleRegenerateAnalysis = useCallback(async () => {
+    if (isAnalyzing || isMultiGenerating) return;
+    // 重置所有 slot 到 idle
+    setMultiViewResults((prev) =>
+      prev.map((r) =>
+        r.slotKey === "labeled-floor-plan"
+          ? r
+          : { ...r, status: "idle" as const, imageDataUrl: undefined, summary: undefined, error: undefined }
+      )
+    );
+    setIsAnalyzing(true);
+    setErrorMessage(null);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 110_000);
+
+    try {
+      const response = await fetch("/api/ai/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          imageDataUrl: uploadedImage,
+          roomType: "全室整合",
+          style: "平面圖分析",
+          lockFace: false,
+          preserveIdentityStrict: false,
+          preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+          customPrompt: [ANALYZE_FLOOR_PLAN_PROMPT, analyzeCustomPrompt.trim()].filter(Boolean).join("\n"),
+          creativity: 10,
+        }),
+      });
+      const raw = await response.text();
+      const payload = raw ? (JSON.parse(raw) as Partial<RenderApiResponse> & { error?: string }) : {};
+      if (!response.ok || !payload.imageDataUrl) throw new Error(payload.error || "分析失敗，請重試");
+
+      setLabeledFloorPlan(payload.imageDataUrl);
+      // 更新 multiViewResults 中的標示平面圖
+      setMultiViewResults((prev) =>
+        prev.map((r) =>
+          r.slotKey === "labeled-floor-plan"
+            ? { ...r, imageDataUrl: payload.imageDataUrl, summary: payload.summary || "AI 標示完成" }
+            : r
+        )
+      );
+      // 重新儲存
+      void saveResultToServer({
+        imageDataUrl: payload.imageDataUrl,
+        summary: "AI 標示平面圖（重新分析）",
+        modelTag: selectedModel || "Gemini",
+        packageId: sessionPackageId,
+        packageLabel: sessionPackageLabel,
+        slotLabel: "標示平面圖",
+      }).catch(() => {});
+    } catch (err) {
+      const msg = err instanceof Error
+        ? (err.name === "AbortError" ? "分析超時，請重試" : err.message)
+        : "平面圖分析失敗";
+      setErrorMessage(msg);
+    } finally {
+      clearTimeout(timeoutId);
+      setIsAnalyzing(false);
+    }
+  }, [isAnalyzing, isMultiGenerating, uploadedImage, selectedModel, analyzeCustomPrompt, saveResultToServer, sessionPackageId, sessionPackageLabel]);
+
   // 一鍵生成所有剩餘（按照 slot 順序，使用本地 completedImages 確保鏈式一致性）
   const handleGenerateAllRemaining = useCallback(async () => {
     if (isMultiGenerating || !labeledFloorPlan) return;
@@ -993,6 +1086,7 @@ export const AIStudio: React.FC = () => {
     setSessionPackageLabel("");
     setSlotCustomPrompts({});
     setSlotPromptExpanded({});
+    setAnalyzeCustomPrompt("");
     setErrorMessage(null);
   };
 
@@ -1456,6 +1550,29 @@ export const AIStudio: React.FC = () => {
                       className="w-full object-contain max-h-96"
                     />
                   </div>
+
+                  {/* 不滿意可修改提示詞重新分析 */}
+                  <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+                    <p className="text-xs font-medium text-gray-700">若標示有誤，可補充修正提示詞後重新生成</p>
+                    <textarea
+                      value={analyzeCustomPrompt}
+                      onChange={(e) => setAnalyzeCustomPrompt(e.target.value)}
+                      placeholder="例：客廳標示的位置不對，左上角應該是主臥室而非書房..."
+                      className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border h-16 resize-none"
+                    />
+                    <button
+                      onClick={() => void handleAnalyzeFloorPlan()}
+                      disabled={isAnalyzing}
+                      className="w-full py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isAnalyzing ? (
+                        <><RefreshCw className="w-3 h-3 animate-spin" /> 重新分析中...</>
+                      ) : (
+                        <><RefreshCw className="w-3 h-3" /> 重新分析平面圖</>
+                      )}
+                    </button>
+                  </div>
+
                   <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-xs text-brand-700 space-y-1">
                     <p className="font-semibold">將生成 8 張（2 條串聯生成鏈）</p>
                     <p className="text-brand-600">彩色鏈：手繪 → 卡通 → 無陰影 → 擬真</p>
@@ -1529,17 +1646,63 @@ export const AIStudio: React.FC = () => {
                           )}
                         </div>
 
-                        {/* 自定義提示詞 + 生成按鈕（idle / error 狀態才顯示） */}
-                        {slotDef && (result.status === "idle" || result.status === "error") && (
+                        {/* 標示平面圖卡片：重新分析 */}
+                        {result.slotKey === "labeled-floor-plan" && result.status === "done" && (
                           <div className="px-3 py-2 border-t border-gray-100 space-y-2">
                             <button
                               onClick={() =>
-                                setSlotPromptExpanded((prev) => ({ ...prev, [result.slotKey]: !isExpanded }))
+                                setSlotPromptExpanded((prev) => ({ ...prev, "labeled-floor-plan": !isExpanded }))
                               }
-                              className="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-1"
+                              className="text-[11px] text-gray-500 hover:text-brand-600 flex items-center gap-1"
                             >
-                              ✏️ {isExpanded ? "收起提示詞" : "調整提示詞（選填）"}
+                              ✏️ {isExpanded ? "收起" : "不滿意？修改提示詞重新分析"}
                             </button>
+                            {isExpanded && (
+                              <>
+                                <textarea
+                                  value={analyzeCustomPrompt}
+                                  onChange={(e) => setAnalyzeCustomPrompt(e.target.value)}
+                                  placeholder="例：左上角應標為主臥，浴室位置不對..."
+                                  className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border h-16 resize-none"
+                                />
+                                <button
+                                  onClick={() => void handleRegenerateAnalysis()}
+                                  disabled={isAnalyzing || isMultiGenerating}
+                                  className="w-full py-1.5 rounded-lg text-xs font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                >
+                                  {isAnalyzing ? (
+                                    <><RefreshCw className="w-3 h-3 animate-spin" /> 重新分析中...</>
+                                  ) : (
+                                    <><RefreshCw className="w-3 h-3" /> 重新分析（會重置所有下游）</>
+                                  )}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 一般 slot：生成/重新生成 */}
+                        {slotDef && (result.status === "idle" || result.status === "error" || result.status === "done") && (
+                          <div className="px-3 py-2 border-t border-gray-100 space-y-2">
+                            {result.status === "done" ? (
+                              <button
+                                onClick={() =>
+                                  setSlotPromptExpanded((prev) => ({ ...prev, [result.slotKey]: !isExpanded }))
+                                }
+                                className="text-[11px] text-gray-500 hover:text-brand-600 flex items-center gap-1"
+                              >
+                                ✏️ {isExpanded ? "收起" : "不滿意？修改提示詞重新生成"}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  setSlotPromptExpanded((prev) => ({ ...prev, [result.slotKey]: !isExpanded }))
+                                }
+                                className="text-[11px] text-brand-600 hover:text-brand-700 flex items-center gap-1"
+                              >
+                                ✏️ {isExpanded ? "收起提示詞" : "調整提示詞（選填）"}
+                              </button>
+                            )}
                             {isExpanded && (
                               <textarea
                                 value={slotCustomPrompts[result.slotKey] || ""}
@@ -1550,25 +1713,33 @@ export const AIStudio: React.FC = () => {
                                 className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border h-16 resize-none"
                               />
                             )}
-                            <button
-                              onClick={() => void handleGenerateSingleSlot(slotDef)}
-                              disabled={!canGenerate}
-                              className={`w-full py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
-                                canGenerate
-                                  ? "bg-brand-600 text-white hover:bg-brand-700"
-                                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                              }`}
-                            >
-                              {result.status === "error" ? (
-                                <>
-                                  <RefreshCw className="w-3 h-3" /> 重新生成
-                                </>
-                              ) : (
-                                <>
-                                  <Sparkles className="w-3 h-3" /> 生成
-                                </>
-                              )}
-                            </button>
+                            {result.status === "done" ? (
+                              isExpanded && (
+                                <button
+                                  onClick={() => void handleRegenerateSingleSlot(slotDef)}
+                                  disabled={isMultiGenerating}
+                                  className="w-full py-1.5 rounded-lg text-xs font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                >
+                                  <RefreshCw className="w-3 h-3" /> 重新生成{getDownstreamSlotKeys(slotDef.slotKey).length > 0 ? "（會重置下游）" : ""}
+                                </button>
+                              )
+                            ) : (
+                              <button
+                                onClick={() => void handleGenerateSingleSlot(slotDef)}
+                                disabled={!canGenerate}
+                                className={`w-full py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                                  canGenerate
+                                    ? "bg-brand-600 text-white hover:bg-brand-700"
+                                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                }`}
+                              >
+                                {result.status === "error" ? (
+                                  <><RefreshCw className="w-3 h-3" /> 重新生成</>
+                                ) : (
+                                  <><Sparkles className="w-3 h-3" /> 生成</>
+                                )}
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
