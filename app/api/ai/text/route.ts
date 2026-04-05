@@ -9,6 +9,7 @@ const DEFAULT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
 
 interface TextRequestBody {
   prompt?: string;
+  imageDataUrl?: string; // optional image for vision/OCR tasks
   temperature?: number;
   jsonMode?: boolean;
 }
@@ -30,8 +31,17 @@ export async function POST(request: Request) {
     const authHeaders = await getGoogleAiAuthHeaders();
     const endpoint = buildGoogleAiModelEndpoint(DEFAULT_MODEL, "generateContent");
 
+    // Build parts: text + optional image
+    const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
+    if (body.imageDataUrl?.trim()) {
+      const match = body.imageDataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (match) {
+        parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+      }
+    }
+
     const requestBody = {
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      contents: [{ role: "user", parts }],
       generationConfig: {
         temperature: body.temperature ?? 0.5,
         ...(body.jsonMode ? { responseMimeType: "application/json" } : {}),

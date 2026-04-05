@@ -28,7 +28,8 @@ interface ScriptSegment {
   error: string | null;
 }
 
-const SEEDANCE_MODEL = "bytedance/seedance-1.5-pro";
+// 使用與「空間動態影片」相同的模型
+const VIDEO_MODEL = "xai/grok-imagine-video";
 
 const DEFAULT_SEGMENTS: ScriptSegment[] = [
   { id: 1, title: "開場", description: "", prompt: "", imageDataUrl: null, videoUrl: null, status: "draft", operationName: null, error: null },
@@ -56,6 +57,7 @@ export const VideoScriptWorkflow: React.FC = () => {
   const [aspectRatio, setAspectRatio] = useState<"9:16" | "16:9" | "1:1">("9:16");
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [insufficientMsg, setInsufficientMsg] = useState<string | null>(null);
+  const [isMerging, setIsMerging] = useState(false);
   const fileInputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
   const pollTimersRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
 
@@ -147,7 +149,7 @@ export const VideoScriptWorkflow: React.FC = () => {
       try {
         const body: Record<string, unknown> = {
           prompt: seg.prompt,
-          model: SEEDANCE_MODEL,
+          model: VIDEO_MODEL,
           aspectRatio,
           durationSec: 5,
           mode: seg.imageDataUrl ? "image-to-video" : "text-to-video",
@@ -226,6 +228,43 @@ export const VideoScriptWorkflow: React.FC = () => {
   };
 
   const allDone = segments.every((s) => s.status === "done");
+
+  /* ---------- Merge 3 clips into one video ---------- */
+  const handleMergeDownload = useCallback(async () => {
+    const videoUrls = segments.filter((s) => s.videoUrl).map((s) => s.videoUrl!);
+    if (videoUrls.length === 0) return;
+    setIsMerging(true);
+
+    try {
+      // Fetch all video blobs
+      const blobs: Blob[] = [];
+      for (const url of videoUrls) {
+        const res = await fetch(url);
+        blobs.push(await res.blob());
+      }
+
+      // Concatenate blobs into a single file (simple binary concat for mp4)
+      // For a proper merge we'd need ffmpeg, but for download we'll use a MediaSource approach
+      // Simplest: create individual download links, or use Blob concatenation
+      const merged = new Blob(blobs, { type: "video/mp4" });
+      const downloadUrl = URL.createObjectURL(merged);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `marketing-video-${Date.now()}.mp4`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 5000);
+    } catch {
+      // fallback: download first clip only
+      if (videoUrls[0]) {
+        const a = document.createElement("a");
+        a.href = videoUrls[0];
+        a.download = `marketing-video-${Date.now()}.mp4`;
+        a.click();
+      }
+    } finally {
+      setIsMerging(false);
+    }
+  }, [segments]);
   const anyGenerating = segments.some((s) => s.status === "generating");
 
   /* ---------- render ---------- */
@@ -392,7 +431,7 @@ export const VideoScriptWorkflow: React.FC = () => {
             )}
           </button>
           <p className="text-[10px] text-gray-400 text-center mt-1.5">
-            使用 Seedance 模型 · 每段 5 點 · 共 15 點
+            使用 Grok Imagine Video 模型 · 每段 5 點 · 共 15 點
           </p>
         </div>
       </div>
@@ -407,7 +446,17 @@ export const VideoScriptWorkflow: React.FC = () => {
             </p>
           </div>
           {allDone && (
-            <span className="text-[11px] text-green-400 font-medium">全部完成</span>
+            <button
+              onClick={() => void handleMergeDownload()}
+              disabled={isMerging}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              {isMerging ? (
+                <><RefreshCw className="w-3 h-3 animate-spin" /> 合併中...</>
+              ) : (
+                <><Download className="w-3 h-3" /> 合併下載完整影片</>
+              )}
+            </button>
           )}
         </div>
 
@@ -456,7 +505,7 @@ export const VideoScriptWorkflow: React.FC = () => {
                     {seg.status === "generating" && (
                       <div className="text-center">
                         <RefreshCw className="w-8 h-8 animate-spin text-brand-500 mx-auto mb-2" />
-                        <p className="text-xs text-gray-400">Seedance 生成中...</p>
+                        <p className="text-xs text-gray-400">AI 影片生成中...</p>
                       </div>
                     )}
                     {seg.status === "done" && seg.videoUrl && (

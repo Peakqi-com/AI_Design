@@ -248,27 +248,36 @@ export const CRMSystem: React.FC = () => {
     setScanLoading(true);
     setScanResult(null);
     try {
-      const res = await fetch("/api/ai/render", {
+      const res = await fetch("/api/ai/text", {
         method: "POST",
-        headers: headers(),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl: cardImage,
-          roomType: "全室整合",
-          style: "名片辨識",
-          customPrompt:
-            "This is a business card image. Extract the following fields as JSON: displayName, email, phone, company, title, address. Return ONLY valid JSON with these keys. If a field is not found, use empty string.",
-          creativity: 5,
+          prompt:
+            "這是一張名片照片。請仔細辨識名片上的所有文字，提取以下欄位。" +
+            "輸出 JSON 格式：{\"displayName\":\"姓名\",\"company\":\"公司名稱\",\"title\":\"職稱\",\"phone\":\"電話\",\"email\":\"電子信箱\",\"address\":\"地址\"}" +
+            "\n找不到的欄位留空字串。只輸出 JSON，不要其他文字。",
+          temperature: 0.2,
+          jsonMode: true,
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        const summary: string = data.summary ?? data.result ?? "";
-        const match = summary.match(/\{[\s\S]*\}/);
-        if (match) {
-          setScanResult(JSON.parse(match[0]));
-        } else {
-          alert("無法從名片中提取資訊，請手動輸入");
+        const text = (data.text || "").trim();
+        let parsed: Record<string, string> | null = null;
+        try {
+          const jsonCandidate = text.match(/\{[\s\S]*\}/)?.[0] || text;
+          parsed = JSON.parse(jsonCandidate);
+        } catch {
+          try { parsed = JSON.parse(text); } catch { /* give up */ }
         }
+        if (parsed && parsed.displayName) {
+          setScanResult(parsed);
+        } else {
+          alert("無法從名片中辨識文字，請手動輸入");
+        }
+      } else {
+        alert("名片辨識失敗，請重試");
       }
     } catch {
       alert("名片掃描失敗，請重試");
