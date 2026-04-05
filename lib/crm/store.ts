@@ -791,6 +791,7 @@ export async function clearLineSettings(userScopeId?: string): Promise<void> {
 }
 
 export interface ListContactsOptions {
+  userId?: string;
   search?: string;
   tag?: string;
 }
@@ -800,9 +801,19 @@ export async function listContacts(options: ListContactsOptions = {}): Promise<C
   const store = await getStore();
   const searchKey = search?.trim().toLowerCase();
   const tagKey = tag?.trim();
+  const filterUserId = options.userId?.trim();
 
   return store.contacts
     .filter((contact) => {
+      // User scope: only show contacts owned by this user
+      if (filterUserId && contact.userId && contact.userId !== filterUserId) {
+        return false;
+      }
+      // Hide legacy contacts without userId when a userId filter is active
+      if (filterUserId && !contact.userId) {
+        return false;
+      }
+
       const hitSearch = !searchKey
         ? true
         : [
@@ -899,6 +910,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
 }
 
 export interface EnsureCrmContactInput {
+  userId?: string;
   source?: "line" | "manual";
   lineUserId?: string;
   displayName: string;
@@ -931,6 +943,7 @@ export async function ensureCrmContact(input: EnsureCrmContactInput): Promise<Cr
     if (contactIndex < 0) {
       const created: CrmContact = {
         id: createId("contact"),
+        userId: input.userId?.trim() || undefined,
         source: normalizedSource,
         lineUserId,
         displayName: normalizedName,
@@ -1113,8 +1126,12 @@ export async function listProjects(options: ListProjectsOptions = {}): Promise<C
 
   return store.projects
     .filter((project) => {
-      // User scope: only show projects owned by this user (or legacy projects without userId)
+      // User scope: only show projects owned by this user
       if (filterUserId && project.userId && project.userId !== filterUserId) {
+        return false;
+      }
+      // Hide legacy projects without userId when a userId filter is active
+      if (filterUserId && !project.userId) {
         return false;
       }
       if (!includeDeleted && project.deletedAt) {

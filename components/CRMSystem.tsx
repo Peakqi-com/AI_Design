@@ -126,6 +126,7 @@ export const CRMSystem: React.FC = () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
+      if (userScope) params.set("userId", userScope);
       if (searchQuery) params.set("search", searchQuery);
       if (statusFilter !== "all") params.set("tag", statusFilter);
       const res = await fetch(`/api/crm/contacts?${params.toString()}`, {
@@ -151,7 +152,7 @@ export const CRMSystem: React.FC = () => {
     const res = await fetch("/api/crm/contacts", {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, userId: userScope }),
     });
     if (res.ok) {
       await fetchContacts();

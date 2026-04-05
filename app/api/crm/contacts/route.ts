@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { listContacts, ensureCrmContact } from "@/lib/crm/store";
+import { resolveServerUserScopeId } from "@/lib/server/user-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +10,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const search = url.searchParams.get("search") ?? undefined;
     const tag = url.searchParams.get("tag") ?? undefined;
-    const contacts = await listContacts({ search, tag });
+    const requestedUserId = url.searchParams.get("userId")?.trim() || "";
+    const userId = requestedUserId ? await resolveServerUserScopeId(requestedUserId) : undefined;
+    const contacts = await listContacts({ userId, search, tag });
     return NextResponse.json({ contacts });
   } catch (error) {
     const message = error instanceof Error ? error.message : "CRM contacts unavailable";
@@ -37,7 +40,10 @@ export async function POST(request: Request) {
     if (!body.displayName?.trim()) {
       return NextResponse.json({ error: "displayName is required." }, { status: 400 });
     }
+    const requestedUserId = String((body as Record<string, unknown>).userId || "").trim();
+    const userId = requestedUserId ? await resolveServerUserScopeId(requestedUserId) : undefined;
     const contact = await ensureCrmContact({
+      userId,
       displayName: body.displayName.trim(),
       source: "manual",
       email: body.email,

@@ -55,6 +55,7 @@ export interface CrmMessage {
 
 export interface CrmContact {
   id: string;
+  userId?: string;
   source: ContactSource;
   lineUserId?: string;
   displayName: string;
