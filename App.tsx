@@ -14,6 +14,7 @@ import { QuotationGenerator } from "./components/QuotationGenerator";
 import { VideoStudio } from "./components/VideoStudio";
 import { CRMSystem } from "./components/CRMSystem";
 import { MediaLibrary } from "./components/MediaLibrary";
+import { PresentationMaker } from "./components/PresentationMaker";
 
 const DEMO_USER: User = {
   id: "u_demo",
@@ -144,6 +145,8 @@ const App: React.FC = () => {
         return <CRMSystem />;
       case "media-library":
         return <MediaLibrary />;
+      case "presentation":
+        return <PresentationMaker />;
       default:
         return <DashboardHome />;
     }

@@ -10,7 +10,8 @@ import {
   Video,
   Calculator,
   MessageCircle,
-  Library
+  Library,
+  Presentation,
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
 
@@ -34,6 +35,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     { id: 'ai-studio', label: 'AI 空間渲染', icon: Palette },
     { id: 'video-studio', label: '空間動態影片', icon: Video },
     { id: 'media-library', label: '媒體庫', icon: Library },
+    { id: 'presentation', label: '簡報製作', icon: Presentation },
     { id: 'marketing', label: '社群發文中心', icon: Share2 },
     { id: 'crm', label: '客戶關係 CRM', icon: MessageCircle },
     { id: 'projects', label: '室內專案管理', icon: FileText },
