@@ -47,6 +47,7 @@ export const AdminPanel: React.FC = () => {
   const [editPlan, setEditPlan] = useState("free");
   const [editCredits, setEditCredits] = useState("");
   const [addCreditsAmount, setAddCreditsAmount] = useState("");
+  const [showGuests, setShowGuests] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadUsers = useCallback(async () => {
@@ -115,7 +116,11 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
-  const filteredUsers = users
+  const realUsers = users.filter((u) => u.email || !u.userId.startsWith("guest_"));
+  const guestUsers = users.filter((u) => !u.email && u.userId.startsWith("guest_"));
+
+  const baseList = showGuests ? users : realUsers;
+  const filteredUsers = baseList
     .filter((u) => {
       if (!searchQuery) return true;
       const q = searchQuery.toLowerCase();
@@ -124,10 +129,11 @@ export const AdminPanel: React.FC = () => {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const stats = {
-    total: users.length,
-    free: users.filter((u) => u.plan === "free").length,
-    paid: users.filter((u) => u.plan !== "free").length,
-    totalCreditsUsed: users.reduce((sum, u) => sum + u.totalUsed, 0),
+    total: realUsers.length,
+    free: realUsers.filter((u) => u.plan === "free").length,
+    paid: realUsers.filter((u) => u.plan !== "free").length,
+    totalCreditsUsed: realUsers.reduce((sum, u) => sum + u.totalUsed, 0),
+    guests: guestUsers.length,
   };
 
   return (
@@ -154,12 +160,13 @@ export const AdminPanel: React.FC = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-4 gap-4 mt-4">
+        <div className="grid grid-cols-5 gap-4 mt-4">
           {[
-            { label: "總會員數", value: stats.total, icon: Users, color: "text-brand-600" },
+            { label: "註冊會員", value: stats.total, icon: Users, color: "text-brand-600" },
             { label: "免費會員", value: stats.free, icon: Users, color: "text-gray-600" },
             { label: "付費會員", value: stats.paid, icon: Crown, color: "text-purple-600" },
             { label: "總使用點數", value: stats.totalCreditsUsed, icon: Settings, color: "text-amber-600" },
+            { label: "匿名訪客", value: stats.guests, icon: Users, color: "text-gray-400" },
           ].map((s) => (
             <div key={s.label} className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-2">
@@ -172,15 +179,26 @@ export const AdminPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-        <input
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜尋 Email、姓名或 ID..."
-          className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white"
-        />
+      {/* Search + filter */}
+      <div className="flex gap-3 items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜尋 Email、姓名或 ID..."
+            className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-xs text-gray-500 whitespace-nowrap cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showGuests}
+            onChange={(e) => setShowGuests(e.target.checked)}
+            className="rounded border-gray-300 text-brand-600"
+          />
+          顯示匿名訪客（{guestUsers.length}）
+        </label>
       </div>
 
       {/* User table */}
@@ -201,7 +219,7 @@ export const AdminPanel: React.FC = () => {
             </div>
           ) : filteredUsers.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
-              {searchQuery ? "無符合搜尋條件的會員" : "尚無註冊會員"}
+              {searchQuery ? "無符合搜尋條件的會員" : showGuests ? "尚無會員" : "尚無已登入的會員（勾選「顯示匿名訪客」查看所有記錄）"}
             </div>
           ) : (
             filteredUsers.map((user) => {
