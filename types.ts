@@ -1,7 +1,7 @@
 import { LucideIcon } from 'lucide-react';
 
 export type ViewState = 'landing' | 'login' | 'dashboard';
-export type DashboardView = 'overview' | 'ai-studio' | 'video-studio' | 'projects' | 'quotation' | 'crm' | 'marketing' | 'subscription' | 'media-library' | 'presentation' | 'admin';
+export type DashboardView = 'overview' | 'ai-studio' | 'video-studio' | 'projects' | 'quotation' | 'crm' | 'marketing' | 'subscription' | 'media-library' | 'presentation' | 'video-script' | 'admin';
 
 export interface User {
   id: string;

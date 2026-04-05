@@ -1,0 +1,481 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
+import {
+  Clapperboard,
+  Download,
+  Film,
+  Image as ImageIcon,
+  Play,
+  RefreshCw,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
+import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
+
+/* ---------- types ---------- */
+
+interface ScriptSegment {
+  id: number;
+  title: string;
+  description: string;
+  prompt: string;
+  imageDataUrl: string | null;
+  videoUrl: string | null;
+  status: "draft" | "generating" | "done" | "error";
+  operationName: string | null;
+  error: string | null;
+}
+
+const SEEDANCE_MODEL = "seedance/seedance-1-lite";
+
+const DEFAULT_SEGMENTS: ScriptSegment[] = [
+  { id: 1, title: "開場", description: "", prompt: "", imageDataUrl: null, videoUrl: null, status: "draft", operationName: null, error: null },
+  { id: 2, title: "主題", description: "", prompt: "", imageDataUrl: null, videoUrl: null, status: "draft", operationName: null, error: null },
+  { id: 3, title: "結尾", description: "", prompt: "", imageDataUrl: null, videoUrl: null, status: "draft", operationName: null, error: null },
+];
+
+const toDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("讀取失敗"));
+    reader.readAsDataURL(file);
+  });
+
+/* ---------- component ---------- */
+
+export const VideoScriptWorkflow: React.FC = () => {
+  const { data: session } = useSession();
+  const credits = useCredits();
+  const [userScopeId, setUserScopeId] = useState("guest_server");
+  const [segments, setSegments] = useState<ScriptSegment[]>(DEFAULT_SEGMENTS.map((s) => ({ ...s })));
+  const [briefInput, setBriefInput] = useState("");
+  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<"9:16" | "16:9" | "1:1">("9:16");
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [insufficientMsg, setInsufficientMsg] = useState<string | null>(null);
+  const fileInputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
+  const pollTimersRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
+
+  useEffect(() => {
+    const u = session?.user as { id?: string; email?: string | null } | undefined;
+    setUserScopeId(resolveClientUserScopeId(u?.id || null, u?.email || null));
+  }, [session?.user]);
+
+  // Cleanup poll timers
+  useEffect(() => {
+    return () => {
+      Object.values(pollTimersRef.current).forEach(clearInterval);
+    };
+  }, []);
+
+  const updateSegment = useCallback((id: number, patch: Partial<ScriptSegment>) => {
+    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }, []);
+
+  /* ---------- AI generate script from brief ---------- */
+  const handleGenerateScript = async () => {
+    if (!briefInput.trim()) return;
+    setIsGeneratingScript(true);
+    try {
+      const res = await fetch("/api/ai/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          roomType: "全室整合",
+          style: "影片腳本",
+          customPrompt:
+            `你是室內設計行銷影片的腳本撰寫專家。請根據以下簡報需求，生成一個 3 段式行銷影片腳本。` +
+            `\n\n需求：${briefInput}\n\n` +
+            `請以 JSON 格式輸出：SCRIPT_JSON:[{"title":"段落標題","description":"段落敘述(1-2句)","prompt":"給 AI 影片生成模型的英文 prompt (描述畫面內容、鏡頭運動、風格)"},...]\n` +
+            `規則：(1) 恰好 3 個段落 (2) 每段約 5 秒的影片內容 (3) prompt 用英文，描述具體畫面 (4) description 用繁體中文`,
+          creativity: 40,
+        }),
+      });
+      const raw = await res.text();
+      const payload = raw ? (JSON.parse(raw) as { summary?: string }) : {};
+      const match = payload.summary?.match(/SCRIPT_JSON:\s*(\[[\s\S]*?\])/);
+      if (match) {
+        const parsed = JSON.parse(match[1]) as Array<{ title?: string; description?: string; prompt?: string }>;
+        if (parsed.length >= 3) {
+          setSegments((prev) =>
+            prev.map((seg, i) => ({
+              ...seg,
+              title: parsed[i]?.title || seg.title,
+              description: parsed[i]?.description || "",
+              prompt: parsed[i]?.prompt || "",
+            }))
+          );
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsGeneratingScript(false);
+    }
+  };
+
+  /* ---------- Generate single segment video ---------- */
+  const generateSegmentVideo = useCallback(
+    async (segId: number) => {
+      const seg = segments.find((s) => s.id === segId);
+      if (!seg || !seg.prompt.trim()) return;
+
+      // Credit check
+      const deduction = await credits.tryDeduct("ai-video");
+      if (!deduction.ok) {
+        setInsufficientMsg(deduction.error || "點數不足");
+        return;
+      }
+      setInsufficientMsg(null);
+
+      updateSegment(segId, { status: "generating", error: null, videoUrl: null });
+
+      try {
+        const body: Record<string, unknown> = {
+          prompt: seg.prompt,
+          model: SEEDANCE_MODEL,
+          aspectRatio,
+          durationSec: 5,
+          mode: seg.imageDataUrl ? "image-to-video" : "text-to-video",
+        };
+        if (seg.imageDataUrl) {
+          body.imageDataUrl = seg.imageDataUrl;
+        }
+
+        const res = await fetch("/api/ai/video/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "影片生成啟動失敗");
+        }
+
+        updateSegment(segId, { operationName: data.operationName });
+
+        // Start polling
+        const timer = setInterval(async () => {
+          try {
+            const statusRes = await fetch(
+              `/api/ai/video/status?operationName=${encodeURIComponent(data.operationName)}`
+            );
+            const statusData = await statusRes.json();
+            if (statusData.done) {
+              clearInterval(timer);
+              delete pollTimersRef.current[segId];
+              if (statusData.videoUri) {
+                // Download the video
+                const dlRes = await fetch("/api/ai/video/download", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    videoUri: statusData.videoUri,
+                    userId: userScopeId,
+                  }),
+                });
+                const dlData = await dlRes.json();
+                updateSegment(segId, {
+                  status: "done",
+                  videoUrl: dlData.assetUrl || statusData.videoUri,
+                });
+              } else if (statusData.error) {
+                updateSegment(segId, { status: "error", error: statusData.error });
+              }
+            }
+          } catch {
+            // keep polling
+          }
+        }, 5000);
+        pollTimersRef.current[segId] = timer;
+      } catch (err) {
+        updateSegment(segId, {
+          status: "error",
+          error: err instanceof Error ? err.message : "生成失敗",
+        });
+      }
+    },
+    [segments, credits, aspectRatio, userScopeId, updateSegment],
+  );
+
+  /* ---------- Generate all segments ---------- */
+  const handleGenerateAll = async () => {
+    setIsGeneratingAll(true);
+    for (const seg of segments) {
+      if (seg.status !== "done" && seg.prompt.trim()) {
+        await generateSegmentVideo(seg.id);
+        // Small delay between starts
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    setIsGeneratingAll(false);
+  };
+
+  const allDone = segments.every((s) => s.status === "done");
+  const anyGenerating = segments.some((s) => s.status === "generating");
+
+  /* ---------- render ---------- */
+  return (
+    <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
+      {/* Left panel: script editor */}
+      <div className="w-full lg:w-96 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <h3 className="font-bold text-gray-900 flex items-center gap-2">
+            <Clapperboard className="w-4 h-4" /> 行銷影片腳本
+          </h3>
+          <p className="text-[11px] text-gray-500 mt-1">撰寫 3 段腳本 → 逐段生成 5 秒影片</p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* AI brief */}
+          <div className="bg-brand-50 border border-brand-100 rounded-lg p-3 space-y-2">
+            <p className="text-xs font-medium text-brand-700">AI 腳本生成</p>
+            <textarea
+              value={briefInput}
+              onChange={(e) => setBriefInput(e.target.value)}
+              placeholder="簡述行銷目標... 例如：推廣北歐風三房設計，展現寬敞客廳與溫暖燈光"
+              className="w-full text-xs border-brand-200 rounded-lg p-2 bg-white border h-14 resize-none"
+            />
+            <button
+              onClick={() => void handleGenerateScript()}
+              disabled={!briefInput.trim() || isGeneratingScript}
+              className="w-full py-1.5 bg-brand-600 text-white rounded-lg text-xs font-medium hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {isGeneratingScript ? (
+                <><RefreshCw className="w-3 h-3 animate-spin" /> 生成中...</>
+              ) : (
+                <><Sparkles className="w-3 h-3" /> AI 生成腳本</>
+              )}
+            </button>
+          </div>
+
+          {/* Aspect ratio */}
+          <div>
+            <label className="text-xs font-medium text-gray-600 mb-1 block">影片比例</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {([["9:16", "直立"], ["16:9", "橫向"], ["1:1", "正方"]] as const).map(([r, label]) => (
+                <button
+                  key={r}
+                  onClick={() => setAspectRatio(r)}
+                  className={`py-1.5 text-xs rounded-lg border transition-colors ${
+                    aspectRatio === r
+                      ? "border-brand-500 bg-brand-50 text-brand-700 font-semibold"
+                      : "border-gray-200 text-gray-600 hover:border-brand-300"
+                  }`}
+                >
+                  {r} {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3 segments */}
+          {segments.map((seg, idx) => (
+            <div key={seg.id} className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 text-[10px] font-bold flex items-center justify-center">
+                    {idx + 1}
+                  </span>
+                  <input
+                    value={seg.title}
+                    onChange={(e) => updateSegment(seg.id, { title: e.target.value })}
+                    className="text-sm font-medium text-gray-800 bg-transparent border-none p-0 focus:outline-none w-24"
+                    placeholder="段落標題"
+                  />
+                </div>
+                <span className="text-[10px] text-gray-400">5 秒</span>
+              </div>
+              <div className="p-3 space-y-2">
+                <textarea
+                  value={seg.description}
+                  onChange={(e) => updateSegment(seg.id, { description: e.target.value })}
+                  placeholder="段落敘述（給觀眾看的文字）..."
+                  className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border h-12 resize-none"
+                />
+                <textarea
+                  value={seg.prompt}
+                  onChange={(e) => updateSegment(seg.id, { prompt: e.target.value })}
+                  placeholder="AI 影片生成 prompt（英文，描述畫面）..."
+                  className="w-full text-xs border-gray-200 rounded-lg p-2 bg-gray-50 border h-12 resize-none font-mono"
+                />
+
+                {/* Image upload */}
+                <div className="flex items-center gap-2">
+                  {seg.imageDataUrl ? (
+                    <div className="relative w-16 h-12 rounded-md overflow-hidden border border-gray-200">
+                      <img src={seg.imageDataUrl} alt="" className="w-full h-full object-cover" />
+                      <button
+                        onClick={() => updateSegment(seg.id, { imageDataUrl: null })}
+                        className="absolute top-0 right-0 p-0.5 bg-white/80 rounded-bl"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => fileInputRefs.current[idx]?.click()}
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] text-gray-500 border border-gray-200 rounded-md hover:bg-gray-50"
+                    >
+                      <ImageIcon className="w-3 h-3" /> 加入參考圖
+                    </button>
+                  )}
+                  <input
+                    ref={(el) => { fileInputRefs.current[idx] = el; }}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const dataUrl = await toDataUrl(file);
+                      updateSegment(seg.id, { imageDataUrl: dataUrl });
+                      e.target.value = "";
+                    }}
+                  />
+
+                  {/* Per-segment generate */}
+                  <button
+                    onClick={() => void generateSegmentVideo(seg.id)}
+                    disabled={!seg.prompt.trim() || seg.status === "generating" || anyGenerating}
+                    className="ml-auto flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-gray-800 text-white rounded-md hover:bg-gray-900 disabled:opacity-40"
+                  >
+                    {seg.status === "generating" ? (
+                      <><RefreshCw className="w-2.5 h-2.5 animate-spin" /> 生成中</>
+                    ) : seg.status === "done" ? (
+                      <><RefreshCw className="w-2.5 h-2.5" /> 重新生成</>
+                    ) : (
+                      <><Film className="w-2.5 h-2.5" /> 生成</>
+                    )}
+                  </button>
+                </div>
+
+                {seg.error && (
+                  <p className="text-[10px] text-red-500">{seg.error}</p>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {insufficientMsg && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {insufficientMsg}
+            </div>
+          )}
+        </div>
+
+        {/* Bottom action */}
+        <div className="p-4 border-t border-gray-100 bg-gray-50">
+          <button
+            onClick={() => void handleGenerateAll()}
+            disabled={anyGenerating || isGeneratingAll || segments.every((s) => !s.prompt.trim())}
+            className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {anyGenerating || isGeneratingAll ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> 生成中...</>
+            ) : (
+              <><Sparkles className="w-4 h-4" /> 一鍵生成全部影片（3 段 × 5 秒）</>
+            )}
+          </button>
+          <p className="text-[10px] text-gray-400 text-center mt-1.5">
+            使用 Seedance 模型 · 每段 5 點 · 共 15 點
+          </p>
+        </div>
+      </div>
+
+      {/* Right panel: video preview */}
+      <div className="flex-1 min-h-0 bg-gray-900 rounded-xl border border-gray-200 flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between shrink-0">
+          <div>
+            <p className="text-sm font-semibold text-white">影片預覽</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {allDone ? "3 段影片已全部生成" : "生成完成的段落將顯示在此"}
+            </p>
+          </div>
+          {allDone && (
+            <span className="text-[11px] text-green-400 font-medium">全部完成</span>
+          )}
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+          {segments.every((s) => s.status === "draft" && !s.videoUrl) ? (
+            <div className="h-full flex items-center justify-center text-gray-500">
+              <div className="text-center">
+                <Film className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">撰寫腳本後生成影片</p>
+                <p className="text-xs text-gray-600 mt-1">每段 5 秒，3 段組成 15 秒行銷影片</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {segments.map((seg, idx) => (
+                <div key={seg.id} className="rounded-xl overflow-hidden bg-gray-800 border border-gray-700">
+                  <div className="px-3 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-brand-500/30 text-brand-300 text-[10px] font-bold flex items-center justify-center">
+                        {idx + 1}
+                      </span>
+                      <span className="text-sm font-medium text-white">{seg.title || `段落 ${idx + 1}`}</span>
+                    </div>
+                    {seg.status === "generating" && (
+                      <span className="text-[10px] text-brand-400 animate-pulse">生成中...</span>
+                    )}
+                    {seg.status === "done" && seg.videoUrl && (
+                      <button
+                        onClick={() => {
+                          const a = document.createElement("a");
+                          a.href = seg.videoUrl!;
+                          a.download = `script-seg${idx + 1}.mp4`;
+                          a.click();
+                        }}
+                        className="p-1 text-gray-400 hover:text-white"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="aspect-video bg-black flex items-center justify-center">
+                    {seg.status === "draft" && (
+                      <p className="text-xs text-gray-600">等待生成</p>
+                    )}
+                    {seg.status === "generating" && (
+                      <div className="text-center">
+                        <RefreshCw className="w-8 h-8 animate-spin text-brand-500 mx-auto mb-2" />
+                        <p className="text-xs text-gray-400">Seedance 生成中...</p>
+                      </div>
+                    )}
+                    {seg.status === "done" && seg.videoUrl && (
+                      <video
+                        src={seg.videoUrl}
+                        controls
+                        className="w-full h-full object-contain"
+                        preload="metadata"
+                      />
+                    )}
+                    {seg.status === "error" && (
+                      <div className="text-center px-4">
+                        <p className="text-xs text-red-400 font-medium">生成失敗</p>
+                        <p className="text-[10px] text-red-500 mt-1">{seg.error}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {seg.description && (
+                    <div className="px-3 py-1.5 border-t border-gray-700">
+                      <p className="text-[11px] text-gray-400">{seg.description}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

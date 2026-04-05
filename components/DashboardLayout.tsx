@@ -13,6 +13,7 @@ import {
   Library,
   Presentation,
   Shield,
+  Clapperboard,
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
 
@@ -41,6 +42,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     { id: 'video-studio', label: '空間動態影片', icon: Video },
     { id: 'media-library', label: '媒體庫', icon: Library },
     { id: 'presentation', label: '簡報製作', icon: Presentation },
+    { id: 'video-script', label: '行銷影片腳本', icon: Clapperboard },
     { id: 'marketing', label: '社群發文中心', icon: Share2 },
     { id: 'crm', label: '客戶關係 CRM', icon: MessageCircle },
     { id: 'projects', label: '室內專案管理', icon: FileText },

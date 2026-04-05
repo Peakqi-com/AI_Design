@@ -16,6 +16,7 @@ import { CRMSystem } from "./components/CRMSystem";
 import { MediaLibrary } from "./components/MediaLibrary";
 import { PresentationMaker } from "./components/PresentationMaker";
 import { AdminPanel } from "./components/AdminPanel";
+import { VideoScriptWorkflow } from "./components/VideoScriptWorkflow";
 import { useCredits } from "./lib/client/use-credits";
 
 const DEMO_USER: User = {
@@ -151,6 +152,8 @@ const App: React.FC = () => {
         return <MediaLibrary />;
       case "presentation":
         return <PresentationMaker />;
+      case "video-script":
+        return <VideoScriptWorkflow />;
       case "admin":
         return <AdminPanel />;
       default:
