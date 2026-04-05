@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       title?: string;
       address?: string;
       notes?: string;
+      cardImageUrl?: string;
       tags?: string[];
       status?: string;
     };
@@ -45,12 +46,13 @@ export async function POST(request: Request) {
       status: (body.status as "new" | "contacted" | "proposal" | "signed") || "new",
     });
     // Update extra fields not covered by ensureCrmContact
-    if (body.company || body.title || body.address || body.notes) {
+    if (body.company || body.title || body.address || body.notes || body.cardImageUrl) {
       const { updateContact } = await import("@/lib/crm/store");
       await updateContact(contact.id, {
         company: body.company?.trim(),
         title: body.title?.trim(),
         address: body.address?.trim(),
+        cardImageUrl: body.cardImageUrl,
         notes: body.notes?.trim(),
       });
     }

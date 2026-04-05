@@ -833,7 +833,7 @@ export async function getContactById(contactId: string): Promise<CrmContact | nu
 
 export async function updateContact(
   contactId: string,
-  patch: Partial<Pick<CrmContact, "displayName" | "email" | "phone" | "status" | "avatarUrl" | "company" | "title" | "address" | "notes">>,
+  patch: Partial<Pick<CrmContact, "displayName" | "email" | "phone" | "status" | "avatarUrl" | "company" | "title" | "address" | "notes" | "cardImageUrl">>,
 ): Promise<CrmContact | null> {
   return mutateStore((store) => {
     const index = store.contacts.findIndex((contact) => contact.id === contactId);

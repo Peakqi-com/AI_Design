@@ -39,6 +39,7 @@ interface CrmContact {
   title?: string;
   address?: string;
   notes?: string;
+  cardImageUrl?: string;
   unread: number;
   lastMessageAt?: string;
   createdAt: string;
@@ -296,7 +297,8 @@ export const CRMSystem: React.FC = () => {
       title: scanResult.title || "",
       address: scanResult.address || "",
       notes: "",
-      tags: [],
+      tags: ["名片掃描"],
+      cardImageUrl: cardImage || undefined,
     });
     if (ok) {
       setShowScanModal(false);
@@ -607,6 +609,19 @@ export const CRMSystem: React.FC = () => {
               />
               <p className="text-[10px] text-gray-400 mt-1">自動儲存</p>
             </div>
+
+            {/* card image */}
+            {selected.cardImageUrl && (
+              <div className="px-6 py-4 border-b border-gray-100">
+                <label className="text-xs text-gray-400 mb-2 block">名片照片</label>
+                <img
+                  src={selected.cardImageUrl}
+                  alt="名片"
+                  className="w-full rounded-lg border border-gray-200 max-h-48 object-contain bg-gray-50 cursor-pointer"
+                  onClick={() => window.open(selected.cardImageUrl!, "_blank")}
+                />
+              </div>
+            )}
 
             {/* delete button */}
             <div className="px-6 py-4">

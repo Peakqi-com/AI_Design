@@ -67,6 +67,7 @@ export interface CrmContact {
   title?: string;
   address?: string;
   notes?: string;
+  cardImageUrl?: string;
   unread: number;
   lastMessageText?: string;
   lastMessageAt?: string;
