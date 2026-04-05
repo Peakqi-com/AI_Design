@@ -80,36 +80,46 @@ export const VideoScriptWorkflow: React.FC = () => {
     if (!briefInput.trim()) return;
     setIsGeneratingScript(true);
     try {
-      const res = await fetch("/api/ai/render", {
+      const res = await fetch("/api/ai/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageDataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-          roomType: "全室整合",
-          style: "影片腳本",
-          customPrompt:
-            `你是室內設計行銷影片的腳本撰寫專家。請根據以下簡報需求，生成一個 3 段式行銷影片腳本。` +
-            `\n\n需求：${briefInput}\n\n` +
-            `請以 JSON 格式輸出：SCRIPT_JSON:[{"title":"段落標題","description":"段落敘述(1-2句)","prompt":"給 AI 影片生成模型的英文 prompt (描述畫面內容、鏡頭運動、風格)"},...]\n` +
-            `規則：(1) 恰好 3 個段落 (2) 每段約 5 秒的影片內容 (3) prompt 用英文，描述具體畫面 (4) description 用繁體中文`,
-          creativity: 40,
+          prompt:
+            `你是室內設計行銷影片的腳本撰寫專家。請根據以下需求，生成一個 3 段式行銷影片腳本。\n\n` +
+            `需求：${briefInput}\n\n` +
+            `請輸出 JSON 陣列，恰好 3 個物件，每個物件包含：\n` +
+            `- "title": 段落標題（繁體中文，2-6字）\n` +
+            `- "description": 段落敘述（繁體中文，1-2句，給觀眾看的旁白或字幕）\n` +
+            `- "prompt": 給 AI 影片生成模型的英文 prompt（描述具體畫面內容、鏡頭運動如 dolly in / pan right / orbit、光線、風格，約 20-40 字）\n\n` +
+            `範例格式：[{"title":"開場","description":"走進夢想中的家","prompt":"Slow dolly forward into a bright modern living room..."}]\n` +
+            `規則：每段約 5 秒影片。prompt 必須是英文且具體描述畫面。只輸出 JSON 陣列，不要其他文字。`,
+          temperature: 0.6,
+          jsonMode: true,
         }),
       });
-      const raw = await res.text();
-      const payload = raw ? (JSON.parse(raw) as { summary?: string }) : {};
-      const match = payload.summary?.match(/SCRIPT_JSON:\s*(\[[\s\S]*?\])/);
-      if (match) {
-        const parsed = JSON.parse(match[1]) as Array<{ title?: string; description?: string; prompt?: string }>;
-        if (parsed.length >= 3) {
-          setSegments((prev) =>
-            prev.map((seg, i) => ({
-              ...seg,
-              title: parsed[i]?.title || seg.title,
-              description: parsed[i]?.description || "",
-              prompt: parsed[i]?.prompt || "",
-            }))
-          );
-        }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "生成失敗");
+
+      // Parse the JSON response
+      const text = (data.text || "").trim();
+      let parsed: Array<{ title?: string; description?: string; prompt?: string }> = [];
+      try {
+        const jsonCandidate = text.match(/\[[\s\S]*\]/)?.[0] || text;
+        parsed = JSON.parse(jsonCandidate);
+      } catch {
+        // try direct parse
+        try { parsed = JSON.parse(text); } catch { /* give up */ }
+      }
+
+      if (Array.isArray(parsed) && parsed.length >= 3) {
+        setSegments((prev) =>
+          prev.map((seg, i) => ({
+            ...seg,
+            title: parsed[i]?.title || seg.title,
+            description: parsed[i]?.description || "",
+            prompt: parsed[i]?.prompt || "",
+          }))
+        );
       }
     } catch {
       // ignore
