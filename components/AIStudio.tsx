@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { SlotImageEditor } from "./SlotImageEditor";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
 
 interface RenderHistoryItem {
   id: string;
@@ -376,6 +377,8 @@ const requestJson = async <T,>(url: string, init: RequestInit): Promise<T> => {
 
 export const AIStudio: React.FC = () => {
   const { data: session } = useSession();
+  const credits = useCredits();
+  const [insufficientCreditsMsg, setInsufficientCreditsMsg] = useState<string | null>(null);
   const [userScopeId, setUserScopeId] = useState("guest_server");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("未命名圖片");
@@ -698,8 +701,15 @@ export const AIStudio: React.FC = () => {
     if (!uploadedImage || isGenerating) {
       return;
     }
+    // 扣點檢查
+    const deduction = await credits.tryDeduct("ai-render");
+    if (!deduction.ok) {
+      setInsufficientCreditsMsg(deduction.error || "點數不足");
+      return;
+    }
     setIsGenerating(true);
     setErrorMessage(null);
+    setInsufficientCreditsMsg(null);
     setGenerationStatusText("AI 渲染中...");
     startProgressAnimation();
 
@@ -832,9 +842,15 @@ export const AIStudio: React.FC = () => {
   // 第一步：分析平面圖空間
   const handleAnalyzeFloorPlan = async () => {
     if (!uploadedImage || isAnalyzing) return;
+    const deduction = await credits.tryDeduct("ai-render-analyze");
+    if (!deduction.ok) {
+      setInsufficientCreditsMsg(deduction.error || "點數不足");
+      return;
+    }
     setIsAnalyzing(true);
     setMultiPhase("analyzing");
     setErrorMessage(null);
+    setInsufficientCreditsMsg(null);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 110_000); // 110 秒前端逾時
@@ -909,6 +925,12 @@ export const AIStudio: React.FC = () => {
     const referenceImage = getCompletedImageDataUrl(slot.referenceSource);
     if (!referenceImage) return;
 
+    const deduction = await credits.tryDeduct("ai-render");
+    if (!deduction.ok) {
+      setInsufficientCreditsMsg(deduction.error || "點數不足");
+      return;
+    }
+    setInsufficientCreditsMsg(null);
     setIsMultiGenerating(true);
     setCurrentMultiSlot(slot.slotKey);
     setMultiViewResults((prev) =>
@@ -1411,6 +1433,12 @@ export const AIStudio: React.FC = () => {
           </div>
 
 
+          {insufficientCreditsMsg && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <p className="font-semibold">{insufficientCreditsMsg}</p>
+              <p className="mt-1 text-amber-600">請至「訂閱與點數」頁面儲值後再使用</p>
+            </div>
+          )}
           {errorMessage && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               {errorMessage}

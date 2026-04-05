@@ -6,52 +6,44 @@ import { PricingPlan } from '../types';
 export const SubscriptionPage: React.FC = () => {
   const plans: PricingPlan[] = [
     {
-      id: 'points',
-      type: 'credits',
-      title: '靈活點數制',
-      price: 'NT$ 2,990',
-      description: '適合接案波動較大的設計團隊。無過期限制，隨用隨扣。',
-      features: [
-        '500 點 AI 算力點數',
-        '單張 AI 空間渲染圖約消耗 2-5 點',
-        '基礎室內專案管理',
-        '無月費負擔',
-        '優先客服支援'
-      ],
-      buttonText: '購買點數'
-    },
-    {
-      id: 'monthly',
+      id: 'free',
+      title: '免費體驗版',
+      price: 'NT$ 0',
+      description: '適合初次體驗 AI 室內設計功能',
+      features: ['AI 空間渲染', '多視角輸出（8 種）', '媒體庫', '簡報製作', '30 點免費算力'],
       type: 'subscription',
-      title: '專業月訂閱',
-      price: 'NT$ 1,490',
-      period: '/ 月',
-      description: '適合穩定接案的室內設計工作室。無限使用基礎功能。',
-      features: [
-        '每月贈送 1000 點',
-        '線稿轉渲染圖無限預覽',
-        '全功能 AI 裝修報價系統',
-        '社群自動化發文 (IG/FB)',
-        '社群短影音腳本生成'
-      ],
-      recommended: true,
-      buttonText: '立即訂閱'
+      buttonText: '目前方案',
     },
     {
-      id: 'course',
-      type: 'course',
-      title: 'AI 室內設計實戰課程包',
-      price: 'NT$ 18,800',
-      description: '買課程送一年訂閱！最划算的長期投資選擇。',
-      features: [
-        '包含「一年份」專業版訂閱 (價值 $17,880)',
-        '10 堂 AI 室內設計營運實戰線上課',
-        '設計品牌風格模型訓練教學',
-        '室內設計產業專屬社群入場券',
-        '結業證書'
-      ],
-      buttonText: '購買課程 + 一年免費',
-    }
+      id: 'pro',
+      title: '專業版',
+      price: 'NT$ 2,500',
+      period: '/ 月',
+      description: '適合個人設計師與小型工作室',
+      features: ['800 點 / 月', 'AI 空間渲染', '多視角輸出', '媒體庫', '簡報製作', '社群發文中心', 'AI 裝修報價', '優先算力'],
+      recommended: true,
+      type: 'subscription',
+      buttonText: '升級專業版',
+    },
+    {
+      id: 'business',
+      title: '商務版',
+      price: 'NT$ 6,600',
+      period: '/ 月',
+      description: '適合設計公司與團隊協作',
+      features: ['2,400 點 / 月', '所有專業版功能', '客戶關係 CRM', '專案管理', '優先算力', '專屬客服支援'],
+      type: 'subscription',
+      buttonText: '升級商務版',
+    },
+    {
+      id: 'enterprise',
+      title: '企業版',
+      price: '聯繫業務',
+      description: '適合大型企業與連鎖品牌',
+      features: ['全客製化功能', '無限點數', 'API 存取', '專屬部署', 'SLA 服務保證', '專屬客戶成功經理'],
+      type: 'subscription',
+      buttonText: '聯繫我們',
+    },
   ];
 
   return (

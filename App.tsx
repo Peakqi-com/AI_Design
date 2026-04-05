@@ -15,6 +15,8 @@ import { VideoStudio } from "./components/VideoStudio";
 import { CRMSystem } from "./components/CRMSystem";
 import { MediaLibrary } from "./components/MediaLibrary";
 import { PresentationMaker } from "./components/PresentationMaker";
+import { AdminPanel } from "./components/AdminPanel";
+import { useCredits } from "./lib/client/use-credits";
 
 const DEMO_USER: User = {
   id: "u_demo",
@@ -53,6 +55,8 @@ const App: React.FC = () => {
   const [dashboardView, setDashboardView] = useState<DashboardView>("overview");
   const [manualUser, setManualUser] = useState<User | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const credits = useCredits();
+  const isAdmin = credits.userEmail ? ["ai.allen.task@gmail.com"].includes(credits.userEmail.toLowerCase()) : false;
 
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
@@ -147,6 +151,8 @@ const App: React.FC = () => {
         return <MediaLibrary />;
       case "presentation":
         return <PresentationMaker />;
+      case "admin":
+        return <AdminPanel />;
       default:
         return <DashboardHome />;
     }
@@ -171,6 +177,8 @@ const App: React.FC = () => {
           currentView={dashboardView}
           onChangeView={handleViewChange}
           onLogout={handleLogout}
+          isAdmin={isAdmin}
+          liveCredits={credits.credits}
         >
           {renderDashboardContent()}
         </DashboardLayout>

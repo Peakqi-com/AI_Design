@@ -12,6 +12,7 @@ import {
   MessageCircle,
   Library,
   Presentation,
+  Shield,
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
 
@@ -21,14 +22,18 @@ interface DashboardLayoutProps {
   onChangeView: (view: DashboardView) => void;
   onLogout: () => void;
   children: React.ReactNode;
+  isAdmin?: boolean;
+  liveCredits?: number;
 }
 
-export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ 
-  user, 
-  currentView, 
-  onChangeView, 
+export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
+  user,
+  currentView,
+  onChangeView,
   onLogout,
-  children 
+  children,
+  isAdmin,
+  liveCredits,
 }) => {
   const navItems: NavItem[] = [
     { id: 'overview', label: '室內設計總覽', icon: LayoutDashboard },
@@ -41,6 +46,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     { id: 'projects', label: '室內專案管理', icon: FileText },
     { id: 'quotation', label: 'AI 裝修報價', icon: Calculator },
     { id: 'subscription', label: '訂閱與點數', icon: CreditCard },
+    ...(isAdmin ? [{ id: 'admin' as DashboardView, label: '管理員後台', icon: Shield }] : []),
   ];
 
   const planMap: Record<string, string> = {
@@ -79,7 +85,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
           <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 shadow-sm">
             <p className="text-xs font-semibold text-brand-800 uppercase mb-1">AI 算力點數</p>
             <div className="flex justify-between items-end">
-              <span className="text-2xl font-bold text-brand-600">{user.credits}</span>
+              <span className="text-2xl font-bold text-brand-600">{typeof liveCredits === "number" ? liveCredits : user.credits}</span>
               <button 
                 onClick={() => onChangeView('subscription')}
                 className="text-xs text-brand-600 hover:text-brand-700 underline"
