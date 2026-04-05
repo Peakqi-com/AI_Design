@@ -28,7 +28,7 @@ interface ScriptSegment {
   error: string | null;
 }
 
-const SEEDANCE_MODEL = "seedance/seedance-1-lite";
+const SEEDANCE_MODEL = "bytedance/seedance-1.5-pro";
 
 const DEFAULT_SEGMENTS: ScriptSegment[] = [
   { id: 1, title: "開場", description: "", prompt: "", imageDataUrl: null, videoUrl: null, status: "draft", operationName: null, error: null },
