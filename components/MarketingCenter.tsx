@@ -3,6 +3,8 @@ import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
   Calendar,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Facebook,
   Film,
@@ -10,6 +12,7 @@ import {
   Hash,
   Image as ImageIcon,
   Instagram,
+  Key,
   Loader2,
   Search,
   Send,
@@ -325,6 +328,26 @@ export const MarketingCenter: React.FC = () => {
   ]);
   const [marketingStateItemId, setMarketingStateItemId] = useState("");
   const [marketingStateReady, setMarketingStateReady] = useState(false);
+
+  // Social API settings
+  const [showApiSettings, setShowApiSettings] = useState(false);
+  const [fbPageId, setFbPageId] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:fb:pageId") || "" : "");
+  const [fbAccessToken, setFbAccessToken] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:fb:accessToken") || "" : "");
+  const [igBusinessId, setIgBusinessId] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:ig:businessId") || "" : "");
+  const [igAccessToken, setIgAccessToken] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:ig:accessToken") || "" : "");
+  const [apiSettingsSaved, setApiSettingsSaved] = useState(false);
+
+  const handleSaveApiSettings = () => {
+    localStorage.setItem("social:fb:pageId", fbPageId);
+    localStorage.setItem("social:fb:accessToken", fbAccessToken);
+    localStorage.setItem("social:ig:businessId", igBusinessId);
+    localStorage.setItem("social:ig:accessToken", igAccessToken);
+    setApiSettingsSaved(true);
+    setTimeout(() => setApiSettingsSaved(false), 2000);
+  };
+
+  const fbConnected = Boolean(fbPageId && fbAccessToken);
+  const igConnected = Boolean(igBusinessId && igAccessToken);
 
   const libraryUploadRef = useRef<HTMLInputElement>(null);
   const referenceUploadRef = useRef<HTMLInputElement>(null);
@@ -882,6 +905,121 @@ export const MarketingCenter: React.FC = () => {
         <p className="text-sm text-white/90 mt-1">
           先在素材工具生成圖片/影片，再回到此中心選素材，讓 AI 讀取素材後生成文案、Hashtag 與社群預覽。
         </p>
+      </div>
+
+      {/* Social API Settings */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowApiSettings(!showApiSettings)}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-semibold text-gray-800">社群平台 API 設定</span>
+            <div className="flex gap-1.5 ml-2">
+              {fbConnected && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded-full">
+                  <Facebook className="w-2.5 h-2.5" /> 已連接
+                </span>
+              )}
+              {igConnected && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-pink-100 text-pink-700 text-[10px] rounded-full">
+                  <Instagram className="w-2.5 h-2.5" /> 已連接
+                </span>
+              )}
+              {!fbConnected && !igConnected && (
+                <span className="text-[10px] text-gray-400">未設定</span>
+              )}
+            </div>
+          </div>
+          {showApiSettings ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+        </button>
+
+        {showApiSettings && (
+          <div className="px-4 pb-4 border-t border-gray-100 pt-3 space-y-4">
+            <p className="text-[11px] text-gray-500">
+              填入 Facebook / Instagram API 憑證，即可從此頁直接發布貼文。憑證僅儲存於本機瀏覽器。
+            </p>
+
+            {/* Facebook */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Facebook className="w-4 h-4 text-blue-600" />
+                <span className="text-xs font-semibold text-gray-700">Facebook Page</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-500">Page ID</label>
+                  <input
+                    value={fbPageId}
+                    onChange={(e) => setFbPageId(e.target.value)}
+                    placeholder="1234567890"
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">Page Access Token</label>
+                  <input
+                    value={fbAccessToken}
+                    onChange={(e) => setFbAccessToken(e.target.value)}
+                    type="password"
+                    placeholder="EAAx..."
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Instagram */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Instagram className="w-4 h-4 text-pink-600" />
+                <span className="text-xs font-semibold text-gray-700">Instagram Business</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-500">Business Account ID</label>
+                  <input
+                    value={igBusinessId}
+                    onChange={(e) => setIgBusinessId(e.target.value)}
+                    placeholder="17841234567890"
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">Access Token</label>
+                  <input
+                    value={igAccessToken}
+                    onChange={(e) => setIgAccessToken(e.target.value)}
+                    type="password"
+                    placeholder="IGQx..."
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSaveApiSettings}
+                className="px-4 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 transition-colors"
+              >
+                儲存設定
+              </button>
+              {apiSettingsSaved && (
+                <span className="text-xs text-green-600 font-medium">已儲存</span>
+              )}
+              <a
+                href="https://developers.facebook.com/docs/pages-api/getting-started"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-brand-600 hover:underline ml-auto"
+              >
+                如何取得 API Token？
+              </a>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
