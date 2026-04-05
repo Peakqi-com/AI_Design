@@ -46,6 +46,7 @@ export async function POST(request: Request) {
       lastFrameImageDataUrl: mode === "first-last-frame" ? lastFrameImageDataUrl : undefined,
       prompt,
       model: body.model,
+      mode,
       aspectRatio: body.aspectRatio,
       resolution: body.resolution,
       durationSec: body.durationSec,

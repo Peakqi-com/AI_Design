@@ -14,11 +14,14 @@ export interface StartVeoImageVideoInput {
   lastFrameImageDataUrl?: string;
   prompt: string;
   model?: string;
+  mode?: "image-to-video" | "text-to-video" | "first-last-frame";
   aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3" | "4:5";
   resolution?: "720p" | "1080p";
   durationSec?: number;
   negativePrompt?: string;
 }
+
+const FIRST_LAST_FRAME_MODEL = "lucataco/wan-2.2-first-last-frame";
 
 export interface VeoStartResult {
   operationName: string;
@@ -225,10 +228,10 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
   if (input.imageDataUrl?.trim()) {
     const parsed = parseDataUrl(input.imageDataUrl.trim());
     if (input.lastFrameImageDataUrl?.trim()) {
-      // First + last frame mode
-      payload.first_frame_image = parsed.dataUrl;
+      // First + last frame mode — uses different parameter names
+      payload.first_frame = parsed.dataUrl;
       const parsedLast = parseDataUrl(input.lastFrameImageDataUrl.trim());
-      payload.last_frame_image = parsedLast.dataUrl;
+      payload.last_frame = parsedLast.dataUrl;
     } else {
       payload.image = parsed.dataUrl;
     }
@@ -242,7 +245,11 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
 export async function startVeoImageToVideo(
   input: StartVeoImageVideoInput,
 ): Promise<VeoStartResult> {
-  const target = resolveModelTarget(input.model);
+  // Use dedicated first-last-frame model when in that mode
+  const effectiveModel = input.mode === "first-last-frame" && !input.model
+    ? FIRST_LAST_FRAME_MODEL
+    : input.model;
+  const target = resolveModelTarget(effectiveModel);
   const requestBody: Record<string, unknown> = {
     input: buildReplicateInput(input),
   };
