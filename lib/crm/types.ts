@@ -83,6 +83,8 @@ export interface CrmProject {
   budget: string;
   coverImageUrl: string;
   linkedContactId?: string;
+  linkedContactIds?: string[];
+  linkedAssetIds?: string[];
   note?: string;
   lastSyncedToCrmAt?: string;
   archivedAt?: string;
