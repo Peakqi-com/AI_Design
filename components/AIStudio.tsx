@@ -172,6 +172,27 @@ const OUTPUT_QUALITY_OPTIONS = [
 const ANALYZE_FLOOR_PLAN_PROMPT =
   "請仔細分析這張建築平面圖，輸出一張清晰的標示版平面圖：保留所有牆面、門窗、傢具輪廓，以黑白線條呈現正上方俯視圖，根據平面圖實際內容在每個空間內用繁體中文標示空間名稱，不要新增不存在的空間，確保格局與原圖完全一致。";
 
+const AREA_ESTIMATION_PROMPT =
+  "你是一位專業的室內設計估算師。請仔細分析這張建築平面圖，根據圖面比例與空間配置，估算以下資訊。" +
+  "即使無法精確測量，也請根據常見台灣住宅尺寸合理推估。" +
+  "請嚴格以下列 JSON 格式輸出（不要輸出其他內容）：\n" +
+  'AREA_JSON:{"totalPing":數字,"totalSqm":數字,"spaces":[{"name":"空間名","sqm":數字,"ping":數字}],' +
+  '"floorArea":數字,"ceilingArea":數字,"wallArea":數字,"doors":數字,"windows":數字}\n' +
+  "其中：totalPing=總坪數, totalSqm=總平方公尺, spaces=各空間明細(sqm+ping), " +
+  "floorArea=地板總面積(sqm), ceilingArea=天花板總面積(sqm), wallArea=牆面總面積(sqm, 假設樓高2.8m), " +
+  "doors=門的總數量, windows=窗戶總數量。所有數字保留一位小數。";
+
+interface AreaEstimation {
+  totalPing: number;
+  totalSqm: number;
+  spaces: Array<{ name: string; sqm: number; ping: number }>;
+  floorArea: number;
+  ceilingArea: number;
+  wallArea: number;
+  doors: number;
+  windows: number;
+}
+
 interface ViewSlotDef {
   slotKey: string;
   label: string;
@@ -413,6 +434,8 @@ export const AIStudio: React.FC = () => {
   const [labeledFloorPlan, setLabeledFloorPlan] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeCustomPrompt, setAnalyzeCustomPrompt] = useState("");
+  const [areaEstimation, setAreaEstimation] = useState<AreaEstimation | null>(null);
+  const [isEstimatingArea, setIsEstimatingArea] = useState(false);
   const [editingSlot, setEditingSlot] = useState<{ slotKey: string; imageDataUrl: string; label: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -878,6 +901,34 @@ export const AIStudio: React.FC = () => {
       }
       setLabeledFloorPlan(payload.imageDataUrl);
       setMultiPhase("review");
+
+      // 同時啟動面積估算（不阻塞主流程）
+      setIsEstimatingArea(true);
+      fetch("/api/ai/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: uploadedImage,
+          roomType: "全室整合",
+          style: "面積估算",
+          lockFace: false,
+          preserveIdentityStrict: false,
+          preferredModel: selectedModel === "auto" ? undefined : selectedModel,
+          customPrompt: AREA_ESTIMATION_PROMPT,
+          creativity: 5,
+        }),
+      })
+        .then((res) => res.text())
+        .then((raw) => {
+          const p = raw ? (JSON.parse(raw) as { summary?: string }) : {};
+          const match = p.summary?.match(/AREA_JSON:\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]) as AreaEstimation;
+            setAreaEstimation(parsed);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsEstimatingArea(false));
     } catch (err) {
       const msg = err instanceof Error
         ? (err.name === "AbortError" ? "分析超時（逾 110 秒），請重試或換較小的圖片" : err.message)
@@ -1237,6 +1288,7 @@ export const AIStudio: React.FC = () => {
     setSlotCustomPrompts({});
     setSlotPromptExpanded({});
     setAnalyzeCustomPrompt("");
+    setAreaEstimation(null);
     setErrorMessage(null);
   };
 
@@ -1728,6 +1780,73 @@ export const AIStudio: React.FC = () => {
                       )}
                     </button>
                   </div>
+
+                  {/* 面積估算結果 */}
+                  {isEstimatingArea && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-2 text-xs text-gray-500">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-600" />
+                      AI 正在估算面積...
+                    </div>
+                  )}
+                  {areaEstimation && (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                      <div className="px-3 py-2 border-b border-gray-100 bg-gray-50">
+                        <p className="text-sm font-semibold text-gray-800">AI 面積估算</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">基於平面圖比例推估，僅供參考</p>
+                      </div>
+                      <div className="p-3 space-y-3">
+                        {/* 總面積 */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-brand-50 rounded-lg p-2.5 text-center">
+                            <p className="text-lg font-bold text-brand-700">{areaEstimation.totalPing}</p>
+                            <p className="text-[10px] text-brand-500">坪</p>
+                          </div>
+                          <div className="bg-brand-50 rounded-lg p-2.5 text-center">
+                            <p className="text-lg font-bold text-brand-700">{areaEstimation.totalSqm}</p>
+                            <p className="text-[10px] text-brand-500">平方公尺</p>
+                          </div>
+                        </div>
+                        {/* 各空間 */}
+                        <div>
+                          <p className="text-[11px] font-medium text-gray-600 mb-1">各空間面積</p>
+                          <div className="space-y-1">
+                            {areaEstimation.spaces.map((s) => (
+                              <div key={s.name} className="flex justify-between text-[11px] px-1">
+                                <span className="text-gray-700">{s.name}</span>
+                                <span className="text-gray-500">{s.sqm} m² ({s.ping} 坪)</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* 施工面積 */}
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-sm font-bold text-gray-700">{areaEstimation.floorArea}</p>
+                            <p className="text-[10px] text-gray-400">地板 m²</p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-sm font-bold text-gray-700">{areaEstimation.ceilingArea}</p>
+                            <p className="text-[10px] text-gray-400">天花板 m²</p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-sm font-bold text-gray-700">{areaEstimation.wallArea}</p>
+                            <p className="text-[10px] text-gray-400">牆面 m²</p>
+                          </div>
+                        </div>
+                        {/* 門窗數量 */}
+                        <div className="grid grid-cols-2 gap-2 text-center">
+                          <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-sm font-bold text-gray-700">{areaEstimation.doors}</p>
+                            <p className="text-[10px] text-gray-400">門</p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2">
+                            <p className="text-sm font-bold text-gray-700">{areaEstimation.windows}</p>
+                            <p className="text-[10px] text-gray-400">窗戶</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-xs text-brand-700 space-y-1">
                     <p className="font-semibold">將生成 8 張（2 條串聯生成鏈）</p>
