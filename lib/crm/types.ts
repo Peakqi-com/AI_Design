@@ -63,6 +63,10 @@ export interface CrmContact {
   status: ContactStatus;
   email?: string;
   phone?: string;
+  company?: string;
+  title?: string;
+  address?: string;
+  notes?: string;
   unread: number;
   lastMessageText?: string;
   lastMessageAt?: string;

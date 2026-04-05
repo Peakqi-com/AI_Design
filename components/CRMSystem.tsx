@@ -505,7 +505,15 @@ export const CRMSystem: React.FC = () => {
   });
   const [lineCacheScope, setLineCacheScope] = useState("guest_server");
   const [isInteriorIntakeComplete, setIsInteriorIntakeComplete] = useState(false);
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [addClientForm, setAddClientForm] = useState({ displayName: "", phone: "", email: "", company: "", title: "", address: "", notes: "" });
+  const [addClientBusy, setAddClientBusy] = useState(false);
+  const [showScanCardModal, setShowScanCardModal] = useState(false);
+  const [scanCardImage, setScanCardImage] = useState<string | null>(null);
+  const [scanCardBusy, setScanCardBusy] = useState(false);
+  const [scanCardResult, setScanCardResult] = useState<typeof addClientForm | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cardFileInputRef = useRef<HTMLInputElement>(null);
   const contactsRef = useRef<CrmContact[]>([]);
   const messagesByContactRef = useRef<Record<string, CrmMessage[]>>({});
   const selectedContactIdRef = useRef<string | null>(null);
@@ -1624,6 +1632,105 @@ export const CRMSystem: React.FC = () => {
     );
   };
 
+  // 新增客戶
+  const handleCreateClient = async () => {
+    if (!addClientForm.displayName.trim()) return;
+    setAddClientBusy(true);
+    try {
+      await fetch("/api/crm/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(addClientForm),
+      });
+      setShowAddClientModal(false);
+      setAddClientForm({ displayName: "", phone: "", email: "", company: "", title: "", address: "", notes: "" });
+      void fetchContacts();
+      pushNotice("client-created", "客戶已建立");
+    } catch {
+      setError("建立客戶失敗");
+    } finally {
+      setAddClientBusy(false);
+    }
+  };
+
+  // 名片掃描：上傳圖片
+  const handleCardFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setScanCardImage(reader.result as string);
+      setScanCardResult(null);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  // 名片掃描：AI 辨識
+  const handleScanCard = async () => {
+    if (!scanCardImage) return;
+    setScanCardBusy(true);
+    try {
+      const res = await fetch("/api/ai/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: scanCardImage,
+          roomType: "全室整合",
+          style: "名片辨識",
+          customPrompt:
+            "這是一張名片照片。請辨識名片上的所有資訊，以 JSON 格式輸出：" +
+            'CARD_JSON:{"displayName":"姓名","company":"公司名稱","title":"職稱","phone":"電話","email":"電子信箱","address":"地址"}' +
+            "\n所有欄位使用繁體中文，找不到的欄位留空字串。",
+          creativity: 5,
+        }),
+      });
+      const raw = await res.text();
+      const payload = raw ? (JSON.parse(raw) as { summary?: string }) : {};
+      const match = payload.summary?.match(/CARD_JSON:\s*(\{[^}]*\})/);
+      if (match) {
+        const parsed = JSON.parse(match[1]) as Record<string, string>;
+        setScanCardResult({
+          displayName: parsed.displayName || "",
+          phone: parsed.phone || "",
+          email: parsed.email || "",
+          company: parsed.company || "",
+          title: parsed.title || "",
+          address: parsed.address || "",
+          notes: "",
+        });
+      } else {
+        setError("無法辨識名片內容，請手動輸入");
+      }
+    } catch {
+      setError("名片辨識失敗");
+    } finally {
+      setScanCardBusy(false);
+    }
+  };
+
+  // 名片辨識結果 → 建立客戶
+  const handleCreateFromCard = async () => {
+    if (!scanCardResult?.displayName?.trim()) return;
+    setAddClientBusy(true);
+    try {
+      await fetch("/api/crm/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scanCardResult),
+      });
+      setShowScanCardModal(false);
+      setScanCardImage(null);
+      setScanCardResult(null);
+      void fetchContacts();
+      pushNotice("card-client-created", `已從名片建立客戶：${scanCardResult.displayName}`);
+    } catch {
+      setError("建立客戶失敗");
+    } finally {
+      setAddClientBusy(false);
+    }
+  };
+
   const renderInbox = () => (
     <div className="flex h-full min-w-0 flex-1">
       <div className="flex w-80 flex-col border-r border-gray-200 bg-white">
@@ -1649,8 +1756,19 @@ export const CRMSystem: React.FC = () => {
           {loadingContacts && (
             <p className="px-4 py-3 text-xs text-gray-500">載入聯絡人中...</p>
           )}
+          {!loadingContacts && (
+            <div className="flex gap-1.5 px-4 py-2 border-b border-gray-100">
+              <button onClick={() => setShowAddClientModal(true)} className="flex-1 py-1.5 text-[11px] font-medium bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors">
+                + 新增客戶
+              </button>
+              <button onClick={() => { setShowScanCardModal(true); setScanCardImage(null); setScanCardResult(null); }} className="flex-1 py-1.5 text-[11px] font-medium border border-brand-300 text-brand-700 rounded-lg hover:bg-brand-50 transition-colors">
+                掃描名片
+              </button>
+              <input ref={cardFileInputRef} type="file" accept="image/*" onChange={handleCardFileChange} className="hidden" />
+            </div>
+          )}
           {!loadingContacts && contacts.length === 0 && (
-            <p className="px-4 py-6 text-sm text-gray-500">目前沒有聯絡人資料，請先完成 LINE 串接。</p>
+            <p className="px-4 py-6 text-sm text-gray-500">目前沒有客戶資料，可點擊「新增客戶」或「掃描名片」建立。</p>
           )}
           {contacts.map((contact) => (
             <button
@@ -2133,10 +2251,124 @@ export const CRMSystem: React.FC = () => {
           </div>
         </div>
       )}
-      {!selectedContact && activeTab === "inbox" && contacts.length === 0 && (
-        <div className="pointer-events-none absolute right-6 top-6 hidden items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 md:flex">
-          <UserCircle className="h-4 w-4" />
-          前往右上「設定」先完成 LINE OA 串接
+      {/* 新增客戶 Modal */}
+      {showAddClientModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setShowAddClientModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-900">新增客戶</h3>
+              <button onClick={() => setShowAddClientModal(false)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+            </div>
+            {[
+              { key: "displayName", label: "姓名 *", placeholder: "王大明" },
+              { key: "company", label: "公司", placeholder: "設計有限公司" },
+              { key: "title", label: "職稱", placeholder: "總經理" },
+              { key: "phone", label: "電話", placeholder: "0912-345-678" },
+              { key: "email", label: "Email", placeholder: "client@example.com" },
+              { key: "address", label: "地址", placeholder: "台北市信義區..." },
+            ].map(({ key, label, placeholder }) => (
+              <div key={key}>
+                <label className="text-xs font-medium text-gray-600">{label}</label>
+                <input
+                  value={(addClientForm as Record<string, string>)[key] || ""}
+                  onChange={(e) => setAddClientForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                  placeholder={placeholder}
+                  className="w-full mt-0.5 text-sm border-gray-300 rounded-lg p-2 bg-white border"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="text-xs font-medium text-gray-600">備註</label>
+              <textarea
+                value={addClientForm.notes}
+                onChange={(e) => setAddClientForm((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="客戶需求、偏好..."
+                className="w-full mt-0.5 text-sm border-gray-300 rounded-lg p-2 bg-white border h-16 resize-none"
+              />
+            </div>
+            <button
+              onClick={() => void handleCreateClient()}
+              disabled={!addClientForm.displayName.trim() || addClientBusy}
+              className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+            >
+              {addClientBusy ? "建立中..." : "建立客戶"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 掃描名片 Modal */}
+      {showScanCardModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setShowScanCardModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-900">掃描名片</h3>
+              <button onClick={() => setShowScanCardModal(false)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+            </div>
+
+            {!scanCardImage ? (
+              <div
+                onClick={() => cardFileInputRef.current?.click()}
+                className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-brand-50 hover:border-brand-300 cursor-pointer transition-colors"
+              >
+                <Smartphone className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                <p className="text-sm text-gray-600 font-medium">點擊上傳名片照片</p>
+                <p className="text-xs text-gray-400 mt-1">支援 JPG / PNG，拍攝清晰的名片正面</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <img src={scanCardImage} alt="名片" className="w-full rounded-lg border border-gray-200 max-h-48 object-contain" />
+                {!scanCardResult && (
+                  <button
+                    onClick={() => void handleScanCard()}
+                    disabled={scanCardBusy}
+                    className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {scanCardBusy ? (
+                      <><Search className="w-4 h-4 animate-spin" /> AI 辨識中...</>
+                    ) : (
+                      <><Search className="w-4 h-4" /> AI 辨識名片</>
+                    )}
+                  </button>
+                )}
+                {scanCardResult && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-green-600">辨識完成，請確認並修改：</p>
+                    {[
+                      { key: "displayName", label: "姓名" },
+                      { key: "company", label: "公司" },
+                      { key: "title", label: "職稱" },
+                      { key: "phone", label: "電話" },
+                      { key: "email", label: "Email" },
+                      { key: "address", label: "地址" },
+                    ].map(({ key, label }) => (
+                      <div key={key} className="flex items-center gap-2">
+                        <label className="text-[11px] text-gray-500 w-10 shrink-0">{label}</label>
+                        <input
+                          value={(scanCardResult as Record<string, string>)[key] || ""}
+                          onChange={(e) => setScanCardResult((prev) => prev ? { ...prev, [key]: e.target.value } : prev)}
+                          className="flex-1 text-xs border-gray-200 rounded-md p-1.5 bg-white border"
+                        />
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => void handleCreateFromCard()}
+                      disabled={addClientBusy || !scanCardResult.displayName.trim()}
+                      className="w-full py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {addClientBusy ? "建立中..." : "確認建立客戶"}
+                    </button>
+                  </div>
+                )}
+                <button
+                  onClick={() => { setScanCardImage(null); setScanCardResult(null); }}
+                  className="w-full py-1.5 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  重新上傳
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
