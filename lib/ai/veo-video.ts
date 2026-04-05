@@ -11,9 +11,10 @@ interface ParsedDataUrl {
 
 export interface StartVeoImageVideoInput {
   imageDataUrl?: string;
+  lastFrameImageDataUrl?: string;
   prompt: string;
   model?: string;
-  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3";
+  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3" | "4:5";
   resolution?: "720p" | "1080p";
   durationSec?: number;
   negativePrompt?: string;
@@ -223,7 +224,14 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
   };
   if (input.imageDataUrl?.trim()) {
     const parsed = parseDataUrl(input.imageDataUrl.trim());
-    payload.image = parsed.dataUrl;
+    if (input.lastFrameImageDataUrl?.trim()) {
+      // First + last frame mode
+      payload.first_frame_image = parsed.dataUrl;
+      const parsedLast = parseDataUrl(input.lastFrameImageDataUrl.trim());
+      payload.last_frame_image = parsedLast.dataUrl;
+    } else {
+      payload.image = parsed.dataUrl;
+    }
   }
   if (input.negativePrompt?.trim()) {
     payload.negative_prompt = input.negativePrompt.trim();

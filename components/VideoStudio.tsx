@@ -17,10 +17,27 @@ import {
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
-type Mode = "image-to-video";
+type Mode = "image-to-video" | "text-to-video" | "first-last-frame";
 type Style = "japanese" | "industrial" | "modern" | "luxury";
 type CameraMotion = "dolly-in" | "pan-right" | "orbit" | "panorama-tour";
-type AspectRatio = "9:16" | "1:1" | "4:3" | "16:9";
+type AspectRatio = "9:16" | "1:1" | "4:3" | "16:9" | "4:5";
+
+type PlatformPreset = "custom" | "ig-reel" | "ig-post" | "ig-story" | "fb-feed" | "fb-reel" | "fb-cover";
+const PLATFORM_PRESETS: { id: PlatformPreset; label: string; ratio: AspectRatio; hint: string }[] = [
+  { id: "custom", label: "自訂", ratio: "16:9", hint: "自選比例" },
+  { id: "ig-reel", label: "IG Reels", ratio: "9:16", hint: "直立短影片" },
+  { id: "ig-post", label: "IG 貼文", ratio: "1:1", hint: "正方形" },
+  { id: "ig-story", label: "IG 限時動態", ratio: "9:16", hint: "全螢幕直立" },
+  { id: "fb-feed", label: "FB 動態", ratio: "16:9", hint: "橫向影片" },
+  { id: "fb-reel", label: "FB Reels", ratio: "9:16", hint: "直立短影片" },
+  { id: "fb-cover", label: "FB 封面影片", ratio: "16:9", hint: "橫向" },
+];
+
+const MODE_OPTIONS: { id: Mode; label: string; hint: string }[] = [
+  { id: "image-to-video", label: "圖片轉影片", hint: "上傳一張圖片生成動態影片" },
+  { id: "first-last-frame", label: "首尾幀", hint: "上傳首幀＋尾幀，AI 生成過渡影片" },
+  { id: "text-to-video", label: "文字生影片", hint: "純文字提示詞生成影片" },
+];
 type SourceFrameMode = "fill" | "original";
 
 interface GeneratedVideoItem {
@@ -136,6 +153,7 @@ const ASPECT_RATIO_LABELS: Record<AspectRatio, string> = {
   "1:1": "1:1（Feed 方形）",
   "4:3": "4:3（Classic）",
   "16:9": "16:9（YouTube / 橫幅）",
+  "4:5": "4:5（IG Feed 推薦）",
 };
 
 const SOURCE_FRAME_MODE_OPTIONS: SourceFrameMode[] = ["fill", "original"];
@@ -171,6 +189,7 @@ const ASPECT_RATIO_VALUES: Record<AspectRatio, number> = {
   "1:1": 1,
   "4:3": 4 / 3,
   "16:9": 16 / 9,
+  "4:5": 4 / 5,
 };
 
 const DEFAULT_PREVIEW_RATIO = 16 / 9;
@@ -562,7 +581,7 @@ const writeVideoHistoryCache = (userId: string, items: GeneratedVideoItem[]): vo
 export const VideoStudio: React.FC = () => {
   const { data: session } = useSession();
 
-  const mode: Mode = "image-to-video";
+  const [mode, setMode] = useState<Mode>("image-to-video");
   const [selectedStyle, setSelectedStyle] = useState<Style>("japanese");
   const [cameraMotion, setCameraMotion] = useState<CameraMotion>("dolly-in");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
@@ -578,6 +597,8 @@ export const VideoStudio: React.FC = () => {
   const [uploadedAssetUrl, setUploadedAssetUrl] = useState<string | null>(null);
   const [uploadedAssetKind, setUploadedAssetKind] = useState<"image" | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("尚未上傳");
+  const [lastFrameImage, setLastFrameImage] = useState<string | null>(null);
+  const [platformPreset, setPlatformPreset] = useState<PlatformPreset>("custom");
 
   const [resultVideoUrl, setResultVideoUrl] = useState<string | null>(null);
   const [resultMeta, setResultMeta] = useState<string>("");
@@ -603,6 +624,7 @@ export const VideoStudio: React.FC = () => {
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const historyPreviewVideoRef = useRef<HTMLVideoElement>(null);
   const previewViewportRef = useRef<HTMLDivElement>(null);
@@ -633,7 +655,11 @@ export const VideoStudio: React.FC = () => {
     setIsPlaying(false);
   }, []);
 
-  const canGenerate = Boolean(uploadedAssetKind === "image" && uploadedAssetUrl);
+  const canGenerate = mode === "text-to-video"
+    ? Boolean(customPrompt.trim())
+    : mode === "first-last-frame"
+      ? Boolean(uploadedAssetKind === "image" && uploadedAssetUrl && lastFrameImage)
+      : Boolean(uploadedAssetKind === "image" && uploadedAssetUrl);
 
   const activePreviewAspectValue = ASPECT_RATIO_VALUES[aspectRatio] || DEFAULT_PREVIEW_RATIO;
   const previewObjectFitClass = sourceFrameMode === "fill" ? "object-cover" : "object-contain";
@@ -673,14 +699,18 @@ export const VideoStudio: React.FC = () => {
 
   const toGeneratedVideoItem = useCallback((asset: SocialAssetApiItem): GeneratedVideoItem => {
     const meta = asset.meta || {};
-    const mode: Mode = "image-to-video";
+    const mode: Mode = (
+      meta.mode === "text-to-video" || meta.mode === "first-last-frame"
+        ? meta.mode
+        : "image-to-video"
+    ) as Mode;
     const style = (
       meta.style === "industrial" || meta.style === "modern" || meta.style === "luxury"
         ? meta.style
         : "japanese"
     ) as Style;
     const aspectRatio = (
-      meta.aspectRatio === "1:1" || meta.aspectRatio === "16:9" || meta.aspectRatio === "4:3"
+      meta.aspectRatio === "1:1" || meta.aspectRatio === "16:9" || meta.aspectRatio === "4:3" || meta.aspectRatio === "4:5"
         ? meta.aspectRatio
         : "9:16"
     ) as AspectRatio;
@@ -1330,7 +1360,9 @@ export const VideoStudio: React.FC = () => {
         },
         signal: startController.signal,
         body: JSON.stringify({
-          imageDataUrl,
+          mode,
+          imageDataUrl: mode === "text-to-video" ? undefined : imageDataUrl,
+          lastFrameImageDataUrl: mode === "first-last-frame" ? lastFrameImage : undefined,
           model: videoModel,
           aspectRatio,
           resolution: videoResolution,
@@ -1509,15 +1541,22 @@ export const VideoStudio: React.FC = () => {
       let usedVideoModel = "";
       let sourceType: "image" | "text" = "image";
 
-      if (uploadedAssetKind && uploadedAssetKind !== "image") {
-        throw new Error("目前僅支援圖生影片，請上傳圖片。");
-      }
-      if (!uploadedAssetUrl) {
-        throw new Error("請先上傳圖片，提示詞僅作輔助，無法單獨生成影片。");
+      if (mode === "text-to-video") {
+        sourceType = "text";
+      } else {
+        if (uploadedAssetKind && uploadedAssetKind !== "image") {
+          throw new Error("目前僅支援圖生影片，請上傳圖片。");
+        }
+        if (!uploadedAssetUrl) {
+          throw new Error("請先上傳圖片，提示詞僅作輔助，無法單獨生成影片。");
+        }
+        if (mode === "first-last-frame" && !lastFrameImage) {
+          throw new Error("首尾幀模式需要同時上傳首幀與尾幀圖片。");
+        }
       }
 
-      const sourceForMotion = uploadedAssetKind === "image" ? uploadedAssetUrl : null;
-      sourceType = "image";
+      const sourceForMotion = mode !== "text-to-video" && uploadedAssetKind === "image" ? uploadedAssetUrl : null;
+      sourceType = mode === "text-to-video" ? "text" : "image";
       if (useVideoModel) {
         if (!sourceForMotion) {
           throw new Error("請先上傳圖片後再使用影片模型生成。");
@@ -1752,6 +1791,25 @@ export const VideoStudio: React.FC = () => {
           </div>
 
           <div className="flex-1 p-4 space-y-6 overflow-y-auto">
+          {/* 生成模式 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">生成模式</label>
+            <div className="space-y-1.5">
+              {MODE_OPTIONS.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => { setMode(m.id); if (m.id === "text-to-video") { setUploadedAssetUrl(null); setLastFrameImage(null); } }}
+                  className={`w-full rounded-lg border p-2 text-left transition-colors ${
+                    mode === m.id ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500" : "border-gray-200 hover:border-brand-300"
+                  }`}
+                >
+                  <p className="text-xs font-semibold text-gray-800">{m.label}</p>
+                  <p className="text-[10px] text-gray-500">{m.hint}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-3">1. 素材來源（圖片必傳）</label>
               {!uploadedAssetUrl ? (
@@ -1795,6 +1853,37 @@ export const VideoStudio: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* 尾幀上傳（首尾幀模式） */}
+            {mode === "first-last-frame" && uploadedAssetUrl && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">尾幀圖片（結尾畫面）</label>
+                {!lastFrameImage ? (
+                  <div
+                    onClick={() => lastFrameInputRef.current?.click()}
+                    className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:bg-brand-50 hover:border-brand-300 cursor-pointer"
+                  >
+                    <Upload className="w-6 h-6 text-gray-400 mx-auto mb-1" />
+                    <p className="text-xs text-gray-500">上傳尾幀圖片</p>
+                  </div>
+                ) : (
+                  <div className="relative rounded-lg border border-gray-200 bg-gray-50 p-1">
+                    <img src={lastFrameImage} alt="last-frame" className="max-h-28 w-full rounded-md object-contain bg-white" />
+                    <button onClick={() => setLastFrameImage(null)} className="absolute top-1 right-1 p-0.5 bg-white rounded-full shadow-sm hover:bg-red-50">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <input ref={lastFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setLastFrameImage(reader.result as string);
+                  reader.readAsDataURL(file);
+                  e.target.value = "";
+                }} />
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-3">2. 社群視覺風格</label>
@@ -1842,6 +1931,25 @@ export const VideoStudio: React.FC = () => {
                 ))}
               </select>
             </div>
+
+          {/* 社群平台快捷 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">社群平台</label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {PLATFORM_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { setPlatformPreset(p.id); if (p.id !== "custom") setAspectRatio(p.ratio); }}
+                  className={`rounded-lg border p-1.5 text-left transition-colors ${
+                    platformPreset === p.id ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500" : "border-gray-200 hover:border-brand-300"
+                  }`}
+                >
+                  <p className="text-[11px] font-semibold text-gray-700">{p.label}</p>
+                  <p className="text-[9px] text-gray-400">{p.hint}</p>
+                </button>
+              ))}
+            </div>
+          </div>
 
             <div className={useVideoModel ? "" : "opacity-50 pointer-events-none"}>
               <label className="block text-sm font-bold text-gray-700 mb-2">輸出比例</label>
@@ -1978,7 +2086,7 @@ export const VideoStudio: React.FC = () => {
                 className="gap-2"
               >
                 {isGenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                {isGenerating ? `AI 運算中 ${progress}%` : "開始生成社群影片（需圖片）"}
+                {isGenerating ? `AI 運算中 ${progress}%` : mode === "text-to-video" ? "開始生成社群影片" : "開始生成社群影片（需圖片）"}
               </Button>
               {isGenerating && (
                 <Button

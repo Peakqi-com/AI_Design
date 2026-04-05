@@ -10,12 +10,14 @@ export const dynamic = "force-dynamic";
 
 type GenerateBody = {
   imageDataUrl?: string;
+  lastFrameImageDataUrl?: string;
   prompt?: string;
   model?: string;
-  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3";
+  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3" | "4:5";
   resolution?: "720p" | "1080p";
   durationSec?: number;
   negativePrompt?: string;
+  mode?: "image-to-video" | "text-to-video" | "first-last-frame";
 };
 
 export async function POST(request: Request) {
@@ -27,9 +29,12 @@ export async function POST(request: Request) {
   }
 
   const imageDataUrl = body.imageDataUrl?.trim();
+  const lastFrameImageDataUrl = body.lastFrameImageDataUrl?.trim();
   const prompt = body.prompt?.trim();
-  if (!imageDataUrl) {
-    return NextResponse.json({ error: "imageDataUrl is required for image-to-video mode." }, { status: 400 });
+  const mode = body.mode || (imageDataUrl ? "image-to-video" : "text-to-video");
+
+  if (mode !== "text-to-video" && !imageDataUrl) {
+    return NextResponse.json({ error: "imageDataUrl is required." }, { status: 400 });
   }
   if (!prompt) {
     return NextResponse.json({ error: "prompt is required." }, { status: 400 });
@@ -37,7 +42,8 @@ export async function POST(request: Request) {
 
   try {
     const result = await startVeoImageToVideo({
-      imageDataUrl,
+      imageDataUrl: imageDataUrl || undefined,
+      lastFrameImageDataUrl: mode === "first-last-frame" ? lastFrameImageDataUrl : undefined,
       prompt,
       model: body.model,
       aspectRatio: body.aspectRatio,
