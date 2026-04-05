@@ -193,6 +193,98 @@ interface AreaEstimation {
   windows: number;
 }
 
+/**
+ * 在圖片上疊加面積標註，回傳新的 data URL。
+ */
+const overlayAreaAnnotations = (
+  imageDataUrl: string,
+  area: AreaEstimation,
+): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("canvas not supported")); return; }
+
+      ctx.drawImage(img, 0, 0);
+      const w = canvas.width;
+      const h = canvas.height;
+      const scale = Math.max(1, Math.min(w, h) / 800);
+
+      // 右上角總面積方塊
+      const boxW = 180 * scale;
+      const boxH = 60 * scale;
+      const boxX = w - boxW - 12 * scale;
+      const boxY = 12 * scale;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.beginPath();
+      ctx.roundRect(boxX, boxY, boxW, boxH, 8 * scale);
+      ctx.fill();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = `bold ${18 * scale}px "Microsoft JhengHei", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(`${area.totalPing} 坪`, boxX + boxW / 2, boxY + 24 * scale);
+      ctx.font = `${12 * scale}px "Microsoft JhengHei", sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      ctx.fillText(`${area.totalSqm} m²`, boxX + boxW / 2, boxY + 44 * scale);
+
+      // 左下角施工面積表
+      const tableX = 12 * scale;
+      const tableY = h - 12 * scale;
+      const lineH = 18 * scale;
+      const rows = [
+        `地板 ${area.floorArea} m²  |  天花板 ${area.ceilingArea} m²  |  牆面 ${area.wallArea} m²`,
+        `門 ${area.doors} 個  |  窗 ${area.windows} 個`,
+      ];
+      const tableH = (rows.length + 0.5) * lineH;
+      const tableW = 340 * scale;
+
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.beginPath();
+      ctx.roundRect(tableX, tableY - tableH, tableW, tableH, 8 * scale);
+      ctx.fill();
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = `${11 * scale}px "Microsoft JhengHei", sans-serif`;
+      ctx.textAlign = "left";
+      rows.forEach((text, i) => {
+        ctx.fillText(text, tableX + 10 * scale, tableY - tableH + (i + 1) * lineH);
+      });
+
+      // 各空間標註（分散排列在圖片上方）
+      if (area.spaces.length > 0) {
+        const tagH = 22 * scale;
+        const gap = 6 * scale;
+        const startY = boxY + boxH + 16 * scale;
+        let curX = w - 12 * scale;
+        area.spaces.forEach((space) => {
+          const label = `${space.name} ${space.ping}坪`;
+          ctx.font = `${11 * scale}px "Microsoft JhengHei", sans-serif`;
+          const tw = ctx.measureText(label).width + 14 * scale;
+          curX -= tw + gap;
+          if (curX < 0) { curX = w - 12 * scale - tw - gap; }
+
+          ctx.fillStyle = "rgba(59,130,246,0.8)";
+          ctx.beginPath();
+          ctx.roundRect(curX, startY, tw, tagH, 4 * scale);
+          ctx.fill();
+
+          ctx.fillStyle = "#FFFFFF";
+          ctx.textAlign = "left";
+          ctx.fillText(label, curX + 7 * scale, startY + 15 * scale);
+        });
+      }
+
+      resolve(canvas.toDataURL("image/jpeg", 0.92));
+    };
+    img.onerror = () => reject(new Error("圖片載入失敗"));
+    img.src = imageDataUrl;
+  });
+
 interface ViewSlotDef {
   slotKey: string;
   label: string;
@@ -436,6 +528,7 @@ export const AIStudio: React.FC = () => {
   const [analyzeCustomPrompt, setAnalyzeCustomPrompt] = useState("");
   const [areaEstimation, setAreaEstimation] = useState<AreaEstimation | null>(null);
   const [isEstimatingArea, setIsEstimatingArea] = useState(false);
+  const [annotatedPreview, setAnnotatedPreview] = useState<string | null>(null);
   const [editingSlot, setEditingSlot] = useState<{ slotKey: string; imageDataUrl: string; label: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -630,6 +723,24 @@ export const AIStudio: React.FC = () => {
     const r = multiViewResults.find((x) => x.slotKey === slotKey);
     return r?.status === "done" && r.imageDataUrl ? r.imageDataUrl : null;
   }, [labeledFloorPlan, multiViewResults]);
+
+  const handleOverlayArea = useCallback(async (imageDataUrl: string) => {
+    if (!areaEstimation) return;
+    try {
+      const annotated = await overlayAreaAnnotations(imageDataUrl, areaEstimation);
+      setAnnotatedPreview(annotated);
+    } catch {
+      // ignore
+    }
+  }, [areaEstimation]);
+
+  const handleDownloadAnnotated = useCallback(() => {
+    if (!annotatedPreview) return;
+    const link = document.createElement("a");
+    link.href = annotatedPreview;
+    link.download = `floor-plan-annotated-${Date.now()}.jpg`;
+    link.click();
+  }, [annotatedPreview]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -1848,6 +1959,42 @@ export const AIStudio: React.FC = () => {
                     </div>
                   )}
 
+                  {/* 面積標註按鈕 */}
+                  {areaEstimation && labeledFloorPlan && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void handleOverlayArea(labeledFloorPlan)}
+                        className="flex-1 py-2 bg-gray-800 text-white text-xs font-medium rounded-lg hover:bg-gray-900 transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5" /> 在標示圖上加入面積標註
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 標註預覽 */}
+                  {annotatedPreview && (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                      <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700">面積標註圖</span>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={handleDownloadAnnotated}
+                            className="px-2 py-1 text-[11px] bg-brand-600 text-white rounded-md hover:bg-brand-700"
+                          >
+                            下載
+                          </button>
+                          <button
+                            onClick={() => setAnnotatedPreview(null)}
+                            className="px-2 py-1 text-[11px] text-gray-500 border border-gray-200 rounded-md hover:bg-gray-100"
+                          >
+                            關閉
+                          </button>
+                        </div>
+                      </div>
+                      <img src={annotatedPreview} alt="面積標註" className="w-full object-contain max-h-96" />
+                    </div>
+                  )}
+
                   <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-xs text-brand-700 space-y-1">
                     <p className="font-semibold">將生成 8 張（2 條串聯生成鏈）</p>
                     <p className="text-brand-600">彩色鏈：手繪 → 卡通 → 無陰影 → 擬真</p>
@@ -1893,6 +2040,15 @@ export const AIStudio: React.FC = () => {
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                 </button>
+                                {areaEstimation && (
+                                  <button
+                                    onClick={() => void handleOverlayArea(result.imageDataUrl!)}
+                                    className="p-1 hover:bg-green-100 rounded text-gray-400 hover:text-green-600 transition-colors"
+                                    title="面積標註"
+                                  >
+                                    <span className="text-[10px] font-bold leading-none">m²</span>
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => {
                                     const link = document.createElement("a");
@@ -2061,6 +2217,28 @@ export const AIStudio: React.FC = () => {
           onApply={handleApplySlotEdit}
           onClose={() => setEditingSlot(null)}
         />
+      )}
+
+      {/* 面積標註預覽 Modal（從 steps 階段 m² 按鈕觸發） */}
+      {annotatedPreview && multiPhase === "steps" && (
+        <div className="fixed inset-0 z-[110] bg-black/70 flex items-center justify-center p-4" onClick={() => setAnnotatedPreview(null)}>
+          <div className="relative bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+              <p className="text-sm font-semibold text-gray-800">面積標註圖</p>
+              <div className="flex gap-2">
+                <button onClick={handleDownloadAnnotated} className="px-3 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700">
+                  下載標註圖
+                </button>
+                <button onClick={() => setAnnotatedPreview(null)} className="p-1.5 text-gray-400 hover:text-gray-600">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto p-4 bg-gray-100 flex items-center justify-center">
+              <img src={annotatedPreview} alt="面積標註" className="max-w-full max-h-full rounded-lg shadow-lg" />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
