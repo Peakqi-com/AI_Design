@@ -43,10 +43,14 @@ export interface SocialAssetMeta {
   sourceType?: string;
   durationSec?: number;
   prompt?: string;
+  generationPrompt?: string; // full prompt used for AI generation
   summary?: string;
   roomType?: string;
   dressName?: string;
   model?: string;
+  packageId?: string;
+  packageLabel?: string;
+  slotLabel?: string;
 }
 
 interface SocialAssetRecord {

@@ -95,6 +95,7 @@ interface MultiViewResult {
   imageDataUrl?: string;
   summary?: string;
   error?: string;
+  generationPrompt?: string;
 }
 
 interface DesignFunctionPreset {
@@ -512,6 +513,7 @@ export const AIStudio: React.FC = () => {
       packageId?: string;
       packageLabel?: string;
       slotLabel?: string;
+      generationPrompt?: string;
     }) => {
       const file = await dataUrlToFile(input.imageDataUrl, `interior-render-${formatFileDate()}.jpg`);
       const formData = new FormData();
@@ -527,6 +529,7 @@ export const AIStudio: React.FC = () => {
           roomType: selectedRoomType,
           model: input.modelTag,
           prompt: designerPrompt.trim(),
+          generationPrompt: input.generationPrompt || "",
           ...(input.packageId
             ? {
                 packageId: input.packageId,
@@ -937,7 +940,7 @@ export const AIStudio: React.FC = () => {
       setMultiViewResults((prev) =>
         prev.map((r) =>
           r.slotKey === slot.slotKey
-            ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary }
+            ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary, generationPrompt: mergedPrompt }
             : r
         )
       );
@@ -948,6 +951,7 @@ export const AIStudio: React.FC = () => {
         packageId: sessionPackageId,
         packageLabel: sessionPackageLabel,
         slotLabel: slot.label,
+        generationPrompt: mergedPrompt,
       }).catch(() => {});
     } catch (error) {
       setMultiViewResults((prev) =>
@@ -1085,10 +1089,11 @@ export const AIStudio: React.FC = () => {
           throw new Error(payload.error || "局部調整失敗");
         }
 
+        const regionalPrompt = `局部調整：${editPrompt}`;
         setMultiViewResults((prev) =>
           prev.map((r) =>
             r.slotKey === slotKey
-              ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary }
+              ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary, generationPrompt: regionalPrompt }
               : r
           )
         );
@@ -1106,6 +1111,7 @@ export const AIStudio: React.FC = () => {
           packageId: sessionPackageId,
           packageLabel: sessionPackageLabel,
           slotLabel: `${style}（局部調整）`,
+          generationPrompt: regionalPrompt,
         }).catch(() => {});
       } catch (error) {
         setMultiViewResults((prev) =>
@@ -1171,7 +1177,7 @@ export const AIStudio: React.FC = () => {
         setMultiViewResults((prev) =>
           prev.map((r) =>
             r.slotKey === slot.slotKey
-              ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary }
+              ? { ...r, status: "done" as const, imageDataUrl: payload.imageDataUrl, summary: payload.summary, generationPrompt: mergedPrompt }
               : r
           )
         );
@@ -1182,6 +1188,7 @@ export const AIStudio: React.FC = () => {
           packageId: sessionPackageId,
           packageLabel: sessionPackageLabel,
           slotLabel: slot.label,
+          generationPrompt: mergedPrompt,
         }).catch(() => {});
       } catch (error) {
         setMultiViewResults((prev) =>
@@ -1777,6 +1784,21 @@ export const AIStudio: React.FC = () => {
                             </div>
                           )}
                         </div>
+
+                        {/* AI 設計說明 + 使用的提示詞 */}
+                        {result.status === "done" && (result.summary || result.generationPrompt) && (
+                          <div className="px-3 py-1.5 border-t border-gray-100 bg-gray-50/50 max-h-20 overflow-y-auto">
+                            {result.summary && (
+                              <p className="text-[10px] text-gray-600 leading-relaxed line-clamp-2">{result.summary}</p>
+                            )}
+                            {result.generationPrompt && (
+                              <details className="mt-1">
+                                <summary className="text-[10px] text-brand-500 cursor-pointer hover:text-brand-700">查看生成提示詞</summary>
+                                <p className="text-[10px] text-gray-500 mt-1 whitespace-pre-wrap break-all leading-relaxed">{result.generationPrompt}</p>
+                              </details>
+                            )}
+                          </div>
+                        )}
 
                         {/* 標示平面圖卡片：重新分析 */}
                         {result.slotKey === "labeled-floor-plan" && result.status === "done" && (
