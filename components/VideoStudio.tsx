@@ -1810,28 +1810,36 @@ export const VideoStudio: React.FC = () => {
             </div>
           </div>
 
+            {/* 圖片上傳區（text-to-video 模式隱藏） */}
+            {mode !== "text-to-video" && (
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">1. 素材來源（圖片必傳）</label>
+              <label className="block text-sm font-bold text-gray-700 mb-3">
+                {mode === "first-last-frame" ? "1. 首幀圖片（開場畫面）" : "1. 素材來源（圖片必傳）"}
+              </label>
               {!uploadedAssetUrl ? (
                 <div
                   onClick={() => fileInputRef.current?.click()}
                   className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:bg-brand-50 hover:border-brand-300 transition-colors cursor-pointer group"
                 >
                   <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2 group-hover:text-brand-500" />
-                  <p className="text-xs text-gray-500">上傳圖片素材 (JPG/PNG/WebP)，影片會依圖片生成</p>
-                  <>
-                    <div className="my-2 text-[10px] text-gray-300">- 或 -</div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleUseSample();
-                      }}
-                    >
-                      使用範例圖片
-                    </Button>
-                  </>
+                  <p className="text-xs text-gray-500">
+                    {mode === "first-last-frame" ? "上傳首幀圖片 — 影片的第一個畫面" : "上傳圖片素材 (JPG/PNG/WebP)，影片會依圖片生成"}
+                  </p>
+                  {mode !== "first-last-frame" && (
+                    <>
+                      <div className="my-2 text-[10px] text-gray-300">- 或 -</div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleUseSample();
+                        }}
+                      >
+                        使用範例圖片
+                      </Button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="relative rounded-lg overflow-hidden border border-gray-200 group">
@@ -1843,35 +1851,44 @@ export const VideoStudio: React.FC = () => {
                     />
                   </div>
                   <div className="absolute bottom-2 left-2 text-[10px] px-2 py-1 rounded bg-black/60 text-white">
-                    {uploadedFileName}
+                    {mode === "first-last-frame" ? "首幀" : uploadedFileName}
                   </div>
                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()}>
-                      更換素材
+                      更換{mode === "first-last-frame" ? "首幀" : "素材"}
                     </Button>
                   </div>
                 </div>
               )}
             </div>
+            )}
 
             {/* 尾幀上傳（首尾幀模式） */}
-            {mode === "first-last-frame" && uploadedAssetUrl && (
+            {mode === "first-last-frame" && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">尾幀圖片（結尾畫面）</label>
+                <label className="block text-sm font-bold text-gray-700 mb-3">2. 尾幀圖片（結尾畫面）</label>
                 {!lastFrameImage ? (
                   <div
                     onClick={() => lastFrameInputRef.current?.click()}
-                    className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:bg-brand-50 hover:border-brand-300 cursor-pointer"
+                    className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:bg-brand-50 hover:border-brand-300 cursor-pointer group"
                   >
-                    <Upload className="w-6 h-6 text-gray-400 mx-auto mb-1" />
-                    <p className="text-xs text-gray-500">上傳尾幀圖片</p>
+                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2 group-hover:text-brand-500" />
+                    <p className="text-xs text-gray-500">上傳尾幀圖片 — 影片的最後一個畫面</p>
+                    <p className="text-[10px] text-gray-400 mt-1">AI 會自動生成首幀到尾幀的過渡動態</p>
                   </div>
                 ) : (
-                  <div className="relative rounded-lg border border-gray-200 bg-gray-50 p-1">
-                    <img src={lastFrameImage} alt="last-frame" className="max-h-28 w-full rounded-md object-contain bg-white" />
-                    <button onClick={() => setLastFrameImage(null)} className="absolute top-1 right-1 p-0.5 bg-white rounded-full shadow-sm hover:bg-red-50">
-                      <X className="w-3 h-3" />
-                    </button>
+                  <div className="relative rounded-lg overflow-hidden border border-gray-200 group">
+                    <div className="w-full h-32 bg-gray-100 flex items-center justify-center">
+                      <img src={lastFrameImage} alt="last-frame" className="w-full h-full object-contain" />
+                    </div>
+                    <div className="absolute bottom-2 left-2 text-[10px] px-2 py-1 rounded bg-black/60 text-white">
+                      尾幀
+                    </div>
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Button size="sm" variant="secondary" onClick={() => setLastFrameImage(null)}>
+                        更換尾幀
+                      </Button>
+                    </div>
                   </div>
                 )}
                 <input ref={lastFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => {
@@ -1882,6 +1899,31 @@ export const VideoStudio: React.FC = () => {
                   reader.readAsDataURL(file);
                   e.target.value = "";
                 }} />
+              </div>
+            )}
+
+            {/* 首尾幀預覽（兩張並排） */}
+            {mode === "first-last-frame" && uploadedAssetUrl && lastFrameImage && (
+              <div className="bg-brand-50 border border-brand-100 rounded-lg p-2">
+                <p className="text-[10px] text-brand-600 font-medium mb-1.5 text-center">首幀 → 尾幀 過渡預覽</p>
+                <div className="flex gap-2">
+                  <div className="flex-1 rounded-md overflow-hidden border border-brand-200">
+                    <img src={uploadedAssetUrl} alt="first" className="w-full h-20 object-cover" />
+                    <p className="text-[9px] text-center text-brand-500 py-0.5">首幀</p>
+                  </div>
+                  <div className="flex items-center text-brand-400 text-lg">→</div>
+                  <div className="flex-1 rounded-md overflow-hidden border border-brand-200">
+                    <img src={lastFrameImage} alt="last" className="w-full h-20 object-cover" />
+                    <p className="text-[9px] text-center text-brand-500 py-0.5">尾幀</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* text-to-video 提示 */}
+            {mode === "text-to-video" && (
+              <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
+                文字模式：不需上傳圖片，AI 將根據下方提示詞直接生成影片
               </div>
             )}
 
