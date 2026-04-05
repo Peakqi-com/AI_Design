@@ -77,6 +77,7 @@ export interface CrmContact {
 
 export interface CrmProject {
   id: string;
+  userId?: string;
   name: string;
   clientName: string;
   status: "draft" | "active" | "quoted" | "completed";

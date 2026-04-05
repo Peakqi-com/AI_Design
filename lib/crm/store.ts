@@ -1087,6 +1087,7 @@ export async function createMessage(input: CreateMessageInput): Promise<CrmMessa
 }
 
 export interface ListProjectsOptions {
+  userId?: string;
   search?: string;
   includeArchived?: boolean;
   includeFiled?: boolean;
@@ -1108,9 +1109,14 @@ export async function listProjects(options: ListProjectsOptions = {}): Promise<C
   const includeArchived = Boolean(options.includeArchived);
   const includeFiled = Boolean(options.includeFiled);
   const includeDeleted = Boolean(options.includeDeleted);
+  const filterUserId = options.userId?.trim();
 
   return store.projects
     .filter((project) => {
+      // User scope: only show projects owned by this user (or legacy projects without userId)
+      if (filterUserId && project.userId && project.userId !== filterUserId) {
+        return false;
+      }
       if (!includeDeleted && project.deletedAt) {
         return false;
       }
@@ -1146,6 +1152,7 @@ export async function getProjectById(projectId: string): Promise<CrmProject | nu
 }
 
 export interface CreateProjectInput {
+  userId?: string;
   name: string;
   clientName: string;
   status: CrmProject["status"];
@@ -1175,6 +1182,7 @@ export async function createProject(input: CreateProjectInput): Promise<CrmProje
   const now = nowIso();
   const project: CrmProject = {
     id: createId("project"),
+    userId: input.userId?.trim() || undefined,
     name: input.name.trim(),
     clientName: input.clientName.trim(),
     status: input.status,

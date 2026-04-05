@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Button } from "./Button";
+import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import {
   Plus,
   Search,
@@ -119,6 +121,10 @@ const requestJson = async <T,>(input: RequestInfo, init?: RequestInit): Promise<
 };
 
 export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => {
+  const { data: session } = useSession();
+  const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
+  const userScopeId = resolveClientUserScopeId(sessionUser?.id || null, sessionUser?.email || null);
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -154,6 +160,9 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     setError(null);
     try {
       const params = new URLSearchParams();
+      if (userScopeId) {
+        params.set("userId", userScopeId);
+      }
       if (searchKey.trim()) {
         params.set("search", searchKey.trim());
       }
@@ -273,6 +282,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: userScopeId,
           name,
           clientName,
           status: form.status,
