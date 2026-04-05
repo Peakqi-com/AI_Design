@@ -24,14 +24,20 @@ export function useCredits() {
     isAdmin: false,
   });
 
-  const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
+  const sessionUser = session?.user as { id?: string; email?: string | null; name?: string | null; image?: string | null } | undefined;
   const userScopeId = resolveClientUserScopeId(sessionUser?.id || null, sessionUser?.email || null);
   const userEmail = sessionUser?.email || "";
+  const userName = sessionUser?.name || "";
+  const userAvatar = sessionUser?.image || "";
 
   const refresh = useCallback(async () => {
     if (!userScopeId) return;
     try {
-      const res = await fetch(`/api/credits?userId=${encodeURIComponent(userScopeId)}`);
+      const params = new URLSearchParams({ userId: userScopeId });
+      if (userEmail) params.set("email", userEmail);
+      if (userName) params.set("name", userName);
+      if (userAvatar) params.set("avatar", userAvatar);
+      const res = await fetch(`/api/credits?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
       setState({
@@ -44,7 +50,7 @@ export function useCredits() {
     } catch {
       setState((prev) => ({ ...prev, loading: false }));
     }
-  }, [userScopeId]);
+  }, [userScopeId, userEmail, userName, userAvatar]);
 
   useEffect(() => {
     void refresh();

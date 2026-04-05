@@ -44,8 +44,15 @@ export async function GET(request: Request) {
   }
 
   const userId = await resolveServerUserScopeId(requestedUserId);
+  const profileEmail = url.searchParams.get("email")?.trim() || undefined;
+  const profileName = url.searchParams.get("name")?.trim() || undefined;
+  const profileAvatar = url.searchParams.get("avatar")?.trim() || undefined;
   try {
-    const record = await getUserCredits(userId);
+    const record = await getUserCredits(userId, {
+      email: profileEmail,
+      name: profileName,
+      avatarUrl: profileAvatar,
+    });
     return NextResponse.json(record);
   } catch (error) {
     return NextResponse.json(

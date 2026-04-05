@@ -19,6 +19,9 @@ export type UserPlan = "free" | "pro" | "business" | "enterprise";
 
 export interface UserCreditRecord {
   userId: string;
+  email?: string;
+  name?: string;
+  avatarUrl?: string;
   plan: UserPlan;
   credits: number;
   totalUsed: number;
@@ -79,12 +82,24 @@ export const isAdminEmail = (email: string | null | undefined): boolean => {
 
 /* ---------- CRUD ---------- */
 
-export async function getUserCredits(userId: string): Promise<UserCreditRecord> {
+export interface UserProfileInfo {
+  email?: string;
+  name?: string;
+  avatarUrl?: string;
+}
+
+export async function getUserCredits(userId: string, profile?: UserProfileInfo): Promise<UserCreditRecord> {
   // Try Redis
   if (redis) {
     try {
       const raw = await redis.get<UserCreditRecord>(userKey(userId));
       if (raw) {
+        // Sync profile if provided and changed
+        let dirty = false;
+        if (profile?.email && raw.email !== profile.email) { raw.email = profile.email; dirty = true; }
+        if (profile?.name && raw.name !== profile.name) { raw.name = profile.name; dirty = true; }
+        if (profile?.avatarUrl && raw.avatarUrl !== profile.avatarUrl) { raw.avatarUrl = profile.avatarUrl; dirty = true; }
+        if (dirty) await saveUserCredits(raw);
         memoryStore.set(userId, raw);
         return raw;
       }
@@ -95,11 +110,21 @@ export async function getUserCredits(userId: string): Promise<UserCreditRecord> 
 
   // Memory fallback
   const cached = memoryStore.get(userId);
-  if (cached) return cached;
+  if (cached) {
+    let dirty = false;
+    if (profile?.email && cached.email !== profile.email) { cached.email = profile.email; dirty = true; }
+    if (profile?.name && cached.name !== profile.name) { cached.name = profile.name; dirty = true; }
+    if (profile?.avatarUrl && cached.avatarUrl !== profile.avatarUrl) { cached.avatarUrl = profile.avatarUrl; dirty = true; }
+    if (dirty) await saveUserCredits(cached);
+    return cached;
+  }
 
   // New user → create with free plan
   const record: UserCreditRecord = {
     userId,
+    email: profile?.email,
+    name: profile?.name,
+    avatarUrl: profile?.avatarUrl,
     plan: "free",
     credits: PLAN_INITIAL_CREDITS.free,
     totalUsed: 0,

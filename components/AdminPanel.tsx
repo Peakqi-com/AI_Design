@@ -11,6 +11,9 @@ import {
 
 interface UserRecord {
   userId: string;
+  email?: string;
+  name?: string;
+  avatarUrl?: string;
   plan: string;
   credits: number;
   totalUsed: number;
@@ -113,7 +116,11 @@ export const AdminPanel: React.FC = () => {
   };
 
   const filteredUsers = users
-    .filter((u) => !searchQuery || u.userId.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((u) => {
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      return u.userId.toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q);
+    })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const stats = {
@@ -171,19 +178,20 @@ export const AdminPanel: React.FC = () => {
         <input
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜尋會員 ID..."
+          placeholder="搜尋 Email、姓名或 ID..."
           className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white"
         />
       </div>
 
       {/* User table */}
       <div className="flex-1 min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
-        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1.5fr] gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 shrink-0">
-          <span>會員 ID</span>
+        <div className="grid grid-cols-[2.5fr_1.5fr_0.8fr_0.8fr_0.8fr_1fr_1fr] gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 shrink-0">
+          <span>會員</span>
+          <span>Email</span>
           <span>層級</span>
-          <span>剩餘點數</span>
-          <span>已使用</span>
-          <span>最後更新</span>
+          <span>點數</span>
+          <span>已用</span>
+          <span>更新</span>
           <span>操作</span>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -201,11 +209,24 @@ export const AdminPanel: React.FC = () => {
               const isEditing = editingUser === user.userId;
               return (
                 <div key={user.userId} className="border-b border-gray-100 last:border-0">
-                  <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1.5fr] gap-2 px-4 py-3 items-center text-sm">
-                    <span className="text-gray-800 font-medium truncate text-xs" title={user.userId}>
-                      {user.userId}
-                      {user.isAdmin && <span className="ml-1 text-[10px] text-red-500 font-bold">ADMIN</span>}
-                    </span>
+                  <div className="grid grid-cols-[2.5fr_1.5fr_0.8fr_0.8fr_0.8fr_1fr_1fr] gap-2 px-4 py-3 items-center text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {user.avatarUrl ? (
+                        <img src={user.avatarUrl} alt="" className="w-7 h-7 rounded-full shrink-0 border border-gray-200" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-gray-200 shrink-0 flex items-center justify-center text-[10px] text-gray-500 font-bold">
+                          {(user.name || user.userId).charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-gray-800 truncate">
+                          {user.name || user.userId}
+                          {user.isAdmin && <span className="ml-1 text-[10px] text-red-500 font-bold">ADMIN</span>}
+                        </p>
+                        <p className="text-[10px] text-gray-400 truncate">{user.userId}</p>
+                      </div>
+                    </div>
+                    <span className="text-[11px] text-gray-600 truncate" title={user.email}>{user.email || "-"}</span>
                     <span>
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${badge.color}`}>
                         {badge.label}
