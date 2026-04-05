@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   CheckCircle2,
@@ -8,6 +8,9 @@ import {
   Presentation,
   RefreshCw,
   Sparkles,
+  Upload,
+  Palette,
+  X,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
@@ -68,6 +71,13 @@ const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
   }
 };
 
+const COLOR_SCHEMES = {
+  dark: { bg: "1a1a2e", accent: "e94560", text: "FFFFFF", subtext: "AAAAAA", contentBg: "F8F9FA", contentText: "2d2d2d", contentSub: "666666", accentBar: "e94560", label: "深色典雅" },
+  warm: { bg: "5C3D2E", accent: "E6A157", text: "FFFFFF", subtext: "D4B896", contentBg: "FFF8F0", contentText: "3E2723", contentSub: "6D4C41", accentBar: "E6A157", label: "溫暖木質" },
+  cool: { bg: "1B2838", accent: "4FC3F7", text: "FFFFFF", subtext: "90CAF9", contentBg: "F0F7FF", contentText: "1B2838", contentSub: "546E7A", accentBar: "4FC3F7", label: "冷調現代" },
+  minimal: { bg: "FFFFFF", accent: "333333", text: "111111", subtext: "888888", contentBg: "FFFFFF", contentText: "222222", contentSub: "777777", accentBar: "333333", label: "極簡白" },
+};
+
 /* ---------- component ---------- */
 
 export const PresentationMaker: React.FC = () => {
@@ -84,6 +94,9 @@ export const PresentationMaker: React.FC = () => {
   const [generatedSlides, setGeneratedSlides] = useState<SlideData[]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadReady, setDownloadReady] = useState(false);
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [colorScheme, setColorScheme] = useState<"dark" | "warm" | "cool" | "minimal">("dark");
+  const templateInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const u = session?.user as { id?: string; email?: string | null } | undefined;
@@ -237,72 +250,106 @@ export const PresentationMaker: React.FC = () => {
     try {
       const PptxGenJS = (await import("pptxgenjs")).default;
       const pptx = new PptxGenJS();
-      pptx.layout = "LAYOUT_WIDE";
+      pptx.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 inches
       pptx.author = designerName || "Interior Pro";
       pptx.title = projectTitle || "室內設計簡報";
 
-      for (const slide of generatedSlides) {
+      const scheme = COLOR_SCHEMES[colorScheme];
+      const font = "Microsoft JhengHei";
+
+      for (let idx = 0; idx < generatedSlides.length; idx++) {
+        const slide = generatedSlides[idx];
+        const isFirst = idx === 0;
+        const isLast = idx === generatedSlides.length - 1;
+        const isCoverOrEnd = (isFirst || isLast) && !slide.imageUrl;
         const s = pptx.addSlide();
 
-        if (slide.imageUrl) {
-          // Fetch image as base64
-          const base64 = await fetchImageAsBase64(slide.imageUrl);
-          if (base64) {
-            s.addImage({
-              data: `image/jpeg;base64,${base64}`,
-              x: 5.5,
-              y: 0.4,
-              w: 7,
-              h: 5.25,
-              sizing: { type: "contain", w: 7, h: 5.25 },
+        if (isCoverOrEnd) {
+          // ── Cover / Ending slide ──
+          s.background = { color: scheme.bg };
+          // Top accent line
+          s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 0.06, fill: { color: scheme.accent } });
+          // Bottom accent line
+          s.addShape(pptx.ShapeType.rect, { x: 0, y: 7.44, w: 13.33, h: 0.06, fill: { color: scheme.accent } });
+
+          if (isFirst) {
+            // Cover: large title
+            s.addText(slide.title || projectTitle || "室內設計提案", {
+              x: 1, y: 2, w: 11.33, h: 1.5, fontSize: 40, bold: true,
+              color: scheme.text, fontFace: font, align: "center", lineSpacingMultiple: 1.2,
+            });
+            // Accent divider
+            s.addShape(pptx.ShapeType.rect, { x: 5.5, y: 3.7, w: 2.33, h: 0.04, fill: { color: scheme.accent } });
+            // Subtitle
+            s.addText(slide.body || `設計師：${designerName}`, {
+              x: 1, y: 4, w: 11.33, h: 1.2, fontSize: 20,
+              color: scheme.subtext, fontFace: font, align: "center", lineSpacingMultiple: 1.5,
+            });
+            // Date
+            s.addText(new Date().toLocaleDateString("zh-TW"), {
+              x: 1, y: 6.2, w: 11.33, h: 0.5, fontSize: 12,
+              color: scheme.subtext, fontFace: font, align: "center",
+            });
+          } else {
+            // Ending slide
+            s.addText(slide.title || "感謝觀看", {
+              x: 1, y: 2.5, w: 11.33, h: 1.2, fontSize: 36, bold: true,
+              color: scheme.text, fontFace: font, align: "center",
+            });
+            s.addShape(pptx.ShapeType.rect, { x: 5.5, y: 3.9, w: 2.33, h: 0.04, fill: { color: scheme.accent } });
+            s.addText(slide.body || "期待與您合作", {
+              x: 1, y: 4.2, w: 11.33, h: 2, fontSize: 18,
+              color: scheme.subtext, fontFace: font, align: "center", lineSpacingMultiple: 1.6,
             });
           }
-          // Title + body on left side
+        } else if (slide.imageUrl) {
+          // ── Content slide with image ──
+          s.background = { color: scheme.contentBg };
+          // Left accent bar
+          s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.08, h: 7.5, fill: { color: scheme.accentBar } });
+
+          // Image on right (large, with shadow effect via dark rect behind)
+          const base64 = await fetchImageAsBase64(slide.imageUrl);
+          if (base64) {
+            // Shadow rect
+            s.addShape(pptx.ShapeType.rect, { x: 5.65, y: 0.55, w: 7.2, h: 5.5, fill: { color: "E0E0E0" }, rectRadius: 0.08 });
+            s.addImage({
+              data: `image/jpeg;base64,${base64}`,
+              x: 5.6, y: 0.5, w: 7.2, h: 5.5,
+              sizing: { type: "cover", w: 7.2, h: 5.5 },
+              rounding: true,
+            });
+          }
+
+          // Title on left
           s.addText(slide.title, {
-            x: 0.5,
-            y: 0.5,
-            w: 4.8,
-            h: 0.8,
-            fontSize: 24,
-            bold: true,
-            color: "1a1a2e",
-            fontFace: "Microsoft JhengHei",
+            x: 0.6, y: 0.6, w: 4.6, h: 0.8, fontSize: 22, bold: true,
+            color: scheme.contentText, fontFace: font,
           });
+          // Accent underline
+          s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.5, w: 1.5, h: 0.04, fill: { color: scheme.accentBar } });
+          // Body text
           s.addText(slide.body, {
-            x: 0.5,
-            y: 1.5,
-            w: 4.8,
-            h: 4,
-            fontSize: 14,
-            color: "444444",
-            fontFace: "Microsoft JhengHei",
-            valign: "top",
-            lineSpacingMultiple: 1.4,
+            x: 0.6, y: 1.8, w: 4.6, h: 4, fontSize: 13,
+            color: scheme.contentSub, fontFace: font, valign: "top", lineSpacingMultiple: 1.5,
+          });
+          // Slide number
+          s.addText(`${idx + 1} / ${generatedSlides.length}`, {
+            x: 0.6, y: 6.8, w: 2, h: 0.4, fontSize: 9,
+            color: "BBBBBB", fontFace: font,
           });
         } else {
-          // Full-width text slide (cover / ending)
-          s.background = { color: "1a1a2e" };
+          // Text-only content slide (no image)
+          s.background = { color: scheme.contentBg };
+          s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.08, h: 7.5, fill: { color: scheme.accentBar } });
           s.addText(slide.title, {
-            x: 0.5,
-            y: 1.5,
-            w: 12.3,
-            h: 1.5,
-            fontSize: 36,
-            bold: true,
-            color: "FFFFFF",
-            fontFace: "Microsoft JhengHei",
-            align: "center",
+            x: 1, y: 1.5, w: 11, h: 1, fontSize: 28, bold: true,
+            color: scheme.contentText, fontFace: font, align: "center",
           });
+          s.addShape(pptx.ShapeType.rect, { x: 5.5, y: 2.7, w: 2.33, h: 0.04, fill: { color: scheme.accentBar } });
           s.addText(slide.body, {
-            x: 0.5,
-            y: 3.2,
-            w: 12.3,
-            h: 2.5,
-            fontSize: 18,
-            color: "CCCCCC",
-            fontFace: "Microsoft JhengHei",
-            align: "center",
-            lineSpacingMultiple: 1.5,
+            x: 1.5, y: 3, w: 10, h: 3.5, fontSize: 16,
+            color: scheme.contentSub, fontFace: font, align: "center", lineSpacingMultiple: 1.6,
           });
         }
       }
@@ -383,6 +430,68 @@ export const PresentationMaker: React.FC = () => {
               onChange={(e) => setExtraNotes(e.target.value)}
               placeholder="補充客戶需求、預算、設計風格重點..."
               className="w-full text-sm border-gray-300 rounded-lg p-2.5 bg-white border h-20 resize-none"
+            />
+          </div>
+
+          {/* Color scheme */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+              <Palette className="w-3.5 h-3.5" /> 配色風格
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(["dark", "warm", "cool", "minimal"] as const).map((key) => {
+                const cs = COLOR_SCHEMES[key];
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setColorScheme(key)}
+                    className={`rounded-lg border p-2 text-left transition-colors ${
+                      colorScheme === key
+                        ? "border-brand-500 ring-1 ring-brand-500"
+                        : "border-gray-200 hover:border-brand-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <div className="w-3 h-3 rounded-full border border-gray-200" style={{ backgroundColor: `#${cs.bg}` }} />
+                      <div className="w-3 h-3 rounded-full border border-gray-200" style={{ backgroundColor: `#${cs.accent}` }} />
+                    </div>
+                    <p className="text-[11px] font-medium text-gray-700">{cs.label}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Template upload */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">投影片母片（選填）</label>
+            <p className="text-[10px] text-gray-400 mb-2">上傳 .pptx 母片檔，系統將以其為底板生成內容</p>
+            {templateFile ? (
+              <div className="flex items-center gap-2 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2">
+                <FileText className="w-4 h-4 text-brand-600 shrink-0" />
+                <span className="text-xs text-brand-700 truncate flex-1">{templateFile.name}</span>
+                <button onClick={() => setTemplateFile(null)} className="text-brand-400 hover:text-red-500">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => templateInputRef.current?.click()}
+                className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-xs text-gray-500 hover:bg-gray-50 hover:border-brand-300 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5" /> 上傳 .pptx 母片
+              </button>
+            )}
+            <input
+              ref={templateInputRef}
+              type="file"
+              accept=".pptx"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) setTemplateFile(f);
+                e.target.value = "";
+              }}
             />
           </div>
         </div>
