@@ -152,16 +152,24 @@ export const AIChatImage: React.FC = () => {
         } catch { /* ignore */ }
       }
 
+      // When no user image: use reference as main image, disable strict identity check
+      const hasUserImage = Boolean(currentImage);
+      const mainImage = hasUserImage
+        ? currentImage
+        : (refImageBase64 || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==");
+
       const res = await fetch("/api/ai/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageDataUrl: currentImage || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
-          referenceDressImageDataUrl: refImageBase64 || undefined,
+          imageDataUrl: mainImage,
+          referenceDressImageDataUrl: hasUserImage ? (refImageBase64 || undefined) : undefined,
           roomType: "全室整合",
           style: typeInfo?.label || "AI 對話生圖",
           customPrompt: fullPrompt,
-          creativity: 20,
+          creativity: hasUserImage ? 20 : 50,
+          lockFace: false,
+          preserveIdentityStrict: false,
         }),
       });
       const data = await res.json();
