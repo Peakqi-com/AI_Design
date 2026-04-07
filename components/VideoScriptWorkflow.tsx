@@ -252,30 +252,45 @@ export const VideoScriptWorkflow: React.FC = () => {
     setIsMerging(true);
 
     try {
-      const JSZip = (await import("jszip")).default;
-      const zip = new JSZip();
-
-      for (let i = 0; i < doneSegments.length; i++) {
-        const seg = doneSegments[i];
-        const res = await fetch(seg.videoUrl!);
-        const blob = await res.blob();
-        zip.file(`${i + 1}_${seg.title || `segment${i + 1}`}.mp4`, blob);
+      // Server-side ffmpeg merge
+      const res = await fetch("/api/ai/video/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoUrls: doneSegments.map((s) => s.videoUrl) }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "合併失敗");
       }
-
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      const downloadUrl = URL.createObjectURL(zipBlob);
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = downloadUrl;
-      a.download = `marketing-video-${Date.now()}.zip`;
+      a.download = `marketing-video-${Date.now()}.mp4`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 5000);
     } catch {
-      // fallback: download each individually
-      for (let i = 0; i < doneSegments.length; i++) {
+      // Fallback: ZIP download
+      try {
+        const JSZip = (await import("jszip")).default;
+        const zip = new JSZip();
+        for (let i = 0; i < doneSegments.length; i++) {
+          const r = await fetch(doneSegments[i].videoUrl!);
+          zip.file(`${i + 1}_${doneSegments[i].title || "segment"}.mp4`, await r.blob());
+        }
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(zipBlob);
         const a = document.createElement("a");
-        a.href = doneSegments[i].videoUrl!;
-        a.download = `segment-${i + 1}.mp4`;
+        a.href = url;
+        a.download = `marketing-video-${Date.now()}.zip`;
         a.click();
+      } catch {
+        for (const seg of doneSegments) {
+          const a = document.createElement("a");
+          a.href = seg.videoUrl!;
+          a.download = "segment.mp4";
+          a.click();
+        }
       }
     } finally {
       setIsMerging(false);
@@ -470,8 +485,7 @@ export const VideoScriptWorkflow: React.FC = () => {
               {isMerging ? (
                 <><RefreshCw className="w-3 h-3 animate-spin" /> 合併中...</>
               ) : (
-                <><Download className="w-3 h-3" /> 下載全部影片 (ZIP)</>
-
+                <><Download className="w-3 h-3" /> 合併下載完整影片</>
               )}
             </button>
           )}
