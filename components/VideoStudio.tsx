@@ -1315,10 +1315,20 @@ export const VideoStudio: React.FC = () => {
           const fallback = maybeError.trim().slice(0, 160);
           throw new Error(json?.error || fallback || "下載影片失敗");
         }
+        const ct = downloadResponse.headers.get("content-type") || "";
+        if (ct.includes("json")) {
+          // Server returned JSON error instead of video binary
+          const errText = await downloadResponse.text();
+          const json = tryParseJson<{ error?: string }>(errText);
+          throw new Error(json?.error || "影片下載回傳格式錯誤");
+        }
         const blob = await downloadResponse.blob();
+        if (blob.size < 1000) {
+          throw new Error(`影片下載異常：檔案太小（${blob.size} bytes）`);
+        }
         return {
           blob,
-          mimeType: blob.type || "video/mp4",
+          mimeType: blob.type || ct || "video/mp4",
           model: start.model,
           durationSec: 8,
         };

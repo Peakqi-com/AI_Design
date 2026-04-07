@@ -49,6 +49,15 @@ export const AIChatImage: React.FC = () => {
   const [insufficientMsg, setInsufficientMsg] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("");
+  const [selectedRatio, setSelectedRatio] = useState("1:1");
+
+  const RATIO_OPTIONS = [
+    { id: "1:1", label: "1:1", hint: "正方形" },
+    { id: "16:9", label: "16:9", hint: "橫向" },
+    { id: "9:16", label: "9:16", hint: "直立" },
+    { id: "4:3", label: "4:3", hint: "標準" },
+    { id: "3:4", label: "3:4", hint: "直立標準" },
+  ];
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const IMAGE_TYPES = [
@@ -111,6 +120,7 @@ export const AIChatImage: React.FC = () => {
     const promptParts = [
       typeInfo ? typeInfo.prompt : "",
       styleInfo ? styleInfo.prompt : "",
+      selectedRatio !== "1:1" ? `Output image aspect ratio: ${selectedRatio}` : "",
       text,
     ].filter(Boolean);
     const fullPrompt = promptParts.join(". ") || "根據上傳的圖片，生成一張高品質的室內設計效果圖";
@@ -456,6 +466,27 @@ export const AIChatImage: React.FC = () => {
                   }`}
                 >
                   {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Aspect ratio */}
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-2">生成比例</p>
+            <div className="flex gap-1">
+              {RATIO_OPTIONS.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setSelectedRatio(r.id)}
+                  className={`flex-1 py-1.5 rounded-lg text-[10px] text-center transition-colors ${
+                    selectedRatio === r.id
+                      ? "bg-brand-50 text-brand-700 border border-brand-300 font-semibold"
+                      : "text-gray-500 hover:bg-gray-50 border border-gray-200"
+                  }`}
+                >
+                  <span className="block font-medium">{r.label}</span>
+                  <span className="block text-[9px] text-gray-400">{r.hint}</span>
                 </button>
               ))}
             </div>
