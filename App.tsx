@@ -149,7 +149,7 @@ const App: React.FC = () => {
         }
         return <ProjectList onSelectProject={handleProjectSelect} />;
       case "marketing":
-        return <MarketingCenter />;
+        return <MarketingCenter key={`marketing-${Date.now()}`} />;
       case "quotation":
         return <QuotationGenerator initialProjectId={selectedProject?.id} />;
       case "video-studio":
@@ -157,9 +157,9 @@ const App: React.FC = () => {
       case "crm":
         return <CRMSystem />;
       case "media-library":
-        return <MediaLibrary />;
+        return <MediaLibrary key={`media-${Date.now()}`} />;
       case "presentation":
-        return <PresentationMaker />;
+        return <PresentationMaker key={`ppt-${Date.now()}`} />;
       case "video-script":
         return <VideoScriptWorkflow />;
       case "admin":
