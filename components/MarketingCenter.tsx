@@ -836,14 +836,22 @@ export const MarketingCenter: React.FC = () => {
       }
 
       const gptPrompt =
-        `你是資深社群行銷企劃，請根據以下資訊產生可立即發佈的繁體中文社群貼文。\n` +
+        `你是資深社群行銷企劃，請根據以下資訊產生『可立即發佈』的繁體中文社群貼文。\n` +
+        `不要給教學、不要給說明步驟、不要提到你是 AI。直接輸出可發佈內容。\n\n` +
         `目標平台：${selectedPlatforms.join(", ")}\n` +
-        `素材：${assetSummary}\n` +
-        (postTopic.trim() ? `主題：${postTopic.trim()}\n` : "") +
-        (postObjective.trim() ? `目標：${postObjective.trim()}\n` : "") +
-        `口吻：${postTone}\n主題方向：${postTheme}\n長度：${postLength}\n` +
-        `輸出 JSON：{"title":"標題","caption":"貼文內容","hashtags":["#tag1","#tag2",...]}` +
-        `\nhashtags 數量 10 個。只輸出 JSON。`;
+        `素材描述：${assetSummary}\n` +
+        (postTopic.trim() ? `貼文主題：${postTopic.trim()}\n` : "") +
+        (postObjective.trim() ? `貼文目標：${postObjective.trim()}\n` : "") +
+        `口吻設定：${selectedToneOption.label}。方向：${selectedToneOption.direction}\n` +
+        `主題方向：${selectedThemeOption.label}。方向：${selectedThemeOption.direction}\n` +
+        `貼文長度：${selectedLengthOption.label}。要求：${selectedLengthOption.direction}\n\n` +
+        `caption 內容要求：\n` +
+        `- 第一段：以目標客群痛點或期待切入\n` +
+        `- 中段：描述使用者能得到的價值與差異化\n` +
+        `- 結尾：明確 CTA（預約、私訊、留言）\n` +
+        `- 嚴格遵守長度要求，不要過短也不要過長\n\n` +
+        `輸出 JSON：{"title":"標題","caption":"貼文完整內容","hashtags":["#tag1","#tag2",...]}` +
+        `\nhashtags 數量 10 個，不要重複。只輸出 JSON，不要其他文字。`;
 
       const callGpt = async () => {
         const res = await fetch("/api/ai/text-gpt", {
