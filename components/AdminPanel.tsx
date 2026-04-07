@@ -116,8 +116,8 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
-  const realUsers = users.filter((u) => u.email || !u.userId.startsWith("guest_"));
-  const guestUsers = users.filter((u) => !u.email && u.userId.startsWith("guest_"));
+  const realUsers = users.filter((u) => u.email || u.name || !u.userId.startsWith("guest_"));
+  const guestUsers = users.filter((u) => !u.email && !u.name && u.userId.startsWith("guest_"));
 
   const baseList = showGuests ? users : realUsers;
   const filteredUsers = baseList
