@@ -25,10 +25,18 @@ export interface UserCreditRecord {
   plan: UserPlan;
   credits: number;
   totalUsed: number;
+  storageUsedBytes: number;
   createdAt: string;
   updatedAt: string;
   isAdmin?: boolean;
 }
+
+const STORAGE_QUOTA_BYTES: Record<UserPlan, number> = {
+  free: 50 * 1024 * 1024,       // 50 MB
+  pro: 500 * 1024 * 1024,       // 500 MB
+  business: 2 * 1024 * 1024 * 1024, // 2 GB
+  enterprise: 10 * 1024 * 1024 * 1024, // 10 GB
+};
 
 export interface CreditCost {
   action: string;
@@ -128,6 +136,7 @@ export async function getUserCredits(userId: string, profile?: UserProfileInfo):
     plan: "free",
     credits: PLAN_INITIAL_CREDITS.free,
     totalUsed: 0,
+    storageUsedBytes: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -287,4 +296,58 @@ export function canAccessFeature(plan: UserPlan, feature: string): boolean {
   const allowed = FEATURE_ACCESS[feature];
   if (!allowed) return true; // unknown features default to allowed
   return allowed.includes(plan);
+}
+
+/**
+ * Get storage quota for a plan (in bytes).
+ */
+export function getStorageQuota(plan: UserPlan): number {
+  return STORAGE_QUOTA_BYTES[plan] ?? STORAGE_QUOTA_BYTES.free;
+}
+
+/**
+ * Check if user has enough storage space.
+ */
+export async function checkStorageQuota(
+  userId: string,
+  additionalBytes: number,
+): Promise<{ allowed: boolean; usedBytes: number; quotaBytes: number; remainingBytes: number }> {
+  const record = await getUserCredits(userId);
+  const used = record.storageUsedBytes || 0;
+  const quota = getStorageQuota(record.plan);
+  const remaining = Math.max(0, quota - used);
+  return {
+    allowed: used + additionalBytes <= quota,
+    usedBytes: used,
+    quotaBytes: quota,
+    remainingBytes: remaining,
+  };
+}
+
+/**
+ * Add to user's storage usage (call after successful upload).
+ */
+export async function addStorageUsage(userId: string, bytes: number): Promise<void> {
+  const record = await getUserCredits(userId);
+  record.storageUsedBytes = (record.storageUsedBytes || 0) + bytes;
+  await saveUserCredits(record);
+}
+
+/**
+ * Subtract from user's storage usage (call after delete).
+ */
+export async function subtractStorageUsage(userId: string, bytes: number): Promise<void> {
+  const record = await getUserCredits(userId);
+  record.storageUsedBytes = Math.max(0, (record.storageUsedBytes || 0) - bytes);
+  await saveUserCredits(record);
+}
+
+/**
+ * Format bytes to human readable.
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }

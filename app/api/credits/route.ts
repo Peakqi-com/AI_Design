@@ -8,6 +8,7 @@ import {
   listAllUsers,
   isAdminEmail,
   CREDIT_COSTS,
+  getStorageQuota,
   PLAN_INFO,
   type UserPlan,
 } from "@/lib/credits/store";
@@ -53,7 +54,10 @@ export async function GET(request: Request) {
       name: profileName,
       avatarUrl: profileAvatar,
     });
-    return NextResponse.json(record);
+    return NextResponse.json({
+      ...record,
+      storageQuotaBytes: getStorageQuota(record.plan),
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to get credits" },

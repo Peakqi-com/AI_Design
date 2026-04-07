@@ -185,6 +185,8 @@ const App: React.FC = () => {
           onLogout={handleLogout}
           isAdmin={isAdmin}
           liveCredits={credits.credits}
+          liveStorageUsed={credits.storageUsedBytes}
+          liveStorageQuota={credits.storageQuotaBytes}
         >
           {renderDashboardContent()}
         </DashboardLayout>

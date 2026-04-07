@@ -11,6 +11,7 @@ import {
   SocialAssetMeta,
 } from "@/lib/social/media-library";
 import { resolveServerUserScopeCandidates, resolveServerUserScopeId } from "@/lib/server/user-scope";
+import { checkStorageQuota, addStorageUsage, formatBytes } from "@/lib/credits/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -98,6 +99,17 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Check storage quota
+    const quota = await checkStorageQuota(userId, file.size);
+    if (!quota.allowed) {
+      return NextResponse.json({
+        error: `儲存空間不足。已使用 ${formatBytes(quota.usedBytes)} / ${formatBytes(quota.quotaBytes)}，需要 ${formatBytes(file.size)}。請升級方案或清除不需要的檔案。`,
+        quotaExceeded: true,
+        usedBytes: quota.usedBytes,
+        quotaBytes: quota.quotaBytes,
+      }, { status: 413 });
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const item = await saveSocialAsset({
       userId,
@@ -107,6 +119,8 @@ export async function POST(request: Request) {
       mimeType: file.type || undefined,
       meta: parseMeta(formData.get("meta")),
     });
+    // Track storage usage
+    await addStorageUsage(userId, file.size);
     return NextResponse.json({ item, storageBackend: getSocialAssetStorageBackend() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Save social asset failed.";

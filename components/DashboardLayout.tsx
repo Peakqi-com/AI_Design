@@ -28,6 +28,8 @@ interface DashboardLayoutProps {
   children: React.ReactNode;
   isAdmin?: boolean;
   liveCredits?: number;
+  liveStorageUsed?: number;
+  liveStorageQuota?: number;
 }
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
@@ -38,6 +40,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   children,
   isAdmin,
   liveCredits,
+  liveStorageUsed,
+  liveStorageQuota,
 }) => {
   const navItems: NavItem[] = [
     { id: 'overview', label: '室內設計總覽', icon: LayoutDashboard },
@@ -105,6 +109,20 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             </button>
           </div>
         </div>
+        {typeof liveStorageUsed === "number" && typeof liveStorageQuota === "number" && (
+          <div className="bg-white border border-gray-200 rounded-lg p-3 mb-4 shadow-sm">
+            <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+              <span>儲存空間</span>
+              <span>{(liveStorageUsed / (1024 * 1024)).toFixed(1)} / {(liveStorageQuota / (1024 * 1024)).toFixed(0)} MB</span>
+            </div>
+            <div className="w-full bg-gray-100 rounded-full h-1.5">
+              <div
+                className={`h-1.5 rounded-full transition-all ${liveStorageUsed / liveStorageQuota > 0.9 ? "bg-red-500" : "bg-brand-500"}`}
+                style={{ width: `${Math.min(100, (liveStorageUsed / liveStorageQuota) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
         <button
           onClick={onLogout}
           className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"

@@ -10,6 +10,8 @@ export interface CreditState {
   credits: number;
   plan: string;
   totalUsed: number;
+  storageUsedBytes: number;
+  storageQuotaBytes: number;
   loading: boolean;
   isAdmin: boolean;
 }
@@ -20,6 +22,8 @@ export function useCredits() {
     credits: 0,
     plan: "free",
     totalUsed: 0,
+    storageUsedBytes: 0,
+    storageQuotaBytes: 50 * 1024 * 1024,
     loading: true,
     isAdmin: false,
   });
@@ -44,6 +48,8 @@ export function useCredits() {
         credits: data.credits ?? 0,
         plan: data.plan ?? "free",
         totalUsed: data.totalUsed ?? 0,
+        storageUsedBytes: data.storageUsedBytes ?? 0,
+        storageQuotaBytes: data.storageQuotaBytes ?? 50 * 1024 * 1024,
         loading: false,
         isAdmin: data.isAdmin ?? false,
       });
