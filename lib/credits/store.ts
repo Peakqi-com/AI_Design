@@ -286,7 +286,7 @@ const FEATURE_ACCESS: Record<string, UserPlan[]> = {
   "ai-chat": ["free", "pro", "business", "enterprise"],
   "video-studio": ["free", "pro", "business", "enterprise"],
   "media-library": ["free", "pro", "business", "enterprise"],
-  presentation: ["free", "pro", "business", "enterprise"],
+  presentation: ["pro", "business", "enterprise"],
   marketing: ["free", "pro", "business", "enterprise"],
   subscription: ["free", "pro", "business", "enterprise"],
   "video-script": ["pro", "business", "enterprise"],

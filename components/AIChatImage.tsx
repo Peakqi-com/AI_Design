@@ -35,7 +35,13 @@ export const AIChatImage: React.FC = () => {
   const { data: session } = useSession();
   const credits = useCredits();
   const [userScopeId, setUserScopeId] = useState("guest_server");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem("ai-chat-history");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [input, setInput] = useState("");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -75,6 +81,15 @@ export const AIChatImage: React.FC = () => {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Persist chat history (keep last 50 messages, skip large image data)
+    try {
+      const toSave = messages.slice(-50).map((m) => ({
+        ...m,
+        // Don't persist uploaded images (too large for localStorage)
+        uploadedImageUrl: undefined,
+      }));
+      localStorage.setItem("ai-chat-history", JSON.stringify(toSave));
+    } catch { /* storage full */ }
   }, [messages]);
 
   const handleSend = useCallback(async () => {
@@ -151,10 +166,14 @@ export const AIChatImage: React.FC = () => {
       });
       const data = await res.json();
 
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `AI 回傳錯誤（${res.status}）`);
+      }
+
       const aiMsg: ChatMessage = {
         id: uid(),
         role: "ai",
-        text: data.summary || "圖片已生成",
+        text: data.summary || (data.imageDataUrl ? "圖片已生成" : "AI 未回傳圖片，請調整描述重試"),
         imageUrl: data.imageDataUrl || undefined,
         timestamp: new Date().toISOString(),
       };
