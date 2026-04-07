@@ -46,14 +46,14 @@ export const AIChatImage: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const IMAGE_TYPES = [
-    { id: "colored-handdrawn", label: "彩色平面圖-手繪", prompt: "Convert to hand-drawn watercolor architectural floor plan, flat 2D top-down, warm colors" },
-    { id: "colored-cartoon", label: "彩色平面圖-卡通", prompt: "Convert to colorful cartoon floor plan illustration, flat 2D, bright saturated colors" },
-    { id: "colored-noshadow", label: "彩色平面圖-無陰影", prompt: "Convert to clean CAD-style colored floor plan, flat solid fills, no shadows" },
-    { id: "colored-realistic", label: "彩色平面圖-擬真", prompt: "Convert to photorealistic top-down rendered floor plan with real material textures" },
-    { id: "section-top", label: "剖透圖-上視角度", prompt: "Create 3D cutaway floor plan from directly above, walls cut at 1m, 3D furniture" },
-    { id: "section-birds-eye", label: "剖透圖-俯視角度", prompt: "Create 3D bird's-eye view floor plan, camera at 60° elevation, visible wall sides" },
-    { id: "section-oblique", label: "剖透圖-斜角度", prompt: "Create 3D isometric cutaway from diagonal corner at 45°, full wall heights visible" },
-    { id: "section-3d", label: "剖透圖-立體模型", prompt: "Create photorealistic 3D dollhouse model, roof removed, maximum detail, studio lighting" },
+    { id: "colored-handdrawn", label: "彩色平面圖-手繪", refImg: "/ref/colored-handdrawn.jpg", prompt: "Convert to hand-drawn watercolor architectural floor plan, flat 2D top-down, warm colors. MATCH the exact style shown in the reference image." },
+    { id: "colored-cartoon", label: "彩色平面圖-卡通", refImg: "/ref/colored-cartoon.jpg", prompt: "Convert to colorful cartoon floor plan illustration, flat 2D, bright saturated colors. MATCH the exact style shown in the reference image." },
+    { id: "colored-noshadow", label: "彩色平面圖-無陰影", refImg: "/ref/colored-noshadow.jpg", prompt: "Convert to clean CAD-style colored floor plan, flat solid fills, no shadows. MATCH the exact style shown in the reference image." },
+    { id: "colored-realistic", label: "彩色平面圖-擬真", refImg: "/ref/colored-realistic.jpg", prompt: "Convert to photorealistic top-down rendered floor plan with real material textures. MATCH the exact style shown in the reference image." },
+    { id: "section-top", label: "剖透圖-上視角度", refImg: "/ref/section-top.jpg", prompt: "Create 3D cutaway floor plan from directly above, walls cut at 1m, 3D furniture. MATCH the exact camera angle and style shown in the reference image." },
+    { id: "section-birds-eye", label: "剖透圖-俯視角度", refImg: "/ref/section-birds-eye.jpg", prompt: "Create 3D bird's-eye view floor plan, camera at 60° elevation, visible wall sides. MATCH the exact camera angle and style shown in the reference image." },
+    { id: "section-oblique", label: "剖透圖-斜角度", refImg: "/ref/section-oblique.webp", prompt: "Create 3D isometric cutaway from diagonal corner at 45°, full wall heights visible. MATCH the exact camera angle and style shown in the reference image." },
+    { id: "section-3d", label: "剖透圖-立體模型", refImg: "/ref/section-3d.jpg", prompt: "Create photorealistic 3D dollhouse model, roof removed, maximum detail, studio lighting. MATCH the exact style shown in the reference image." },
   ];
 
   const STYLE_OPTIONS = [
@@ -120,11 +120,29 @@ export const AIChatImage: React.FC = () => {
     setIsGenerating(true);
 
     try {
+      // Fetch reference image as base64 if a type is selected
+      let refImageBase64: string | undefined;
+      if (typeInfo?.refImg) {
+        try {
+          const refRes = await fetch(typeInfo.refImg);
+          if (refRes.ok) {
+            const blob = await refRes.blob();
+            refImageBase64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = () => resolve("");
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch { /* ignore */ }
+      }
+
       const res = await fetch("/api/ai/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl: currentImage || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+          referenceDressImageDataUrl: refImageBase64 || undefined,
           roomType: "全室整合",
           style: typeInfo?.label || "AI 對話生圖",
           customPrompt: fullPrompt,
@@ -369,21 +387,28 @@ export const AIChatImage: React.FC = () => {
           <p className="text-[10px] text-gray-500 mt-0.5">選擇類型和風格後，直接影響生成結果</p>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-4">
-          {/* Image type */}
+          {/* Image type with thumbnails */}
           <div>
             <p className="text-xs font-semibold text-gray-700 mb-2">圖片類型</p>
-            <div className="space-y-1">
+            <div className="grid grid-cols-2 gap-1.5">
               {IMAGE_TYPES.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setSelectedType(selectedType === t.id ? "" : t.id)}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] transition-colors ${
+                  className={`rounded-lg overflow-hidden transition-all ${
                     selectedType === t.id
-                      ? "bg-brand-50 text-brand-700 border border-brand-300 font-semibold"
-                      : "text-gray-600 hover:bg-gray-50 border border-transparent"
+                      ? "ring-2 ring-brand-500 ring-offset-1"
+                      : "border border-gray-200 hover:border-brand-300"
                   }`}
                 >
-                  {t.label}
+                  <div className="aspect-[4/3] bg-gray-100">
+                    <img src={t.refImg} alt={t.label} className="w-full h-full object-cover" />
+                  </div>
+                  <p className={`text-[10px] px-1.5 py-1 text-center truncate ${
+                    selectedType === t.id ? "bg-brand-50 text-brand-700 font-semibold" : "text-gray-600"
+                  }`}>
+                    {t.label}
+                  </p>
                 </button>
               ))}
             </div>
