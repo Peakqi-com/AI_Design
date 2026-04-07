@@ -290,6 +290,7 @@ interface ViewSlotDef {
   label: string;
   group: "colored" | "section";
   referenceSource: string; // "labeled-floor-plan" 或前一個 slotKey
+  referenceExampleUrl: string; // 參考案例圖 URL
   prompt: string;
 }
 
@@ -300,6 +301,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "彩色平面圖-手繪",
     group: "colored",
     referenceSource: "labeled-floor-plan",
+    referenceExampleUrl: "/ref/colored-handdrawn.jpg",
     prompt:
       "Convert this labeled floor plan into a hand-drawn watercolor architectural floor plan (彩色手繪平面圖). " +
       "STRICT RULES: " +
@@ -317,6 +319,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "彩色平面圖-卡通",
     group: "colored",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/colored-cartoon.jpg",
     prompt:
       "Convert this hand-drawn floor plan into a colorful cartoon floor plan illustration (卡通平面圖). " +
       "STRICT RULES: " +
@@ -332,6 +335,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "彩色平面圖-無陰影",
     group: "colored",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/colored-noshadow.jpg",
     prompt:
       "Convert this hand-drawn floor plan into a clean CAD-style colored floor plan with NO shadows (無陰影彩色平面圖). " +
       "STRICT RULES: " +
@@ -347,6 +351,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "彩色平面圖-擬真",
     group: "colored",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/colored-realistic.jpg",
     prompt:
       "Convert this hand-drawn floor plan into a photorealistic top-down rendered floor plan (擬真俯視平面渲染圖). " +
       "STRICT RULES: " +
@@ -364,6 +369,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "剖透圖-上視角度",
     group: "section",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/section-top.jpg",
     prompt:
       "Create a 3D cutaway floor plan viewed from DIRECTLY ABOVE (剖透圖-上視角度). " +
       "STRICT RULES: " +
@@ -381,6 +387,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "剖透圖-俯視角度",
     group: "section",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/section-birds-eye.jpg",
     prompt:
       "Create a 3D bird's-eye perspective view of this floor plan (剖透圖-俯視角度). " +
       "STRICT RULES: " +
@@ -400,6 +407,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "剖透圖-斜角度",
     group: "section",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/section-oblique.webp",
     prompt:
       "Create a 3D isometric cutaway view of this floor plan from a DIAGONAL CORNER ANGLE (剖透圖-斜角度). " +
       "STRICT RULES: " +
@@ -417,6 +425,7 @@ const FIXED_VIEW_SLOTS: ViewSlotDef[] = [
     label: "剖透圖-立體模型",
     group: "section",
     referenceSource: "colored-handdrawn",
+    referenceExampleUrl: "/ref/section-3d.jpg",
     prompt:
       "Create a photorealistic 3D architectural dollhouse model of this floor plan (剖透圖-立體模型). " +
       "STRICT RULES: " +
@@ -1100,7 +1109,27 @@ export const AIStudio: React.FC = () => {
     );
 
     const customExtra = (slotCustomPrompts[slot.slotKey] || "").trim();
-    const mergedPrompt = [slot.prompt, customExtra, designerPrompt.trim()].filter(Boolean).join("\n");
+    const styleRef = slot.referenceExampleUrl
+      ? `\nIMPORTANT STYLE REFERENCE: Generate the output to match the exact visual style, camera angle, and rendering quality shown at this reference URL: ${slot.referenceExampleUrl}. Copy the same perspective, color palette, and level of detail.`
+      : "";
+    const mergedPrompt = [slot.prompt, styleRef, customExtra, designerPrompt.trim()].filter(Boolean).join("\n");
+
+    // 嘗試將參考案例圖轉為 base64 傳給 AI 作為風格引導
+    let refExampleBase64: string | undefined;
+    if (slot.referenceExampleUrl) {
+      try {
+        const refRes = await fetch(slot.referenceExampleUrl);
+        if (refRes.ok) {
+          const refBlob = await refRes.blob();
+          refExampleBase64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => resolve("");
+            reader.readAsDataURL(refBlob);
+          });
+        }
+      } catch { /* ignore */ }
+    }
 
     try {
       const response = await fetch("/api/ai/render", {
@@ -1108,6 +1137,7 @@ export const AIStudio: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl: referenceImage,
+          referenceDressImageDataUrl: refExampleBase64 || undefined,
           roomType: "全室整合",
           style: slot.label,
           lockFace: false,
@@ -2068,7 +2098,17 @@ export const AIStudio: React.FC = () => {
 
                         {/* 圖片區 */}
                         <div className="aspect-[4/3] bg-gray-50 flex items-center justify-center relative overflow-hidden">
-                          {result.status === "idle" && (
+                          {result.status === "idle" && slotDef?.referenceExampleUrl && (
+                            <div className="absolute inset-0">
+                              <img src={slotDef.referenceExampleUrl} alt="參考案例" className="w-full h-full object-cover opacity-30" />
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="bg-white/90 px-3 py-1.5 rounded-full text-[11px] font-medium text-gray-600 shadow-sm">
+                                  {refDone ? "參考案例 — 點擊生成" : "等待前置視角完成"}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          {result.status === "idle" && !slotDef?.referenceExampleUrl && (
                             <p className="text-xs text-gray-400">{refDone ? "準備就緒" : "等待前置視角完成"}</p>
                           )}
                           {result.status === "generating" && (
