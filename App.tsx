@@ -58,10 +58,14 @@ const App: React.FC = () => {
   const [manualUser, setManualUser] = useState<User | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const credits = useCredits();
-  const isAdmin = credits.userEmail ? ["ai.allen.task@gmail.com"].includes(credits.userEmail.toLowerCase()) : false;
-
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
+
+  // Check admin from multiple sources: credits hook email, session email, user email
+  const adminEmails = ["ai.allen.task@gmail.com"];
+  const isAdmin = adminEmails.includes((credits.userEmail || "").toLowerCase())
+    || adminEmails.includes((user?.email || "").toLowerCase())
+    || adminEmails.includes(((session?.user as { email?: string })?.email || "").toLowerCase());
 
   useEffect(() => {
     if (oauthUser && viewState !== "dashboard") {
