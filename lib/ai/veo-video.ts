@@ -21,7 +21,8 @@ export interface StartVeoImageVideoInput {
   negativePrompt?: string;
 }
 
-const FIRST_LAST_FRAME_MODEL = "lucataco/wan-2.2-first-last-frame";
+const FIRST_LAST_FRAME_MODEL = "google/veo-3.1";
+const TEXT_TO_VIDEO_MODEL = "google/veo-3";
 
 export interface VeoStartResult {
   operationName: string;
@@ -245,10 +246,15 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
 export async function startVeoImageToVideo(
   input: StartVeoImageVideoInput,
 ): Promise<VeoStartResult> {
-  // Use dedicated first-last-frame model when in that mode
-  const effectiveModel = input.mode === "first-last-frame" && !input.model
-    ? FIRST_LAST_FRAME_MODEL
-    : input.model;
+  // Use dedicated models for specific modes
+  let effectiveModel = input.model;
+  if (!effectiveModel) {
+    if (input.mode === "first-last-frame") {
+      effectiveModel = FIRST_LAST_FRAME_MODEL;
+    } else if (input.mode === "text-to-video") {
+      effectiveModel = TEXT_TO_VIDEO_MODEL;
+    }
+  }
   const target = resolveModelTarget(effectiveModel);
   const requestBody: Record<string, unknown> = {
     input: buildReplicateInput(input),
