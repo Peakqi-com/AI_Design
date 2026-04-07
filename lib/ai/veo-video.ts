@@ -21,8 +21,9 @@ export interface StartVeoImageVideoInput {
   negativePrompt?: string;
 }
 
-const FIRST_LAST_FRAME_MODEL = "google/veo-3.1";
-const TEXT_TO_VIDEO_MODEL = "google/veo-3";
+// Kling v2.1: $0.25-0.90/video, 1080p, text-to-video + image-to-video + end_image (first-last-frame)
+const FIRST_LAST_FRAME_MODEL = "kwaivgi/kling-v2.1";
+const TEXT_TO_VIDEO_MODEL = "kwaivgi/kling-v2.1";
 
 export interface VeoStartResult {
   operationName: string;
@@ -228,13 +229,12 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
   };
   if (input.imageDataUrl?.trim()) {
     const parsed = parseDataUrl(input.imageDataUrl.trim());
+    payload.image = parsed.dataUrl;
     if (input.lastFrameImageDataUrl?.trim()) {
-      // First + last frame mode — uses different parameter names
-      payload.first_frame = parsed.dataUrl;
+      // First + last frame mode: Kling uses end_image + mode:pro
       const parsedLast = parseDataUrl(input.lastFrameImageDataUrl.trim());
-      payload.last_frame = parsedLast.dataUrl;
-    } else {
-      payload.image = parsed.dataUrl;
+      payload.end_image = parsedLast.dataUrl;
+      payload.mode = "pro";
     }
   }
   if (input.negativePrompt?.trim()) {
