@@ -247,34 +247,34 @@ export const VideoScriptWorkflow: React.FC = () => {
 
   /* ---------- Merge 3 clips into one video ---------- */
   const handleMergeDownload = useCallback(async () => {
-    const videoUrls = segments.filter((s) => s.videoUrl).map((s) => s.videoUrl!);
-    if (videoUrls.length === 0) return;
+    const doneSegments = segments.filter((s) => s.videoUrl);
+    if (doneSegments.length === 0) return;
     setIsMerging(true);
 
     try {
-      // Fetch all video blobs
-      const blobs: Blob[] = [];
-      for (const url of videoUrls) {
-        const res = await fetch(url);
-        blobs.push(await res.blob());
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+
+      for (let i = 0; i < doneSegments.length; i++) {
+        const seg = doneSegments[i];
+        const res = await fetch(seg.videoUrl!);
+        const blob = await res.blob();
+        zip.file(`${i + 1}_${seg.title || `segment${i + 1}`}.mp4`, blob);
       }
 
-      // Concatenate blobs into a single file (simple binary concat for mp4)
-      // For a proper merge we'd need ffmpeg, but for download we'll use a MediaSource approach
-      // Simplest: create individual download links, or use Blob concatenation
-      const merged = new Blob(blobs, { type: "video/mp4" });
-      const downloadUrl = URL.createObjectURL(merged);
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const downloadUrl = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
       a.href = downloadUrl;
-      a.download = `marketing-video-${Date.now()}.mp4`;
+      a.download = `marketing-video-${Date.now()}.zip`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 5000);
     } catch {
-      // fallback: download first clip only
-      if (videoUrls[0]) {
+      // fallback: download each individually
+      for (let i = 0; i < doneSegments.length; i++) {
         const a = document.createElement("a");
-        a.href = videoUrls[0];
-        a.download = `marketing-video-${Date.now()}.mp4`;
+        a.href = doneSegments[i].videoUrl!;
+        a.download = `segment-${i + 1}.mp4`;
         a.click();
       }
     } finally {
@@ -470,7 +470,8 @@ export const VideoScriptWorkflow: React.FC = () => {
               {isMerging ? (
                 <><RefreshCw className="w-3 h-3 animate-spin" /> 合併中...</>
               ) : (
-                <><Download className="w-3 h-3" /> 合併下載完整影片</>
+                <><Download className="w-3 h-3" /> 下載全部影片 (ZIP)</>
+
               )}
             </button>
           )}
