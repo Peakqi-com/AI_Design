@@ -149,16 +149,28 @@ export const CRMSystem: React.FC = () => {
 
   /* ---- create contact ---- */
   const createContact = async (body: Record<string, unknown>) => {
-    const res = await fetch("/api/crm/contacts", {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({ ...body, userId: userScope }),
-    });
-    if (res.ok) {
-      await fetchContacts();
-      return true;
+    try {
+      // Remove cardImageUrl from body if too large (>1MB base64 causes API timeout)
+      const cleanBody: Record<string, unknown> = { ...body, userId: userScope };
+      if (typeof cleanBody.cardImageUrl === "string" && (cleanBody.cardImageUrl as string).length > 1_000_000) {
+        delete cleanBody.cardImageUrl;
+      }
+      const res = await fetch("/api/crm/contacts", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(cleanBody),
+      });
+      if (res.ok) {
+        await fetchContacts();
+        return true;
+      }
+      const errData = await res.json().catch(() => ({}));
+      alert(`建立客戶失敗：${(errData as { error?: string }).error || res.statusText}`);
+      return false;
+    } catch (err) {
+      alert(`建立客戶失敗：${err instanceof Error ? err.message : "網路錯誤"}`);
+      return false;
     }
-    return false;
   };
 
   /* ---- update contact field ---- */
