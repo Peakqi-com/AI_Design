@@ -309,6 +309,7 @@ export const MarketingCenter: React.FC = () => {
   const [postLength, setPostLength] = useState<PostLength>("medium");
   const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
   const [lastGeneratedModel, setLastGeneratedModel] = useState("");
+  const [copyModelChoice, setCopyModelChoice] = useState<"gemini" | "gpt">("gemini");
 
   const [postTitle, setPostTitle] = useState("");
   const [postCaption, setPostCaption] = useState("");
@@ -795,43 +796,77 @@ export const MarketingCenter: React.FC = () => {
         }
       }
 
-      const generated = await requestJson<GenerateSocialPostResponse>("/api/ai/social/post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          platforms: selectedPlatforms,
-          topic: postTopic.trim(),
-          objective: postObjective.trim(),
-          tone: postTone,
-          theme: postTheme,
-          length: postLength,
-          hashtagCount: 10,
-          asset: {
-            kind: selectedAsset.kind,
-            fileName: selectedAsset.fileName,
-            summary: assetSummary,
-            imageDataUrl,
-          },
-        }),
-      });
+      let resultTitle = "";
+      let resultCaption = "";
+      let resultHashtags: string[] = [];
+      let resultModel = "";
 
-      setPostTitle(ensureDatePrefix(generated.title, toDate(new Date())));
-      setPostCaption(generated.caption);
-      setPostHashtagsInput(generated.hashtags.join(" "));
-      setLastGeneratedModel(generated.model);
+      if (copyModelChoice === "gpt") {
+        const gptPrompt =
+          `你是資深社群行銷企劃，請根據以下資訊產生可立即發佈的繁體中文社群貼文。\n` +
+          `目標平台：${selectedPlatforms.join(", ")}\n` +
+          `素材：${assetSummary}\n` +
+          (postTopic.trim() ? `主題：${postTopic.trim()}\n` : "") +
+          (postObjective.trim() ? `目標：${postObjective.trim()}\n` : "") +
+          `口吻：${postTone}\n主題方向：${postTheme}\n長度：${postLength}\n` +
+          `輸出 JSON：{"title":"標題","caption":"貼文內容","hashtags":["#tag1","#tag2",...]}` +
+          `\nhashtags 數量 10 個。只輸出 JSON。`;
+        const gptRes = await fetch("/api/ai/text-gpt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: gptPrompt, imageDataUrl, temperature: 0.6, jsonMode: true }),
+        });
+        const gptData = await gptRes.json();
+        if (!gptRes.ok) throw new Error(gptData.error || "GPT 生成失敗");
+        const parsed = JSON.parse(gptData.text || "{}");
+        resultTitle = ensureDatePrefix(parsed.title || "", toDate(new Date()));
+        resultCaption = parsed.caption || "";
+        resultHashtags = parsed.hashtags || [];
+        resultModel = `GPT (${gptData.model || "gpt-4o-mini"})`;
+      } else {
+        const generated = await requestJson<GenerateSocialPostResponse>("/api/ai/social/post", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            platforms: selectedPlatforms,
+            topic: postTopic.trim(),
+            objective: postObjective.trim(),
+            tone: postTone,
+            theme: postTheme,
+            length: postLength,
+            hashtagCount: 10,
+            asset: {
+              kind: selectedAsset.kind,
+              fileName: selectedAsset.fileName,
+              summary: assetSummary,
+              imageDataUrl,
+            },
+          }),
+        });
+        resultTitle = ensureDatePrefix(generated.title, toDate(new Date()));
+        resultCaption = generated.caption;
+        resultHashtags = generated.hashtags;
+        resultModel = `Gemini (${generated.model})`;
+      }
+
+      setPostTitle(resultTitle);
+      setPostCaption(resultCaption);
+      setPostHashtagsInput(resultHashtags.join(" "));
+      setLastGeneratedModel(resultModel);
+
       void requestJson<ContentVaultSaveResponse>("/api/content/vault", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: userScopeId,
           kind: "social-post",
-          title: ensureDatePrefix(generated.title, toDate(new Date())),
-          summary: generated.caption.slice(0, 120),
+          title: resultTitle,
+          summary: resultCaption.slice(0, 120),
           payload: {
-            title: ensureDatePrefix(generated.title, toDate(new Date())),
-            caption: generated.caption,
-            hashtags: generated.hashtags,
-            model: generated.model,
+            title: resultTitle,
+            caption: resultCaption,
+            hashtags: resultHashtags,
+            model: resultModel,
             selectedAssetId: selectedAsset.id,
             selectedAssetFileName: selectedAsset.fileName,
             tone: postTone,
@@ -1317,6 +1352,28 @@ export const MarketingCenter: React.FC = () => {
               <p>口吻：{selectedToneOption.direction}</p>
               <p>主題：{selectedThemeOption.direction}</p>
               <p>長度：{selectedLengthOption.direction}</p>
+            </div>
+            <div className="flex gap-2 mb-2">
+              <button
+                onClick={() => setCopyModelChoice("gemini")}
+                className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                  copyModelChoice === "gemini"
+                    ? "border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500"
+                    : "border-gray-200 text-gray-600 hover:border-blue-300"
+                }`}
+              >
+                Gemini
+              </button>
+              <button
+                onClick={() => setCopyModelChoice("gpt")}
+                className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                  copyModelChoice === "gpt"
+                    ? "border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500"
+                    : "border-gray-200 text-gray-600 hover:border-green-300"
+                }`}
+              >
+                GPT
+              </button>
             </div>
             <Button
               onClick={() => void handleGenerateCopy()}
