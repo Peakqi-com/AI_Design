@@ -823,7 +823,9 @@ export const MarketingCenter: React.FC = () => {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "DeepSeek 生成失敗");
-        const p = JSON.parse(data.text || "{}");
+        const rawText = (data.text || "{}").replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+        const jsonCandidate = rawText.match(/\{[\s\S]*\}/)?.[0] || rawText;
+        const p = JSON.parse(jsonCandidate);
         return { title: ensureDatePrefix(p.title || "", toDate(new Date())), caption: p.caption || "", hashtags: (p.hashtags || []) as string[], model: `DeepSeek (${data.model || "deepseek-v3"})` };
       };
 

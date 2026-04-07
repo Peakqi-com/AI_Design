@@ -84,7 +84,9 @@ export async function POST(request: Request) {
       throw new Error("DeepSeek generation timed out");
     }
 
-    return NextResponse.json({ text, model: DEFAULT_MODEL });
+    // Strip markdown code blocks that DeepSeek sometimes wraps around JSON
+    const cleanText = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    return NextResponse.json({ text: cleanText, model: DEFAULT_MODEL });
   } catch (error) {
     const message = error instanceof Error ? error.message : "DeepSeek generation failed";
     return NextResponse.json({ error: message }, { status: 500 });
