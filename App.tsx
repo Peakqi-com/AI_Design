@@ -16,6 +16,7 @@ import { CRMSystem } from "./components/CRMSystem";
 import { MediaLibrary } from "./components/MediaLibrary";
 import { PresentationMaker } from "./components/PresentationMaker";
 import { AdminPanel } from "./components/AdminPanel";
+import { AIChatImage } from "./components/AIChatImage";
 import { VideoScriptWorkflow } from "./components/VideoScriptWorkflow";
 import { useCredits } from "./lib/client/use-credits";
 
@@ -127,6 +128,8 @@ const App: React.FC = () => {
         return <SubscriptionPage />;
       case "ai-studio":
         return <AIStudio />;
+      case "ai-chat":
+        return <AIChatImage />;
       case "projects":
         if (selectedProject) {
           return (

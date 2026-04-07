@@ -14,6 +14,7 @@ import {
   Menu,
   Presentation,
   Shield,
+  Sparkles,
   Clapperboard,
   X,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const navItems: NavItem[] = [
     { id: 'overview', label: '室內設計總覽', icon: LayoutDashboard },
     { id: 'ai-studio', label: 'AI 空間渲染', icon: Palette },
+    { id: 'ai-chat', label: 'AI 對話生圖', icon: Sparkles },
     { id: 'video-studio', label: '空間動態影片', icon: Video },
     { id: 'media-library', label: '媒體庫', icon: Library },
     { id: 'presentation', label: '簡報製作', icon: Presentation },

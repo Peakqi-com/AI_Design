@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
 
 /* ================================================================
    Types
@@ -133,6 +134,7 @@ const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
 
 export const PresentationMaker: React.FC = () => {
   const { data: session } = useSession();
+  const credits = useCredits();
 
   /* ---- user scope ---- */
   const [userScopeId, setUserScopeId] = useState("guest_server");
@@ -192,6 +194,8 @@ export const PresentationMaker: React.FC = () => {
      ================================================================ */
 
   const handleGenerateOutline = async () => {
+    const deduction = await credits.tryDeduct("ai-presentation");
+    if (!deduction.ok) { alert(deduction.error || "點數不足"); return; }
     setIsGeneratingOutline(true);
     try {
       const prompt =

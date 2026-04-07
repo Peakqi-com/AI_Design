@@ -21,6 +21,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
 import {
   getLatestSocialImageTask,
   SocialImageBackgroundTask,
@@ -279,6 +280,7 @@ const platformIcon = (platform: Platform, className = "w-4 h-4"): React.ReactEle
 
 export const MarketingCenter: React.FC = () => {
   const { data: session } = useSession();
+  const credits = useCredits();
 
   const [userScopeId, setUserScopeId] = useState("guest_server");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("all");
@@ -778,6 +780,11 @@ export const MarketingCenter: React.FC = () => {
   const handleGenerateCopy = async () => {
     if (!selectedAsset) {
       alert("請先從素材庫選擇圖片或影片");
+      return;
+    }
+    const deduction = await credits.tryDeduct("ai-social-post");
+    if (!deduction.ok) {
+      alert(deduction.error || "點數不足");
       return;
     }
     setIsGeneratingCopy(true);

@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
 
 type Mode = "image-to-video" | "text-to-video" | "first-last-frame";
 type Style = "japanese" | "industrial" | "modern" | "luxury";
@@ -580,6 +581,7 @@ const writeVideoHistoryCache = (userId: string, items: GeneratedVideoItem[]): vo
 
 export const VideoStudio: React.FC = () => {
   const { data: session } = useSession();
+  const credits = useCredits();
 
   const [mode, setMode] = useState<Mode>("image-to-video");
   const [selectedStyle, setSelectedStyle] = useState<Style>("japanese");
@@ -1525,6 +1527,11 @@ export const VideoStudio: React.FC = () => {
 
   const handleGenerate = async () => {
     if (isGenerating) {
+      return;
+    }
+    const deduction = await credits.tryDeduct("ai-video");
+    if (!deduction.ok) {
+      setErrorMessage(deduction.error || "點數不足，請至訂閱頁面儲值");
       return;
     }
 
