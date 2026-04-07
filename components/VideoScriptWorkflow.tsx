@@ -179,22 +179,15 @@ export const VideoScriptWorkflow: React.FC = () => {
               clearInterval(timer);
               delete pollTimersRef.current[segId];
               if (statusData.videoUri) {
-                // Download the video
-                const dlRes = await fetch("/api/ai/video/download", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    videoUri: statusData.videoUri,
-                    userId: userScopeId,
-                  }),
-                });
-                const dlData = await dlRes.json();
+                // 直接使用 Replicate 回傳的影片 URL
                 updateSegment(segId, {
                   status: "done",
-                  videoUrl: dlData.assetUrl || statusData.videoUri,
+                  videoUrl: statusData.videoUri,
                 });
               } else if (statusData.error) {
                 updateSegment(segId, { status: "error", error: statusData.error });
+              } else {
+                updateSegment(segId, { status: "error", error: "影片生成完成但未取得影片網址" });
               }
             }
           } catch {
