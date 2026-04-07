@@ -14,6 +14,7 @@ import { resolveServerUserScopeCandidates, resolveServerUserScopeId } from "@/li
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 const KIND_SET = new Set<SocialAssetKind>(["image", "video"]);
 const MAX_UPLOAD_SIZE = 80 * 1024 * 1024;
