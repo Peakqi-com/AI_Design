@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Download, Film, FolderOpen, Image as ImageIcon, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Download, Film, FolderOpen, Image as ImageIcon, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
 interface AssetMeta {
@@ -44,6 +44,8 @@ export const MediaLibrary: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("single");
   const [expandedPackageId, setExpandedPackageId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<MediaAsset | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const [trashItems, setTrashItems] = useState<MediaAsset[]>([]);
   const [isTrashLoading, setIsTrashLoading] = useState(false);
 
@@ -81,6 +83,33 @@ export const MediaLibrary: React.FC = () => {
       setIsTrashLoading(false);
     }
   }, [userScopeId]);
+
+  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const kind = file.type.startsWith("video/") ? "video" : "image";
+        const formData = new FormData();
+        formData.append("userId", userScopeId);
+        formData.append("kind", kind);
+        formData.append("file", file);
+        formData.append("meta", JSON.stringify({
+          origin: "manual-upload",
+          summary: file.name,
+        }));
+        await fetch("/api/social/assets", { method: "POST", body: formData });
+      }
+      void loadAssets();
+    } catch {
+      alert("上傳失敗，請重試");
+    } finally {
+      setIsUploading(false);
+      e.target.value = "";
+    }
+  }, [userScopeId, loadAssets]);
 
   const handleDelete = useCallback(async (assetId: string) => {
     await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&assetId=${encodeURIComponent(assetId)}`, { method: "DELETE" });
@@ -161,14 +190,32 @@ export const MediaLibrary: React.FC = () => {
           <h2 className="text-lg font-bold text-gray-900">媒體庫</h2>
           <p className="text-xs text-gray-500 mt-0.5">所有 AI 生成的圖片與影片集中管理</p>
         </div>
-        <button
-          onClick={loadAssets}
-          disabled={isLoading}
-          className="p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-500 hover:text-gray-700 transition-colors"
-          title="重新整理"
-        >
-          <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => uploadInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors disabled:opacity-50"
+          >
+            {isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {isUploading ? "上傳中..." : "上傳檔案"}
+          </button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            className="hidden"
+            onChange={handleUpload}
+          />
+          <button
+            onClick={loadAssets}
+            disabled={isLoading}
+            className="p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-500 hover:text-gray-700 transition-colors"
+            title="重新整理"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       {/* 分頁 Tab */}
