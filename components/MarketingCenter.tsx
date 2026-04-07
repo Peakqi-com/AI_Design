@@ -815,9 +815,9 @@ export const MarketingCenter: React.FC = () => {
           body: JSON.stringify({ prompt: gptPrompt, imageDataUrl, temperature: 0.6, jsonMode: true }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "GPT 生成失敗");
+        if (!res.ok) throw new Error(data.error || "DeepSeek 生成失敗");
         const p = JSON.parse(data.text || "{}");
-        return { title: ensureDatePrefix(p.title || "", toDate(new Date())), caption: p.caption || "", hashtags: (p.hashtags || []) as string[], model: `GPT (${data.model || "gpt-4o-mini"})` };
+        return { title: ensureDatePrefix(p.title || "", toDate(new Date())), caption: p.caption || "", hashtags: (p.hashtags || []) as string[], model: `DeepSeek (${data.model || "deepseek-v3"})` };
       };
 
       const callGemini = async () => {
@@ -1399,7 +1399,7 @@ export const MarketingCenter: React.FC = () => {
                     : "border-gray-200 text-gray-600 hover:border-green-300"
                 }`}
               >
-                GPT
+                DeepSeek
               </button>
             </div>
             <Button
@@ -1477,7 +1477,7 @@ export const MarketingCenter: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-green-700 text-sm flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-green-500" />
-                    GPT 對比版本
+                    DeepSeek 對比版本
                     <span className="text-[10px] font-normal text-green-500">({altResult.model})</span>
                   </h3>
                   <button
