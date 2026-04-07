@@ -1,5 +1,5 @@
 const DEFAULT_REPLICATE_VIDEO_MODEL =
-  (process.env.REPLICATE_VIDEO_MODEL || "").trim() || "xai/grok-imagine-video";
+  (process.env.REPLICATE_VIDEO_MODEL || "").trim() || "kwaivgi/kling-v2.6";
 const DEFAULT_REPLICATE_VIDEO_MODEL_VERSION = (process.env.REPLICATE_VIDEO_MODEL_VERSION || "").trim();
 const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
