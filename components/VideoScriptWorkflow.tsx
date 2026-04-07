@@ -179,13 +179,32 @@ export const VideoScriptWorkflow: React.FC = () => {
               clearInterval(timer);
               delete pollTimersRef.current[segId];
               if (statusData.videoUri) {
-                // 下載影片並儲存到媒體庫（Replicate URL 會過期）
+                // 儲存影片到媒體庫（嘗試多種方式）
+                let savedUrl = statusData.videoUri;
                 try {
-                  const dlRes = await fetch(
-                    `/api/ai/video/download?videoUri=${encodeURIComponent(statusData.videoUri)}`
-                  );
-                  if (dlRes.ok) {
-                    const videoBlob = await dlRes.blob();
+                  // 方式1: 透過 download API 取得影片 binary
+                  let videoBlob: Blob | null = null;
+                  try {
+                    const dlRes = await fetch(
+                      `/api/ai/video/download?videoUri=${encodeURIComponent(statusData.videoUri)}`
+                    );
+                    if (dlRes.ok && dlRes.headers.get("content-type")?.includes("video")) {
+                      videoBlob = await dlRes.blob();
+                    }
+                  } catch { /* try direct fetch */ }
+
+                  // 方式2: 直接從 Replicate URL 下載
+                  if (!videoBlob) {
+                    try {
+                      const directRes = await fetch(statusData.videoUri);
+                      if (directRes.ok) {
+                        videoBlob = await directRes.blob();
+                      }
+                    } catch { /* give up downloading */ }
+                  }
+
+                  // 上傳到媒體庫
+                  if (videoBlob && videoBlob.size > 0) {
                     const videoFile = new File([videoBlob], `script-seg${segId}-${Date.now()}.mp4`, { type: "video/mp4" });
                     const formData = new FormData();
                     formData.append("userId", userScopeId);
@@ -199,16 +218,13 @@ export const VideoScriptWorkflow: React.FC = () => {
                       summary: seg.description || seg.title,
                     }));
                     const saveRes = await fetch("/api/social/assets", { method: "POST", body: formData });
-                    const saveData = await saveRes.json();
-                    const permanentUrl = saveData?.item?.url || statusData.videoUri;
-                    updateSegment(segId, { status: "done", videoUrl: permanentUrl });
-                  } else {
-                    // 下載失敗，fallback 用暫存 URL
-                    updateSegment(segId, { status: "done", videoUrl: statusData.videoUri });
+                    if (saveRes.ok) {
+                      const saveData = await saveRes.json();
+                      savedUrl = saveData?.item?.url || savedUrl;
+                    }
                   }
-                } catch {
-                  updateSegment(segId, { status: "done", videoUrl: statusData.videoUri });
-                }
+                } catch { /* use original URL */ }
+                updateSegment(segId, { status: "done", videoUrl: savedUrl });
               } else if (statusData.error) {
                 updateSegment(segId, { status: "error", error: statusData.error });
               } else {
@@ -263,6 +279,23 @@ export const VideoScriptWorkflow: React.FC = () => {
         throw new Error((err as { error?: string }).error || "合併失敗");
       }
       const blob = await res.blob();
+
+      // Save merged video to media library
+      try {
+        const mergedFile = new File([blob], `merged-marketing-${Date.now()}.mp4`, { type: "video/mp4" });
+        const formData = new FormData();
+        formData.append("userId", userScopeId);
+        formData.append("kind", "video");
+        formData.append("file", mergedFile);
+        formData.append("meta", JSON.stringify({
+          origin: "video-studio",
+          mode: "text-to-video",
+          style: "行銷影片（合併）",
+          summary: doneSegments.map((s) => s.title).join(" → "),
+        }));
+        fetch("/api/social/assets", { method: "POST", body: formData }).catch(() => {});
+      } catch { /* ignore save error */ }
+
       const downloadUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = downloadUrl;
