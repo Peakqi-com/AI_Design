@@ -6,9 +6,12 @@ import {
 } from "@/lib/ai/google-provider";
 
 const DEFAULT_MODEL_CANDIDATES = [
-  process.env.GEMINI_IMAGE_MODEL || "",
-  process.env.NANO_BANANA_MODEL || "",
   process.env.NANO_BANANA_PRO_MODEL || "",
+  process.env.NANO_BANANA_MODEL || "",
+  process.env.GEMINI_IMAGE_MODEL || "",
+  "nano-banana-pro",
+  "nano-banana-2",
+  "nano-banana",
   "gemini-3-pro-image-preview",
   "gemini-3-pro-image",
   "gemini-3.1-flash-image-preview",
@@ -18,15 +21,15 @@ const DEFAULT_MODEL_CANDIDATES = [
   "gemini-2.5-flash-image-preview",
   "gemini-2.0-flash-preview-image-generation",
   "gemini-2.0-flash",
-  "nano-banana-pro",
-  "nano-banana-2",
-  "nano-banana",
 ].filter(Boolean);
 
 const STRICT_IDENTITY_MODEL_CANDIDATES = [
-  process.env.GEMINI_STRICT_IDENTITY_MODEL || "",
-  process.env.NANO_BANANA_MODEL || "",
   process.env.NANO_BANANA_PRO_MODEL || "",
+  process.env.NANO_BANANA_MODEL || "",
+  process.env.GEMINI_STRICT_IDENTITY_MODEL || "",
+  "nano-banana-pro",
+  "nano-banana-2",
+  "nano-banana",
   "gemini-3-pro-image-preview",
   "gemini-3-pro-image",
   "gemini-3.1-flash-image-preview",
