@@ -13,6 +13,7 @@ interface AssetMeta {
   packageLabel?: string;
   slotLabel?: string;
   prompt?: string;
+  generationPrompt?: string;
   aspectRatio?: string;
   durationSec?: number;
 }
@@ -376,9 +377,22 @@ export const MediaLibrary: React.FC = () => {
                 />
               )}
             </div>
-            {previewItem.meta?.summary && (
-              <div className="px-4 py-3 border-t border-gray-100 bg-brand-50 max-h-24 overflow-y-auto">
-                <p className="text-xs text-brand-800 leading-relaxed">{previewItem.meta.summary}</p>
+            {(previewItem.meta?.summary || previewItem.meta?.prompt || previewItem.meta?.generationPrompt) && (
+              <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 max-h-36 overflow-y-auto space-y-2">
+                {previewItem.meta?.summary && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-500 mb-0.5">AI 說明</p>
+                    <p className="text-xs text-gray-700 leading-relaxed">{previewItem.meta.summary}</p>
+                  </div>
+                )}
+                {(previewItem.meta?.generationPrompt || previewItem.meta?.prompt) && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-500 mb-0.5">使用的提示詞</p>
+                    <p className="text-[11px] text-gray-600 leading-relaxed whitespace-pre-wrap break-all font-mono bg-white rounded px-2 py-1 border border-gray-200">
+                      {previewItem.meta.generationPrompt || previewItem.meta.prompt}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
