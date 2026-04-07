@@ -41,7 +41,31 @@ export const AIChatImage: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [insufficientMsg, setInsufficientMsg] = useState<string | null>(null);
+  const [selectedType, setSelectedType] = useState("");
+  const [selectedStyle, setSelectedStyle] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const IMAGE_TYPES = [
+    { id: "colored-handdrawn", label: "彩色平面圖-手繪", prompt: "Convert to hand-drawn watercolor architectural floor plan, flat 2D top-down, warm colors" },
+    { id: "colored-cartoon", label: "彩色平面圖-卡通", prompt: "Convert to colorful cartoon floor plan illustration, flat 2D, bright saturated colors" },
+    { id: "colored-noshadow", label: "彩色平面圖-無陰影", prompt: "Convert to clean CAD-style colored floor plan, flat solid fills, no shadows" },
+    { id: "colored-realistic", label: "彩色平面圖-擬真", prompt: "Convert to photorealistic top-down rendered floor plan with real material textures" },
+    { id: "section-top", label: "剖透圖-上視角度", prompt: "Create 3D cutaway floor plan from directly above, walls cut at 1m, 3D furniture" },
+    { id: "section-birds-eye", label: "剖透圖-俯視角度", prompt: "Create 3D bird's-eye view floor plan, camera at 60° elevation, visible wall sides" },
+    { id: "section-oblique", label: "剖透圖-斜角度", prompt: "Create 3D isometric cutaway from diagonal corner at 45°, full wall heights visible" },
+    { id: "section-3d", label: "剖透圖-立體模型", prompt: "Create photorealistic 3D dollhouse model, roof removed, maximum detail, studio lighting" },
+  ];
+
+  const STYLE_OPTIONS = [
+    { id: "japanese", label: "日式和風", prompt: "Japanese minimalist zen style, natural wood, tatami, shoji screens" },
+    { id: "nordic", label: "北歐簡約", prompt: "Scandinavian Nordic style, light wood, white walls, cozy textiles" },
+    { id: "modern", label: "現代簡約", prompt: "Modern minimalist style, clean lines, neutral tones, open space" },
+    { id: "industrial", label: "工業風", prompt: "Industrial loft style, exposed brick, metal, concrete, Edison bulbs" },
+    { id: "luxury", label: "輕奢華", prompt: "Light luxury style, marble, gold accents, velvet, crystal chandelier" },
+    { id: "wabi-sabi", label: "侘寂風", prompt: "Wabi-sabi style, imperfect beauty, natural materials, muted earth tones" },
+    { id: "muji", label: "無印風", prompt: "MUJI style, ultra-minimal, white oak, white linen, hidden storage" },
+    { id: "retro", label: "復古美式", prompt: "American vintage retro style, warm colors, classic furniture, patterned wallpaper" },
+  ];
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,10 +90,26 @@ export const AIChatImage: React.FC = () => {
     }
     setInsufficientMsg(null);
 
+    // Build prompt with type + style + user text
+    const typeInfo = IMAGE_TYPES.find((t) => t.id === selectedType);
+    const styleInfo = STYLE_OPTIONS.find((s) => s.id === selectedStyle);
+    const promptParts = [
+      typeInfo ? typeInfo.prompt : "",
+      styleInfo ? styleInfo.prompt : "",
+      text,
+    ].filter(Boolean);
+    const fullPrompt = promptParts.join(". ") || "根據上傳的圖片，生成一張高品質的室內設計效果圖";
+
+    const displayText = [
+      typeInfo ? `[${typeInfo.label}]` : "",
+      styleInfo ? `[${styleInfo.label}]` : "",
+      text,
+    ].filter(Boolean).join(" ");
+
     const userMsg: ChatMessage = {
       id: uid(),
       role: "user",
-      text: text || (uploadedImage ? "請根據這張圖片生成設計圖" : ""),
+      text: displayText || (uploadedImage ? "請根據這張圖片生成設計圖" : ""),
       uploadedImageUrl: uploadedImage || undefined,
       timestamp: new Date().toISOString(),
     };
@@ -86,9 +126,9 @@ export const AIChatImage: React.FC = () => {
         body: JSON.stringify({
           imageDataUrl: currentImage || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
           roomType: "全室整合",
-          style: "AI 對話生圖",
-          customPrompt: text || "根據上傳的圖片，生成一張高品質的室內設計效果圖",
-          creativity: 30,
+          style: typeInfo?.label || "AI 對話生圖",
+          customPrompt: fullPrompt,
+          creativity: 20,
         }),
       });
       const data = await res.json();
@@ -149,7 +189,9 @@ export const AIChatImage: React.FC = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="h-[calc(100vh-8rem)] flex gap-4">
+      {/* Left: Chat area */}
+      <div className="flex-1 flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Header */}
       <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
         <div>
@@ -316,6 +358,92 @@ export const AIChatImage: React.FC = () => {
         <p className="text-[10px] text-gray-400 mt-1.5 text-center">
           每次生成消耗 2 點 · 使用 Gemini 模型 · 生成的圖片自動儲存到媒體庫
         </p>
+      </div>
+
+      </div> {/* end left chat panel */}
+
+      {/* Right: Tool panel */}
+      <div className="w-72 shrink-0 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden hidden lg:flex">
+        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+          <p className="text-sm font-bold text-gray-800">生成設定</p>
+          <p className="text-[10px] text-gray-500 mt-0.5">選擇類型和風格後，直接影響生成結果</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+          {/* Image type */}
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-2">圖片類型</p>
+            <div className="space-y-1">
+              {IMAGE_TYPES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedType(selectedType === t.id ? "" : t.id)}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] transition-colors ${
+                    selectedType === t.id
+                      ? "bg-brand-50 text-brand-700 border border-brand-300 font-semibold"
+                      : "text-gray-600 hover:bg-gray-50 border border-transparent"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Style */}
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-2">設計風格</p>
+            <div className="grid grid-cols-2 gap-1">
+              {STYLE_OPTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSelectedStyle(selectedStyle === s.id ? "" : s.id)}
+                  className={`px-2 py-1.5 rounded-lg text-[11px] text-center transition-colors ${
+                    selectedStyle === s.id
+                      ? "bg-brand-50 text-brand-700 border border-brand-300 font-semibold"
+                      : "text-gray-600 hover:bg-gray-50 border border-gray-200"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Selected summary */}
+          {(selectedType || selectedStyle) && (
+            <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-[11px] text-brand-700">
+              <p className="font-semibold mb-0.5">目前選擇：</p>
+              {selectedType && <p>類型：{IMAGE_TYPES.find((t) => t.id === selectedType)?.label}</p>}
+              {selectedStyle && <p>風格：{STYLE_OPTIONS.find((s) => s.id === selectedStyle)?.label}</p>}
+              <p className="text-brand-500 mt-1">輸入文字或上傳圖片後送出即可生成</p>
+            </div>
+          )}
+
+          {/* Quick actions */}
+          <div>
+            <p className="text-xs font-semibold text-gray-700 mb-2">快速生成</p>
+            <div className="space-y-1">
+              {[
+                { label: "北歐風客廳效果圖", type: "", style: "nordic" },
+                { label: "日式和風臥室", type: "", style: "japanese" },
+                { label: "現代簡約開放式廚房", type: "", style: "modern" },
+                { label: "工業風 Loft 空間", type: "", style: "industrial" },
+              ].map((q) => (
+                <button
+                  key={q.label}
+                  onClick={() => {
+                    setInput(q.label);
+                    if (q.style) setSelectedStyle(q.style);
+                    if (q.type) setSelectedType(q.type);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 text-[11px] text-gray-500 hover:bg-brand-50 hover:text-brand-700 rounded-lg border border-gray-100 transition-colors"
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Fullscreen preview */}

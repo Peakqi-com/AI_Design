@@ -9,6 +9,7 @@ import {
   isAdminEmail,
   CREDIT_COSTS,
   getStorageQuota,
+  saveUserCredits,
   PLAN_INFO,
   type UserPlan,
 } from "@/lib/credits/store";
@@ -54,6 +55,20 @@ export async function GET(request: Request) {
       name: profileName,
       avatarUrl: profileAvatar,
     });
+
+    // Auto-recalculate storage if 0 (for users created before quota feature)
+    if (!record.storageUsedBytes) {
+      try {
+        const { listSocialAssets } = await import("@/lib/social/media-library");
+        const assets = await listSocialAssets({ userId, limit: 500 });
+        const totalSize = assets.reduce((sum, a) => sum + (a.size || 0), 0);
+        if (totalSize > 0) {
+          record.storageUsedBytes = totalSize;
+          await saveUserCredits(record);
+        }
+      } catch { /* ignore */ }
+    }
+
     return NextResponse.json({
       ...record,
       storageQuotaBytes: getStorageQuota(record.plan),
