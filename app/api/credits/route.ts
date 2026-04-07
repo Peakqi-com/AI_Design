@@ -139,6 +139,26 @@ export async function POST(request: Request) {
     }
   }
 
+  // Super admin only: set/remove admin role
+  if (action === "set-admin") {
+    const email = String(body.email || "");
+    if (email.toLowerCase() !== "ai.allen.task@gmail.com") {
+      return NextResponse.json({ error: "Only super admin can manage admin roles" }, { status: 403 });
+    }
+    const targetUserId = String(body.targetUserId || "");
+    const newIsAdmin = Boolean(body.isAdmin);
+    try {
+      const { setAdminFlag } = await import("@/lib/credits/store");
+      await setAdminFlag(targetUserId, newIsAdmin);
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Failed" },
+        { status: 500 },
+      );
+    }
+  }
+
   // Normal deduction
   if (!action || !CREDIT_COSTS[action]) {
     return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });

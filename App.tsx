@@ -61,9 +61,10 @@ const App: React.FC = () => {
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
 
-  // Check admin from multiple sources: credits hook email, session email, user email
+  // Check admin: super admin email OR isAdmin flag from credits
   const adminEmails = ["ai.allen.task@gmail.com"];
-  const isAdmin = adminEmails.includes((credits.userEmail || "").toLowerCase())
+  const isAdmin = credits.isAdmin
+    || adminEmails.includes((credits.userEmail || "").toLowerCase())
     || adminEmails.includes((user?.email || "").toLowerCase())
     || adminEmails.includes(((session?.user as { email?: string })?.email || "").toLowerCase());
 

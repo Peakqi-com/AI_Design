@@ -16,6 +16,16 @@ import { Redis } from "@upstash/redis";
 /* ---------- types ---------- */
 
 export type UserPlan = "free" | "pro" | "business" | "enterprise";
+export type AdminRole = "super-admin" | "admin" | "none";
+
+const SUPER_ADMIN_EMAIL = "ai.allen.task@gmail.com";
+
+export function getAdminRole(email: string | null | undefined, isAdminFlag?: boolean): AdminRole {
+  if (!email) return isAdminFlag ? "admin" : "none";
+  if (email.trim().toLowerCase() === SUPER_ADMIN_EMAIL) return "super-admin";
+  if (isAdminFlag) return "admin";
+  return "none";
+}
 
 export interface UserCreditRecord {
   userId: string;

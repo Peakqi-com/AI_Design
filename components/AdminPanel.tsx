@@ -36,9 +36,12 @@ const PLAN_BADGES: Record<string, { label: string; color: string }> = {
   enterprise: { label: "企業", color: "bg-amber-100 text-amber-700" },
 };
 
+const SUPER_ADMIN_EMAIL = "ai.allen.task@gmail.com";
+
 export const AdminPanel: React.FC = () => {
   const { data: session } = useSession();
   const email = (session?.user as { email?: string })?.email || "";
+  const isSuperAdmin = email.toLowerCase() === SUPER_ADMIN_EMAIL;
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [planInfo, setPlanInfo] = useState<Record<string, PlanInfoItem>>({});
   const [loading, setLoading] = useState(true);
@@ -239,7 +242,8 @@ export const AdminPanel: React.FC = () => {
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-gray-800 truncate">
                           {user.name || user.userId}
-                          {user.isAdmin && <span className="ml-1 text-[10px] text-red-500 font-bold">ADMIN</span>}
+                          {user.email?.toLowerCase() === SUPER_ADMIN_EMAIL && <span className="ml-1 text-[9px] bg-red-500 text-white px-1 py-0.5 rounded">超級管理員</span>}
+                          {user.isAdmin && user.email?.toLowerCase() !== SUPER_ADMIN_EMAIL && <span className="ml-1 text-[9px] bg-indigo-500 text-white px-1 py-0.5 rounded">管理員</span>}
                         </p>
                         <p className="text-[10px] text-gray-400 truncate">{user.userId}</p>
                       </div>
@@ -321,6 +325,39 @@ export const AdminPanel: React.FC = () => {
                       >
                         追加
                       </button>
+                      {/* Super admin: toggle admin role */}
+                      {isSuperAdmin && user.email?.toLowerCase() !== SUPER_ADMIN_EMAIL && (
+                        <>
+                          <div className="w-px h-6 bg-gray-200 mx-1" />
+                          <button
+                            onClick={async () => {
+                              setActionLoading(true);
+                              try {
+                                await fetch("/api/credits", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    action: "set-admin",
+                                    email,
+                                    targetUserId: user.userId,
+                                    isAdmin: !user.isAdmin,
+                                  }),
+                                });
+                                void loadUsers();
+                              } catch { /* ignore */ }
+                              finally { setActionLoading(false); }
+                            }}
+                            disabled={actionLoading}
+                            className={`px-3 py-1.5 text-[11px] rounded-md disabled:opacity-50 ${
+                              user.isAdmin
+                                ? "bg-red-100 text-red-700 hover:bg-red-200"
+                                : "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                            }`}
+                          >
+                            {user.isAdmin ? "撤銷管理員" : "設為管理員"}
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
