@@ -430,16 +430,26 @@ export async function downloadVeoVideo(
     throw new Error("不合法的影片下載連結。");
   }
 
-  let response = await fetch(videoUri, {
-    method: "GET",
-  });
-  if (!response.ok && (response.status === 401 || response.status === 403)) {
+  // Try without auth first, then with Replicate token if needed
+  let response = await fetch(videoUri, { method: "GET", redirect: "follow" });
+  if (!response.ok && (response.status === 401 || response.status === 403 || response.status === 404)) {
+    // Some CDNs need the Replicate token
     response = await fetch(videoUri, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${getReplicateToken()}`,
-      },
+      redirect: "follow",
+      headers: { Authorization: `Bearer ${getReplicateToken()}` },
     });
+  }
+  if (!response.ok) {
+    // Last try: get fresh URL from Replicate prediction
+    // The video URI might have expired, try fetching without any modification
+    try {
+      response = await fetch(videoUri, {
+        method: "GET",
+        redirect: "follow",
+        headers: { "User-Agent": "InteriorPro/1.0" },
+      });
+    } catch { /* use previous response */ }
   }
 
   if (!response.ok) {
