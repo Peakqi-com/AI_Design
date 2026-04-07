@@ -281,7 +281,7 @@ export const MediaLibrary: React.FC = () => {
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {videos.map((item) => (
-                    <VideoCard key={item.id} item={item} onDownload={handleDownload} onDelete={handleDelete} />
+                    <VideoCard key={item.id} item={item} onDownload={handleDownload} onDelete={handleDelete} onPreview={setPreviewItem} />
                   ))}
                 </div>
               )
@@ -346,7 +346,7 @@ export const MediaLibrary: React.FC = () => {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleDownload(previewItem.url, `render-${previewItem.id}.png`)}
+                  onClick={() => handleDownload(previewItem.url, previewItem.kind === "video" ? `video-${previewItem.id}.mp4` : `render-${previewItem.id}.png`)}
                   className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors"
                   title="下載"
                 >
@@ -361,11 +361,20 @@ export const MediaLibrary: React.FC = () => {
               </div>
             </div>
             <div className="bg-gray-900 flex items-center justify-center p-4" style={{ maxHeight: "70vh" }}>
-              <img
-                src={previewItem.url}
-                alt="preview"
-                className="max-h-[65vh] max-w-full object-contain rounded-lg"
-              />
+              {previewItem.kind === "video" ? (
+                <video
+                  src={previewItem.url}
+                  controls
+                  autoPlay
+                  className="max-h-[65vh] max-w-full object-contain rounded-lg"
+                />
+              ) : (
+                <img
+                  src={previewItem.url}
+                  alt="preview"
+                  className="max-h-[65vh] max-w-full object-contain rounded-lg"
+                />
+              )}
             </div>
             {previewItem.meta?.summary && (
               <div className="px-4 py-3 border-t border-gray-100 bg-brand-50 max-h-24 overflow-y-auto">
@@ -452,8 +461,9 @@ const VideoCard: React.FC<{
   item: MediaAsset;
   onDownload: (url: string, name: string) => void;
   onDelete?: (id: string) => void;
-}> = ({ item, onDownload, onDelete }) => (
-  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
+  onPreview?: (item: MediaAsset) => void;
+}> = ({ item, onDownload, onDelete, onPreview }) => (
+  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow cursor-pointer" onClick={() => onPreview?.(item)}>
     <div className="relative aspect-video bg-gray-900 overflow-hidden">
       <video
         src={item.url}
