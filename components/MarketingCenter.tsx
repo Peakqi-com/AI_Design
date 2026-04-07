@@ -313,6 +313,8 @@ export const MarketingCenter: React.FC = () => {
   const [lastGeneratedModel, setLastGeneratedModel] = useState("");
   const [copyModelChoice, setCopyModelChoice] = useState<"gemini" | "gpt" | "both">("both");
   const [altResult, setAltResult] = useState<{ title: string; caption: string; hashtags: string; model: string } | null>(null);
+  const [copyHistory, setCopyHistory] = useState<Array<{ id: string; title: string; caption: string; hashtags: string; model: string; createdAt: string }>>([]);
+  const [showCopyHistory, setShowCopyHistory] = useState(false);
 
   const [postTitle, setPostTitle] = useState("");
   const [postCaption, setPostCaption] = useState("");
@@ -610,6 +612,34 @@ export const MarketingCenter: React.FC = () => {
     void loadMarketingState();
   }, [loadMarketingState]);
 
+  // Load copy history
+  const loadCopyHistory = useCallback(async () => {
+    if (!userScopeId) return;
+    try {
+      const data = await requestJson<ContentVaultListResponse>(
+        `/api/content/vault?userId=${encodeURIComponent(userScopeId)}&kind=social-post&limit=20`,
+        { method: "GET" },
+      );
+      setCopyHistory(
+        (data.items || []).map((item) => {
+          const p = (item.payload || {}) as Record<string, unknown>;
+          return {
+            id: item.id,
+            title: String(p.title || item.title || ""),
+            caption: String(p.caption || ""),
+            hashtags: Array.isArray(p.hashtags) ? (p.hashtags as string[]).join(" ") : "",
+            model: String(p.model || ""),
+            createdAt: item.createdAt,
+          };
+        }),
+      );
+    } catch { /* ignore */ }
+  }, [userScopeId]);
+
+  useEffect(() => {
+    void loadCopyHistory();
+  }, [loadCopyHistory]);
+
   const uploadAsset = useCallback(
     async (file: File, meta: Record<string, unknown>): Promise<SocialAssetItem> => {
       const kind = file.type.startsWith("video/") ? "video" : "image";
@@ -902,7 +932,7 @@ export const MarketingCenter: React.FC = () => {
             generatedAt: new Date().toISOString(),
           },
         }),
-      }).catch(() => undefined);
+      }).then(() => void loadCopyHistory()).catch(() => undefined);
     } catch (error) {
       alert(error instanceof Error ? error.message : "文案生成失敗");
     } finally {
@@ -1507,6 +1537,51 @@ export const MarketingCenter: React.FC = () => {
                 <p className="text-[11px] text-blue-600">{altResult.hashtags}</p>
               </div>
             )}
+
+            {/* 文案歷史 */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <button
+                onClick={() => setShowCopyHistory(!showCopyHistory)}
+                className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+              >
+                <span className="text-sm font-bold text-gray-900">文案歷史（{copyHistory.length}）</span>
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showCopyHistory ? "rotate-180" : ""}`} />
+              </button>
+              {showCopyHistory && copyHistory.length > 0 && (
+                <div className="border-t border-gray-100 max-h-80 overflow-y-auto divide-y divide-gray-100">
+                  {copyHistory.map((item) => (
+                    <div key={item.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-semibold text-gray-800 truncate flex-1">{item.title}</p>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          <span className="text-[9px] text-gray-400">{item.model}</span>
+                          <button
+                            onClick={() => {
+                              setPostTitle(item.title);
+                              setPostCaption(item.caption);
+                              setPostHashtagsInput(item.hashtags);
+                              setLastGeneratedModel(item.model);
+                            }}
+                            className="text-[10px] text-brand-600 border border-brand-200 px-1.5 py-0.5 rounded hover:bg-brand-50"
+                          >
+                            套用
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-gray-600 line-clamp-2">{item.caption}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {new Date(item.createdAt).toLocaleString("zh-TW")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showCopyHistory && copyHistory.length === 0 && (
+                <div className="px-4 py-6 text-center text-xs text-gray-400 border-t border-gray-100">
+                  尚無歷史文案，生成文案後會自動儲存
+                </div>
+              )}
+            </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-3">
               <h3 className="font-bold text-gray-900">排程</h3>
