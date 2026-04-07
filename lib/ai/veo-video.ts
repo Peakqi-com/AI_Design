@@ -21,9 +21,10 @@ export interface StartVeoImageVideoInput {
   negativePrompt?: string;
 }
 
-// Kling v2.1: $0.25-0.90/video, 1080p, text-to-video + image-to-video + end_image (first-last-frame)
-const FIRST_LAST_FRAME_MODEL = "kwaivgi/kling-v2.1";
-const TEXT_TO_VIDEO_MODEL = "kwaivgi/kling-v2.1";
+// Kling v3.0: supports end_image for first-last-frame, 1080p, native audio
+const FIRST_LAST_FRAME_MODEL = "kwaivgi/kling-v3-video";
+// Kling v2.6: 1080p + native audio, text-to-video + image-to-video, ~$0.30-0.60
+const TEXT_TO_VIDEO_MODEL = "kwaivgi/kling-v2.6";
 
 export interface VeoStartResult {
   operationName: string;
