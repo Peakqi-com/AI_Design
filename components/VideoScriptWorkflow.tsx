@@ -182,25 +182,16 @@ export const VideoScriptWorkflow: React.FC = () => {
                 // 儲存影片到媒體庫（嘗試多種方式）
                 let savedUrl = statusData.videoUri;
                 try {
-                  // 方式1: 透過 download API 取得影片 binary
+                  // 透過 server proxy 下載影片（避免 CORS + Replicate URL 會過期）
                   let videoBlob: Blob | null = null;
-                  try {
-                    const dlRes = await fetch(
-                      `/api/ai/video/download?videoUri=${encodeURIComponent(statusData.videoUri)}`
-                    );
-                    if (dlRes.ok && dlRes.headers.get("content-type")?.includes("video")) {
+                  const dlRes = await fetch(
+                    `/api/ai/video/download?videoUri=${encodeURIComponent(statusData.videoUri)}`
+                  );
+                  if (dlRes.ok) {
+                    const ct = dlRes.headers.get("content-type") || "";
+                    if (ct.includes("video") || ct.includes("octet-stream")) {
                       videoBlob = await dlRes.blob();
                     }
-                  } catch { /* try direct fetch */ }
-
-                  // 方式2: 直接從 Replicate URL 下載
-                  if (!videoBlob) {
-                    try {
-                      const directRes = await fetch(statusData.videoUri);
-                      if (directRes.ok) {
-                        videoBlob = await directRes.blob();
-                      }
-                    } catch { /* give up downloading */ }
                   }
 
                   // 上傳到媒體庫
