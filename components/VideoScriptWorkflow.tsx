@@ -28,8 +28,7 @@ interface ScriptSegment {
   error: string | null;
 }
 
-// 使用與「空間動態影片」相同的模型
-const VIDEO_MODEL = "xai/grok-imagine-video";
+// 不指定模型 — 讓 API 根據 mode 自動選擇最佳模型
 
 const DEFAULT_SEGMENTS: ScriptSegment[] = [
   { id: 1, title: "開場", description: "", prompt: "", imageDataUrl: null, videoUrl: null, status: "draft", operationName: null, error: null },
@@ -149,7 +148,6 @@ export const VideoScriptWorkflow: React.FC = () => {
       try {
         const body: Record<string, unknown> = {
           prompt: seg.prompt,
-          model: VIDEO_MODEL,
           aspectRatio,
           durationSec: 5,
           mode: seg.imageDataUrl ? "image-to-video" : "text-to-video",
@@ -431,7 +429,7 @@ export const VideoScriptWorkflow: React.FC = () => {
             )}
           </button>
           <p className="text-[10px] text-gray-400 text-center mt-1.5">
-            使用 Grok Imagine Video 模型 · 每段 5 點 · 共 15 點
+            有圖=Grok・無圖=Kling v2.6 · 每段 5 點 · 共 15 點
           </p>
         </div>
       </div>
