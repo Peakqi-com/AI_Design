@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
+import { canAccessFeature, type UserPlan } from '@/lib/credits/store';
 
 interface DashboardLayoutProps {
   user: User;
@@ -30,6 +31,7 @@ interface DashboardLayoutProps {
   liveCredits?: number;
   liveStorageUsed?: number;
   liveStorageQuota?: number;
+  userPlan?: string;
 }
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
@@ -42,6 +44,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   liveCredits,
   liveStorageUsed,
   liveStorageQuota,
+  userPlan,
 }) => {
   const navItems: NavItem[] = [
     { id: 'overview', label: '室內設計總覽', icon: LayoutDashboard },
@@ -80,20 +83,35 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       </div>
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => { onChangeView(item.id); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              currentView === item.id
-                ? 'bg-brand-50 text-brand-600'
-                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-            }`}
-          >
-            <item.icon className={`w-5 h-5 ${currentView === item.id ? 'text-brand-600' : 'text-gray-400'}`} />
-            {item.label}
-          </button>
-        ))}
+        {navItems.map((item) => {
+          const plan = (userPlan || "free") as UserPlan;
+          const hasAccess = canAccessFeature(plan, item.id);
+          return (
+            <button
+              key={item.id}
+              onClick={() => {
+                if (hasAccess) {
+                  onChangeView(item.id);
+                  setMobileMenuOpen(false);
+                } else {
+                  onChangeView('subscription');
+                  setMobileMenuOpen(false);
+                }
+              }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                !hasAccess
+                  ? 'text-gray-400 hover:bg-gray-50'
+                  : currentView === item.id
+                    ? 'bg-brand-50 text-brand-600'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+              }`}
+            >
+              <item.icon className={`w-5 h-5 ${!hasAccess ? 'text-gray-300' : currentView === item.id ? 'text-brand-600' : 'text-gray-400'}`} />
+              <span className="flex-1 text-left">{item.label}</span>
+              {!hasAccess && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">PRO</span>}
+            </button>
+          );
+        })}
       </nav>
 
       <div className="p-4 border-t border-gray-100 bg-gray-50/50">

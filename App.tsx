@@ -187,6 +187,7 @@ const App: React.FC = () => {
           liveCredits={credits.credits}
           liveStorageUsed={credits.storageUsedBytes}
           liveStorageQuota={credits.storageQuotaBytes}
+          userPlan={credits.plan}
         >
           {renderDashboardContent()}
         </DashboardLayout>

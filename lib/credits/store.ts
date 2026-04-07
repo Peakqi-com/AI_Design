@@ -283,13 +283,16 @@ export const PLAN_INFO: Record<UserPlan, { label: string; price: string; credits
  */
 const FEATURE_ACCESS: Record<string, UserPlan[]> = {
   "ai-studio": ["free", "pro", "business", "enterprise"],
+  "ai-chat": ["free", "pro", "business", "enterprise"],
   "video-studio": ["free", "pro", "business", "enterprise"],
   "media-library": ["free", "pro", "business", "enterprise"],
   presentation: ["free", "pro", "business", "enterprise"],
-  marketing: ["pro", "business", "enterprise"],
+  marketing: ["free", "pro", "business", "enterprise"],
+  subscription: ["free", "pro", "business", "enterprise"],
+  "video-script": ["pro", "business", "enterprise"],
   quotation: ["pro", "business", "enterprise"],
-  crm: ["business", "enterprise"],
-  projects: ["business", "enterprise"],
+  crm: ["pro", "business", "enterprise"],
+  projects: ["pro", "business", "enterprise"],
 };
 
 export function canAccessFeature(plan: UserPlan, feature: string): boolean {
