@@ -179,11 +179,36 @@ export const VideoScriptWorkflow: React.FC = () => {
               clearInterval(timer);
               delete pollTimersRef.current[segId];
               if (statusData.videoUri) {
-                // 直接使用 Replicate 回傳的影片 URL
-                updateSegment(segId, {
-                  status: "done",
-                  videoUrl: statusData.videoUri,
-                });
+                // 下載影片並儲存到媒體庫（Replicate URL 會過期）
+                try {
+                  const dlRes = await fetch(
+                    `/api/ai/video/download?videoUri=${encodeURIComponent(statusData.videoUri)}`
+                  );
+                  if (dlRes.ok) {
+                    const videoBlob = await dlRes.blob();
+                    const videoFile = new File([videoBlob], `script-seg${segId}-${Date.now()}.mp4`, { type: "video/mp4" });
+                    const formData = new FormData();
+                    formData.append("userId", userScopeId);
+                    formData.append("kind", "video");
+                    formData.append("file", videoFile);
+                    formData.append("meta", JSON.stringify({
+                      origin: "video-studio",
+                      mode: "text-to-video",
+                      style: "行銷影片腳本",
+                      prompt: seg.prompt,
+                      summary: seg.description || seg.title,
+                    }));
+                    const saveRes = await fetch("/api/social/assets", { method: "POST", body: formData });
+                    const saveData = await saveRes.json();
+                    const permanentUrl = saveData?.item?.url || statusData.videoUri;
+                    updateSegment(segId, { status: "done", videoUrl: permanentUrl });
+                  } else {
+                    // 下載失敗，fallback 用暫存 URL
+                    updateSegment(segId, { status: "done", videoUrl: statusData.videoUri });
+                  }
+                } catch {
+                  updateSegment(segId, { status: "done", videoUrl: statusData.videoUri });
+                }
               } else if (statusData.error) {
                 updateSegment(segId, { status: "error", error: statusData.error });
               } else {
