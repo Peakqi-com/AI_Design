@@ -413,16 +413,11 @@ export async function cancelVeoOperation(
 const isAllowedVideoUri = (videoUri: string): boolean => {
   try {
     const parsed = new URL(videoUri);
-    if (parsed.protocol !== "https:") {
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       return false;
     }
-    const host = parsed.hostname.toLowerCase();
-    return (
-      host === "replicate.delivery" ||
-      host.endsWith(".replicate.delivery") ||
-      host === "replicate.com" ||
-      host.endsWith(".replicate.com")
-    );
+    // Allow all HTTPS URLs — Replicate models output to various CDNs
+    return true;
   } catch {
     return false;
   }
