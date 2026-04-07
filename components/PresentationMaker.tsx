@@ -78,9 +78,17 @@ type StylePreset = (typeof STYLE_PRESETS)[number];
 const LAYOUT_OPTIONS: { value: SlideLayout; label: string }[] = [
   { value: "full-image", label: "全圖頁" },
   { value: "left-image", label: "左圖右文" },
-  { value: "right-image", label: "上文下圖" },
+  { value: "right-image", label: "右圖左文" },
   { value: "text-only", label: "純文字" },
 ];
+
+// 預設交替版型：封面(text) → 全圖 → 左圖右文 → 右圖左文 → 左圖右文 → ... → 全圖 → 結尾(text)
+const getDefaultLayout = (index: number, total: number): SlideLayout => {
+  if (index === 0 || index === total - 1) return "text-only";
+  if (index === 1 || index === total - 2) return "full-image";
+  const cycle = ["left-image", "right-image"] as const;
+  return cycle[(index - 2) % 2];
+};
 
 /* ================================================================
    Steps metadata
@@ -218,30 +226,32 @@ export const PresentationMaker: React.FC = () => {
 
       if (parsed.length > 0) {
         setSlides(
-          parsed.map((s) => ({
+          parsed.map((s, i) => ({
             id: uid(),
             title: s.title || "",
             body: s.body || "",
             imageUrl: null,
-            layout: "right-image" as SlideLayout,
+            layout: getDefaultLayout(i, parsed.length),
           })),
         );
       } else {
         // fallback
-        setSlides([
-          { id: uid(), title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}\n日期：${new Date().toLocaleDateString("zh-TW")}`, imageUrl: null, layout: "text-only" },
-          { id: uid(), title: "設計概述", body: "整體設計理念與風格定位", imageUrl: null, layout: "right-image" },
-          { id: uid(), title: "空間規劃", body: "各空間的機能配置與動線安排", imageUrl: null, layout: "right-image" },
-          { id: uid(), title: "材質與配色", body: "主要材質選擇與色彩搭配方案", imageUrl: null, layout: "right-image" },
-          { id: uid(), title: "感謝觀看", body: "期待與您合作\n如有任何問題歡迎聯繫", imageUrl: null, layout: "text-only" },
-        ]);
+        const fallback = [
+          { title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}\n日期：${new Date().toLocaleDateString("zh-TW")}` },
+          { title: "設計概述", body: "整體設計理念與風格定位" },
+          { title: "空間規劃", body: "各空間的機能配置與動線安排" },
+          { title: "材質與配色", body: "主要材質選擇與色彩搭配方案" },
+          { title: "感謝觀看", body: "期待與您合作\n如有任何問題歡迎聯繫" },
+        ];
+        setSlides(fallback.map((s, i) => ({ id: uid(), ...s, imageUrl: null, layout: getDefaultLayout(i, fallback.length) })));
       }
     } catch {
-      setSlides([
-        { id: uid(), title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}`, imageUrl: null, layout: "text-only" },
-        { id: uid(), title: "設計概述", body: "整體設計理念與風格定位", imageUrl: null, layout: "right-image" },
-        { id: uid(), title: "感謝觀看", body: "期待與您合作", imageUrl: null, layout: "text-only" },
-      ]);
+      const fb = [
+        { title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}` },
+        { title: "設計概述", body: "整體設計理念與風格定位" },
+        { title: "感謝觀看", body: "期待與您合作" },
+      ];
+      setSlides(fb.map((s, i) => ({ id: uid(), ...s, imageUrl: null, layout: getDefaultLayout(i, fb.length) })));
     } finally {
       setIsGeneratingOutline(false);
     }
@@ -262,7 +272,7 @@ export const PresentationMaker: React.FC = () => {
   const addSlide = () => {
     setSlides((prev) => [
       ...prev,
-      { id: uid(), title: "新投影片", body: "", imageUrl: null, layout: "right-image" },
+      { id: uid(), title: "新投影片", body: "", imageUrl: null, layout: "left-image" },
     ]);
   };
 
@@ -351,7 +361,7 @@ export const PresentationMaker: React.FC = () => {
           s.addImage({
             data: `image/jpeg;base64,${base64}`,
             x: 0, y: 0, w: 13.33, h: 7.5,
-            sizing: { type: "contain", w: 13.33, h: 7.5 },
+            sizing: { type: "cover", w: 13.33, h: 7.5 },
           });
           // dark gradient overlay at bottom
           s.addShape(pptx.ShapeType.rect, {
@@ -883,25 +893,27 @@ export const PresentationMaker: React.FC = () => {
           </div>
 
           {/* Mini content preview — matches layout selection */}
-          {slides.slice(1, -1).map((slide) => (
+          {slides.slice(1, -1).map((slide) => {
+            const imgOrPlaceholder = slide.imageUrl
+              ? <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
+              : <div className="w-full h-full flex items-center justify-center bg-gray-200 text-gray-400 text-[10px]">圖片</div>;
+            return (
             <div
               key={slide.id}
               className="rounded-xl overflow-hidden shadow-sm border border-gray-100 aspect-video flex relative"
               style={{ backgroundColor: `#${selectedStyle.contentBg}`, fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}
             >
-              {slide.layout === "full-image" && slide.imageUrl ? (
+              {slide.layout === "full-image" ? (
                 <>
-                  <img src={slide.imageUrl} alt="" className="w-full h-full object-contain bg-black" />
+                  <div className="w-full h-full">{slide.imageUrl ? <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gray-200 flex items-center justify-center text-gray-400">全圖</div>}</div>
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
                     <p className="text-sm font-bold text-white">{slide.title}</p>
                     <p className="text-[10px] text-gray-200 line-clamp-1">{slide.body}</p>
                   </div>
                 </>
-              ) : slide.layout === "left-image" && slide.imageUrl ? (
+              ) : slide.layout === "left-image" ? (
                 <>
-                  <div className="w-1/2 shrink-0 bg-gray-100">
-                    <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
-                  </div>
+                  <div className="w-1/2 shrink-0">{imgOrPlaceholder}</div>
                   <div className="w-0.5 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
                   <div className="flex-1 p-3 flex flex-col justify-center">
                     <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
@@ -909,7 +921,7 @@ export const PresentationMaker: React.FC = () => {
                     <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                   </div>
                 </>
-              ) : slide.layout === "right-image" && slide.imageUrl ? (
+              ) : slide.layout === "right-image" ? (
                 <>
                   <div className="w-1 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
                   <div className="flex-1 p-3 flex flex-col justify-center">
@@ -917,9 +929,7 @@ export const PresentationMaker: React.FC = () => {
                     <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
                     <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                   </div>
-                  <div className="w-2/5 shrink-0 bg-gray-100">
-                    <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
-                  </div>
+                  <div className="w-2/5 shrink-0">{imgOrPlaceholder}</div>
                 </>
               ) : (
                 <>
@@ -932,7 +942,8 @@ export const PresentationMaker: React.FC = () => {
                 </>
               )}
             </div>
-          ))}
+            );
+          })}
 
           {/* Mini ending preview */}
           <div
@@ -1049,18 +1060,18 @@ export const PresentationMaker: React.FC = () => {
                     </p>
                     <div className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                   </div>
-                ) : slide.layout === "full-image" && slide.imageUrl ? (
+                ) : slide.layout === "full-image" ? (
                   <div className="flex-1 relative" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
-                    <img src={slide.imageUrl} alt="" className="w-full h-full object-contain bg-black" />
+                    {slide.imageUrl ? <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gray-300 flex items-center justify-center text-gray-500">全圖</div>}
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/40 to-transparent p-4 md:p-6">
                       <p className="text-base md:text-xl font-bold text-white">{slide.title}</p>
                       <p className="text-xs md:text-sm text-gray-200 mt-1 line-clamp-2">{slide.body}</p>
                     </div>
                   </div>
-                ) : slide.layout === "left-image" && slide.imageUrl ? (
+                ) : slide.layout === "left-image" ? (
                   <div className="flex-1 flex" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
                     <div className="w-1/2 shrink-0 bg-gray-100">
-                      <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
+                      {slide.imageUrl ? <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" /> : <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">圖片</div>}
                     </div>
                     <div className="w-1 shrink-0" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                     <div className="flex-1 p-4 md:p-6 flex flex-col justify-center">
@@ -1069,7 +1080,7 @@ export const PresentationMaker: React.FC = () => {
                       <p className="text-xs md:text-sm leading-relaxed" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                     </div>
                   </div>
-                ) : slide.layout === "right-image" && slide.imageUrl ? (
+                ) : slide.layout === "right-image" ? (
                   <div className="flex-1 flex" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
                     <div className="w-1.5 shrink-0" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                     <div className="flex-1 p-4 md:p-6 flex flex-col justify-center">
@@ -1078,7 +1089,7 @@ export const PresentationMaker: React.FC = () => {
                       <p className="text-xs md:text-sm leading-relaxed" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                     </div>
                     <div className="w-2/5 shrink-0 bg-gray-100">
-                      <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
+                      {slide.imageUrl ? <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" /> : <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">圖片</div>}
                     </div>
                   </div>
                 ) : (
