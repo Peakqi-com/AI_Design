@@ -351,7 +351,7 @@ export const PresentationMaker: React.FC = () => {
           s.addImage({
             data: `image/jpeg;base64,${base64}`,
             x: 0, y: 0, w: 13.33, h: 7.5,
-            sizing: { type: "cover", w: 13.33, h: 7.5 },
+            sizing: { type: "contain", w: 13.33, h: 7.5 },
           });
           // dark gradient overlay at bottom
           s.addShape(pptx.ShapeType.rect, {
@@ -363,7 +363,7 @@ export const PresentationMaker: React.FC = () => {
             color: "FFFFFF", fontFace: font,
           });
           s.addText(slide.body, {
-            x: 0.8, y: 6.1, w: 11.73, h: 1.0, fontSize: 13,
+            x: 0.8, y: 6.1, w: 11.73, h: 1.0, fontSize: 16,
             color: "DDDDDD", fontFace: font, lineSpacingMultiple: 1.4,
           });
         } else if (layout === "left-image" && base64) {
@@ -372,7 +372,7 @@ export const PresentationMaker: React.FC = () => {
           s.addImage({
             data: `image/jpeg;base64,${base64}`,
             x: 0, y: 0, w: 6.5, h: 7.5,
-            sizing: { type: "cover", w: 6.5, h: 7.5 },
+            sizing: { type: "contain", w: 6.5, h: 7.5 },
           });
           s.addShape(pptx.ShapeType.rect, { x: 6.5, y: 0, w: 0.06, h: 7.5, fill: { color: cs.accent } });
           s.addText(slide.title, {
@@ -381,7 +381,7 @@ export const PresentationMaker: React.FC = () => {
           });
           s.addShape(pptx.ShapeType.rect, { x: 7.0, y: 2.1, w: 1.5, h: 0.04, fill: { color: cs.accent } });
           s.addText(slide.body, {
-            x: 7.0, y: 2.5, w: 5.8, h: 4.0, fontSize: 13,
+            x: 7.0, y: 2.5, w: 5.8, h: 4.0, fontSize: 16,
             color: cs.contentSub, fontFace: font, valign: "top", lineSpacingMultiple: 1.5,
           });
         } else if (layout === "right-image" && base64) {
@@ -394,14 +394,14 @@ export const PresentationMaker: React.FC = () => {
           });
           s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.5, w: 1.5, h: 0.04, fill: { color: cs.accent } });
           s.addText(slide.body, {
-            x: 0.6, y: 1.8, w: 4.6, h: 4, fontSize: 13,
+            x: 0.6, y: 1.8, w: 4.6, h: 4, fontSize: 16,
             color: cs.contentSub, fontFace: font, valign: "top", lineSpacingMultiple: 1.5,
           });
           s.addShape(pptx.ShapeType.rect, { x: 5.65, y: 0.55, w: 7.2, h: 5.5, fill: { color: "E0E0E0" }, rectRadius: 0.08 });
           s.addImage({
             data: `image/jpeg;base64,${base64}`,
             x: 5.6, y: 0.5, w: 7.2, h: 5.5,
-            sizing: { type: "cover", w: 7.2, h: 5.5 },
+            sizing: { type: "contain", w: 7.2, h: 5.5 },
             rounding: true,
           });
         } else {
@@ -882,36 +882,54 @@ export const PresentationMaker: React.FC = () => {
             />
           </div>
 
-          {/* Mini content preview */}
-          {slides.slice(1, -1).map((slide, i) => (
+          {/* Mini content preview — matches layout selection */}
+          {slides.slice(1, -1).map((slide) => (
             <div
               key={slide.id}
-              className="rounded-xl overflow-hidden shadow-sm border border-gray-100 aspect-video flex"
-              style={{ backgroundColor: `#${selectedStyle.contentBg}` }}
+              className="rounded-xl overflow-hidden shadow-sm border border-gray-100 aspect-video flex relative"
+              style={{ backgroundColor: `#${selectedStyle.contentBg}`, fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}
             >
-              <div className="w-1" style={{ backgroundColor: `#${previewAccent}` }} />
-              <div className="flex-1 p-3 flex flex-col justify-center">
-                <p
-                  className="text-xs font-bold truncate"
-                  style={{ color: `#${selectedStyle.contentText}` }}
-                >
-                  {slide.title}
-                </p>
-                <div
-                  className="w-6 h-0.5 my-1 rounded"
-                  style={{ backgroundColor: `#${previewAccent}` }}
-                />
-                <p
-                  className="text-[9px] line-clamp-2"
-                  style={{ color: `#${selectedStyle.contentSub}` }}
-                >
-                  {slide.body}
-                </p>
-              </div>
-              {slide.imageUrl && (
-                <div className="w-2/5 shrink-0">
-                  <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
-                </div>
+              {slide.layout === "full-image" && slide.imageUrl ? (
+                <>
+                  <img src={slide.imageUrl} alt="" className="w-full h-full object-contain bg-black" />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
+                    <p className="text-sm font-bold text-white">{slide.title}</p>
+                    <p className="text-[10px] text-gray-200 line-clamp-1">{slide.body}</p>
+                  </div>
+                </>
+              ) : slide.layout === "left-image" && slide.imageUrl ? (
+                <>
+                  <div className="w-1/2 shrink-0 bg-gray-100">
+                    <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
+                  </div>
+                  <div className="w-0.5 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
+                  <div className="flex-1 p-3 flex flex-col justify-center">
+                    <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                    <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+                    <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  </div>
+                </>
+              ) : slide.layout === "right-image" && slide.imageUrl ? (
+                <>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
+                  <div className="flex-1 p-3 flex flex-col justify-center">
+                    <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                    <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+                    <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  </div>
+                  <div className="w-2/5 shrink-0 bg-gray-100">
+                    <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
+                  <div className="flex-1 flex flex-col items-center justify-center px-4">
+                    <p className="text-xs font-bold text-center" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                    <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+                    <p className="text-[9px] text-center line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  </div>
+                </>
               )}
             </div>
           ))}
@@ -1014,75 +1032,64 @@ export const PresentationMaker: React.FC = () => {
                 }}
               >
                 {isCoverOrEnd ? (
-                  /* cover / ending */
-                  <div className="flex-1 flex flex-col items-center justify-center px-6">
-                    <div
-                      className="absolute top-0 left-0 right-0 h-1"
-                      style={{ backgroundColor: `#${selectedStyle.accent}` }}
-                    />
+                  <div className="flex-1 flex flex-col items-center justify-center px-8" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
+                    <div className="absolute top-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                     <p
-                      className={`font-bold text-center ${isFirst ? "text-lg" : "text-base"}`}
+                      className={`font-bold text-center leading-tight ${isFirst ? "text-2xl md:text-3xl" : "text-xl md:text-2xl"}`}
                       style={{ color: `#${selectedStyle.text}` }}
                     >
                       {slide.title}
                     </p>
-                    <div
-                      className="w-10 h-0.5 my-2 rounded"
-                      style={{ backgroundColor: `#${selectedStyle.accent}` }}
-                    />
+                    <div className="w-16 h-1 my-3 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                     <p
-                      className="text-xs text-center whitespace-pre-wrap"
+                      className="text-sm md:text-base text-center whitespace-pre-wrap leading-relaxed max-w-lg"
                       style={{ color: `#${selectedStyle.subtext}` }}
                     >
                       {slide.body}
                     </p>
-                    <div
-                      className="absolute bottom-0 left-0 right-0 h-1"
-                      style={{ backgroundColor: `#${selectedStyle.accent}` }}
-                    />
+                    <div className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                   </div>
                 ) : slide.layout === "full-image" && slide.imageUrl ? (
-                  <div className="flex-1 relative">
-                    <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
-                      <p className="text-xs font-bold text-white">{slide.title}</p>
-                      <p className="text-[9px] text-gray-200 mt-0.5 line-clamp-1">{slide.body}</p>
+                  <div className="flex-1 relative" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
+                    <img src={slide.imageUrl} alt="" className="w-full h-full object-contain bg-black" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/40 to-transparent p-4 md:p-6">
+                      <p className="text-base md:text-xl font-bold text-white">{slide.title}</p>
+                      <p className="text-xs md:text-sm text-gray-200 mt-1 line-clamp-2">{slide.body}</p>
                     </div>
                   </div>
                 ) : slide.layout === "left-image" && slide.imageUrl ? (
-                  <>
-                    <div className="w-1/2 shrink-0">
-                      <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
+                  <div className="flex-1 flex" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
+                    <div className="w-1/2 shrink-0 bg-gray-100">
+                      <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
                     </div>
-                    <div className="w-0.5 shrink-0" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
-                    <div className="flex-1 p-3 flex flex-col justify-center">
-                      <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
-                      <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
-                      <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                    <div className="w-1 shrink-0" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
+                    <div className="flex-1 p-4 md:p-6 flex flex-col justify-center">
+                      <p className="text-base md:text-xl font-bold leading-tight" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                      <div className="w-10 h-1 my-2 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
+                      <p className="text-xs md:text-sm leading-relaxed" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                     </div>
-                  </>
+                  </div>
                 ) : slide.layout === "right-image" && slide.imageUrl ? (
-                  <>
-                    <div className="w-1" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
-                    <div className="flex-1 p-3 flex flex-col justify-center">
-                      <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
-                      <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
-                      <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  <div className="flex-1 flex" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
+                    <div className="w-1.5 shrink-0" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
+                    <div className="flex-1 p-4 md:p-6 flex flex-col justify-center">
+                      <p className="text-base md:text-xl font-bold leading-tight" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                      <div className="w-10 h-1 my-2 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
+                      <p className="text-xs md:text-sm leading-relaxed" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                     </div>
-                    <div className="w-2/5 shrink-0">
-                      <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
+                    <div className="w-2/5 shrink-0 bg-gray-100">
+                      <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
                     </div>
-                  </>
+                  </div>
                 ) : (
-                  /* text-only */
-                  <>
-                    <div className="w-1" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
-                    <div className="flex-1 flex flex-col items-center justify-center px-6">
-                      <p className="text-xs font-bold text-center" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
-                      <div className="w-6 h-0.5 my-1.5 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
-                      <p className="text-[9px] text-center line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  <div className="flex-1 flex" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
+                    <div className="w-1.5 shrink-0" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
+                    <div className="flex-1 flex flex-col items-center justify-center px-8">
+                      <p className="text-base md:text-xl font-bold text-center leading-tight" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                      <div className="w-10 h-1 my-3 rounded" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
+                      <p className="text-xs md:text-sm text-center leading-relaxed max-w-md" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
 
