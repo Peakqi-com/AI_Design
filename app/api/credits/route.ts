@@ -56,18 +56,21 @@ export async function GET(request: Request) {
       avatarUrl: profileAvatar,
     });
 
-    // Auto-recalculate storage if 0 (for users created before quota feature)
-    if (!record.storageUsedBytes) {
-      try {
-        const { listSocialAssets } = await import("@/lib/social/media-library");
-        const assets = await listSocialAssets({ userId, limit: 500 });
-        const totalSize = assets.reduce((sum, a) => sum + (a.size || 0), 0);
-        if (totalSize > 0) {
-          record.storageUsedBytes = totalSize;
-          await saveUserCredits(record);
-        }
-      } catch { /* ignore */ }
-    }
+    // Recalculate actual storage from asset store
+    try {
+      const { resolveServerUserScopeCandidates } = await import("@/lib/server/user-scope");
+      const { listSocialAssets } = await import("@/lib/social/media-library");
+      const scopes = await resolveServerUserScopeCandidates(userId);
+      let totalSize = 0;
+      for (const scope of scopes) {
+        const assets = await listSocialAssets({ userId: scope, limit: 500 });
+        totalSize += assets.reduce((sum, a) => sum + (a.size || 0), 0);
+      }
+      if (totalSize !== (record.storageUsedBytes || 0)) {
+        record.storageUsedBytes = totalSize;
+        await saveUserCredits(record);
+      }
+    } catch { /* ignore */ }
 
     return NextResponse.json({
       ...record,
