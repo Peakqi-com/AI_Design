@@ -825,28 +825,35 @@ export const PresentationMaker: React.FC = () => {
           <Layers className="w-3.5 h-3.5" /> 每頁版型
         </label>
         <div className="space-y-2">
-          {slides.map((slide, i) => (
-            <div
-              key={slide.id}
-              className="flex items-center gap-2 bg-gray-50 rounded-lg px-2.5 py-2 border border-gray-200"
-            >
-              <span className="text-[10px] font-bold text-gray-400 w-4 text-center">{i + 1}</span>
-              <p className="text-xs text-gray-700 truncate flex-1">{slide.title}</p>
-              <select
-                value={slide.layout}
-                onChange={(e) =>
-                  updateSlide(slide.id, { layout: e.target.value as SlideLayout })
-                }
-                className="text-[10px] bg-white border border-gray-200 rounded px-1.5 py-1 text-gray-600"
+          {slides.map((slide, i) => {
+            const isFixed = i === 0 || i === slides.length - 1;
+            return (
+              <div
+                key={slide.id}
+                className="flex items-center gap-2 bg-gray-50 rounded-lg px-2.5 py-2 border border-gray-200"
               >
-                {LAYOUT_OPTIONS.map((lo) => (
-                  <option key={lo.value} value={lo.value}>
-                    {lo.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+                <span className="text-[10px] font-bold text-gray-400 w-4 text-center">{i + 1}</span>
+                <p className="text-xs text-gray-700 truncate flex-1">{slide.title}</p>
+                {isFixed ? (
+                  <span className="text-[10px] text-gray-400 px-1.5">封面/結尾</span>
+                ) : (
+                  <select
+                    value={slide.layout}
+                    onChange={(e) =>
+                      updateSlide(slide.id, { layout: e.target.value as SlideLayout })
+                    }
+                    className="text-[10px] bg-white border border-gray-200 rounded px-1.5 py-1 text-gray-600 cursor-pointer"
+                  >
+                    {LAYOUT_OPTIONS.map((lo) => (
+                      <option key={lo.value} value={lo.value}>
+                        {lo.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -865,83 +872,68 @@ export const PresentationMaker: React.FC = () => {
           <p className="text-[11px] text-gray-400 mt-0.5">{selectedStyle.label}</p>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {/* Mini cover preview */}
+          {/* Cover preview */}
           <div
             className="rounded-xl overflow-hidden shadow-md aspect-video flex flex-col items-center justify-center relative"
-            style={{ backgroundColor: `#${previewBg}` }}
+            style={{ backgroundColor: `#${previewBg}`, fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}
           >
-            <div
-              className="absolute top-0 left-0 right-0 h-1"
-              style={{ backgroundColor: `#${previewAccent}` }}
-            />
-            <p
-              className="text-lg font-bold"
-              style={{ color: `#${previewText}` }}
-            >
+            <div className="absolute top-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${previewAccent}` }} />
+            <p className="text-xl md:text-2xl font-bold" style={{ color: `#${previewText}` }}>
               {projectTitle || "專案名稱"}
             </p>
-            <div
-              className="w-12 h-0.5 my-2 rounded"
-              style={{ backgroundColor: `#${previewAccent}` }}
-            />
-            <p
-              className="text-xs"
-              style={{ color: `#${selectedStyle.subtext}` }}
-            >
+            <div className="w-16 h-1 my-3 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+            <p className="text-sm" style={{ color: `#${selectedStyle.subtext}` }}>
               {designerName || "設計師"}
             </p>
-            <div
-              className="absolute bottom-0 left-0 right-0 h-1"
-              style={{ backgroundColor: `#${previewAccent}` }}
-            />
+            <div className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${previewAccent}` }} />
           </div>
 
-          {/* Mini content preview — matches layout selection */}
+          {/* Content slide previews — matches layout + PPT proportions */}
           {slides.slice(1, -1).map((slide) => {
             const imgOrPlaceholder = slide.imageUrl
               ? <img src={slide.imageUrl} alt="" className="w-full h-full object-contain" />
-              : <div className="w-full h-full flex items-center justify-center bg-gray-200 text-gray-400 text-[10px]">圖片</div>;
+              : <div className="w-full h-full flex items-center justify-center bg-gray-200 text-gray-400 text-xs">圖片</div>;
             return (
             <div
               key={slide.id}
-              className="rounded-xl overflow-hidden shadow-sm border border-gray-100 aspect-video flex relative"
+              className="rounded-xl overflow-hidden shadow-md border border-gray-100 aspect-video flex relative"
               style={{ backgroundColor: `#${selectedStyle.contentBg}`, fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}
             >
               {slide.layout === "full-image" ? (
                 <>
                   <div className="w-full h-full">{slide.imageUrl ? <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gray-200 flex items-center justify-center text-gray-400">全圖</div>}</div>
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-                    <p className="text-sm font-bold text-white">{slide.title}</p>
-                    <p className="text-[10px] text-gray-200 line-clamp-1">{slide.body}</p>
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/40 to-transparent p-4 md:p-5">
+                    <p className="text-base md:text-lg font-bold text-white">{slide.title}</p>
+                    <p className="text-xs text-gray-200 mt-1 line-clamp-2">{slide.body}</p>
                   </div>
                 </>
               ) : slide.layout === "left-image" ? (
                 <>
                   <div className="w-1/2 shrink-0">{imgOrPlaceholder}</div>
-                  <div className="w-0.5 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
-                  <div className="flex-1 p-3 flex flex-col justify-center">
-                    <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
-                    <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
-                    <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
+                  <div className="flex-1 p-4 md:p-5 flex flex-col justify-center">
+                    <p className="text-sm md:text-base font-bold leading-snug" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                    <div className="w-10 h-0.5 my-2 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+                    <p className="text-xs leading-relaxed line-clamp-4" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                   </div>
                 </>
               ) : slide.layout === "right-image" ? (
                 <>
                   <div className="w-1 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
-                  <div className="flex-1 p-3 flex flex-col justify-center">
-                    <p className="text-xs font-bold" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
-                    <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
-                    <p className="text-[9px] line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  <div className="flex-1 p-4 md:p-5 flex flex-col justify-center">
+                    <p className="text-sm md:text-base font-bold leading-snug" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                    <div className="w-10 h-0.5 my-2 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+                    <p className="text-xs leading-relaxed line-clamp-4" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                   </div>
                   <div className="w-2/5 shrink-0">{imgOrPlaceholder}</div>
                 </>
               ) : (
                 <>
                   <div className="w-1 shrink-0" style={{ backgroundColor: `#${previewAccent}` }} />
-                  <div className="flex-1 flex flex-col items-center justify-center px-4">
-                    <p className="text-xs font-bold text-center" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
-                    <div className="w-6 h-0.5 my-1 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
-                    <p className="text-[9px] text-center line-clamp-3" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
+                  <div className="flex-1 flex flex-col items-center justify-center px-6">
+                    <p className="text-sm md:text-base font-bold text-center leading-snug" style={{ color: `#${selectedStyle.contentText}` }}>{slide.title}</p>
+                    <div className="w-10 h-0.5 my-2 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+                    <p className="text-xs text-center leading-relaxed line-clamp-4" style={{ color: `#${selectedStyle.contentSub}` }}>{slide.body}</p>
                   </div>
                 </>
               )}
@@ -949,25 +941,20 @@ export const PresentationMaker: React.FC = () => {
             );
           })}
 
-          {/* Mini ending preview */}
+          {/* Ending preview */}
           <div
             className="rounded-xl overflow-hidden shadow-md aspect-video flex flex-col items-center justify-center relative"
-            style={{ backgroundColor: `#${previewBg}` }}
+            style={{ backgroundColor: `#${previewBg}`, fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}
           >
-            <div
-              className="absolute top-0 left-0 right-0 h-1"
-              style={{ backgroundColor: `#${previewAccent}` }}
-            />
-            <p
-              className="text-sm font-bold"
-              style={{ color: `#${previewText}` }}
-            >
+            <div className="absolute top-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${previewAccent}` }} />
+            <p className="text-lg md:text-xl font-bold" style={{ color: `#${previewText}` }}>
               {slides[slides.length - 1]?.title || "感謝觀看"}
             </p>
-            <div
-              className="absolute bottom-0 left-0 right-0 h-1"
-              style={{ backgroundColor: `#${previewAccent}` }}
-            />
+            <div className="w-16 h-1 my-3 rounded" style={{ backgroundColor: `#${previewAccent}` }} />
+            <p className="text-xs md:text-sm text-center max-w-xs whitespace-pre-wrap" style={{ color: `#${selectedStyle.subtext}` }}>
+              {slides[slides.length - 1]?.body || "期待與您合作"}
+            </p>
+            <div className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${previewAccent}` }} />
           </div>
         </div>
       </div>
