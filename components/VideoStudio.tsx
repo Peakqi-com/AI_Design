@@ -1049,12 +1049,18 @@ export const VideoStudio: React.FC = () => {
     writeVideoHistoryCache(userScopeId, history);
   }, [history, userScopeId]);
 
+  // When server history loads and replaces a local blob URL, update resultVideoUrl to the server URL
   useEffect(() => {
-    if (!resultVideoUrl) {
+    if (!resultVideoUrl || !resultVideoUrl.startsWith("blob:")) {
       return;
     }
+    // If the blob URL is no longer in history, check if there's a recently added server URL to use instead
     if (!history.some((item) => item.videoUrl === resultVideoUrl)) {
-      setResultVideoUrl(null);
+      const latest = history[0];
+      if (latest?.videoUrl && !latest.videoUrl.startsWith("blob:")) {
+        setResultVideoUrl(latest.videoUrl);
+      }
+      // Don't clear resultVideoUrl — keep showing the blob until it's replaced
     }
   }, [history, resultVideoUrl]);
 
