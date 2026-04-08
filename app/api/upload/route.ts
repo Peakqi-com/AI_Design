@@ -4,11 +4,6 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * Client upload handler for Vercel Blob.
- * The browser uploads directly to Vercel Blob (bypasses 4.5MB function limit).
- * This route only handles the token exchange, not the actual file data.
- */
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as HandleUploadBody;
 
@@ -18,17 +13,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       request,
       onBeforeGenerateToken: async () => {
         return {
-          allowedContentTypes: [
-            "image/jpeg", "image/png", "image/webp", "image/gif",
-            "video/mp4", "video/webm", "video/quicktime",
-          ],
+          // Allow all content types — browser MIME detection is unreliable
           addRandomSuffix: true,
-          maximumSizeInBytes: 100 * 1024 * 1024, // 100MB max
+          maximumSizeInBytes: 100 * 1024 * 1024,
         };
       },
       onUploadCompleted: async () => {
-        // Upload completed — nothing to do here
-        // The client will register the blob URL in media library
+        // Client handles registration in media library
       },
     });
 

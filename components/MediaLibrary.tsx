@@ -114,21 +114,54 @@ export const MediaLibrary: React.FC = () => {
         const kind = file.type.startsWith("video/") ? "video" : "image";
 
         try {
-          // All files: direct upload to /api/social/assets
-          // Server-side saveSocialAsset handles Blob upload internally
-          const formData = new FormData();
-          formData.append("userId", userScopeId);
-          formData.append("kind", kind);
-          formData.append("file", file);
-          formData.append("meta", JSON.stringify({ origin: "manual-upload", summary: file.name }));
-          const res = await fetch("/api/social/assets", { method: "POST", body: formData });
-          if (!res.ok) {
-            const errBody = await res.text().catch(() => "");
-            let errMsg = `上傳 ${file.name} 失敗（${res.status}）`;
-            try { errMsg = (JSON.parse(errBody) as {error:string}).error || errMsg; } catch { /* use default */ }
-            throw new Error(errMsg);
+          const SMALL_LIMIT = 4 * 1024 * 1024; // 4MB — Vercel function body limit
+
+          if (file.size <= SMALL_LIMIT) {
+            // Small file: direct upload
+            const formData = new FormData();
+            formData.append("userId", userScopeId);
+            formData.append("kind", kind);
+            formData.append("file", file);
+            formData.append("meta", JSON.stringify({ origin: "manual-upload", summary: file.name }));
+            const res = await fetch("/api/social/assets", { method: "POST", body: formData });
+            if (!res.ok) {
+              const errBody = await res.text().catch(() => "");
+              let errMsg = `上傳 ${file.name} 失敗（${res.status}）`;
+              try { errMsg = (JSON.parse(errBody) as { error: string }).error || errMsg; } catch { /* */ }
+              throw new Error(errMsg);
+            }
+            successCount++;
+          } else {
+            // Large file (> 4MB): Blob client upload → register in media library
+            setUploadNotice({ type: "success", text: `正在上傳 ${file.name}（${(file.size / 1024 / 1024).toFixed(1)} MB）...` });
+
+            // Step 1: Upload to Vercel Blob
+            let blobUrl: string;
+            try {
+              const { upload: blobUpload } = await import("@vercel/blob/client");
+              const blob = await blobUpload(file.name, file, {
+                access: "public",
+                handleUploadUrl: "/api/upload",
+              });
+              blobUrl = blob.url;
+            } catch (blobErr) {
+              throw new Error(`Blob 上傳失敗：${blobErr instanceof Error ? blobErr.message : "未知錯誤"}`);
+            }
+
+            // Step 2: Register in media library (tiny request)
+            const placeholder = new File([new Uint8Array(1)], file.name, { type: file.type || "application/octet-stream" });
+            const fd = new FormData();
+            fd.append("userId", userScopeId);
+            fd.append("kind", kind);
+            fd.append("file", placeholder);
+            fd.append("meta", JSON.stringify({ origin: "manual-upload", summary: file.name, blobUrl }));
+            const metaRes = await fetch("/api/social/assets", { method: "POST", body: fd });
+            if (!metaRes.ok) {
+              const err = await metaRes.json().catch(() => ({}));
+              throw new Error((err as { error?: string }).error || `註冊 ${file.name} 失敗`);
+            }
+            successCount++;
           }
-          successCount++;
         } catch (fetchErr) {
           lastError = fetchErr instanceof Error ? fetchErr.message : `上傳 ${file.name} 失敗`;
         }
