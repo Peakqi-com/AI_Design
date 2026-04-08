@@ -87,6 +87,17 @@ export const MediaLibrary: React.FC = () => {
   const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+
+    // Check file sizes before upload
+    const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // Vercel free plan: 4.5MB body limit
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].size > MAX_FILE_SIZE) {
+        alert(`檔案 "${files[i].name}" 太大（${(files[i].size / 1024 / 1024).toFixed(1)} MB）。\n單檔上限 4.5 MB（Vercel 限制）。\n建議先壓縮後再上傳。`);
+        e.target.value = "";
+        return;
+      }
+    }
+
     setIsUploading(true);
     let successCount = 0;
     let lastError = "";
@@ -102,12 +113,22 @@ export const MediaLibrary: React.FC = () => {
           origin: "manual-upload",
           summary: file.name,
         }));
-        const res = await fetch("/api/social/assets", { method: "POST", body: formData });
-        if (res.ok) {
-          successCount++;
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          lastError = (errData as { error?: string }).error || `上傳 ${file.name} 失敗`;
+        try {
+          const res = await fetch("/api/social/assets", { method: "POST", body: formData });
+          if (res.ok) {
+            successCount++;
+          } else {
+            let errMsg = `上傳 ${file.name} 失敗（${res.status}）`;
+            try {
+              const errData = await res.json();
+              if ((errData as { error?: string }).error) errMsg = (errData as { error: string }).error;
+            } catch {
+              if (res.status === 413) errMsg = `${file.name} 太大，超過伺服器上傳限制`;
+            }
+            lastError = errMsg;
+          }
+        } catch (fetchErr) {
+          lastError = `上傳 ${file.name} 失敗：${fetchErr instanceof Error ? fetchErr.message : "網路錯誤"}`;
         }
       }
       if (successCount > 0) {
