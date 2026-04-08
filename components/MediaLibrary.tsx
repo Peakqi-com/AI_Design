@@ -88,6 +88,8 @@ export const MediaLibrary: React.FC = () => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setIsUploading(true);
+    let successCount = 0;
+    let lastError = "";
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -100,16 +102,32 @@ export const MediaLibrary: React.FC = () => {
           origin: "manual-upload",
           summary: file.name,
         }));
-        await fetch("/api/social/assets", { method: "POST", body: formData });
+        const res = await fetch("/api/social/assets", { method: "POST", body: formData });
+        if (res.ok) {
+          successCount++;
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          lastError = (errData as { error?: string }).error || `上傳 ${file.name} 失敗`;
+        }
       }
-      void loadAssets();
-    } catch {
-      alert("上傳失敗，請重試");
+      if (successCount > 0) {
+        // Reload assets list
+        try {
+          const res = await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&limit=200`);
+          const data = (await res.json()) as { items?: MediaAsset[] };
+          setAssets(data.items || []);
+        } catch { /* ignore reload error */ }
+      }
+      if (lastError) {
+        alert(lastError);
+      }
+    } catch (err) {
+      alert(`上傳失敗：${err instanceof Error ? err.message : "網路錯誤"}`);
     } finally {
       setIsUploading(false);
       e.target.value = "";
     }
-  }, [userScopeId, loadAssets]);
+  }, [userScopeId]);
 
   const handleDelete = useCallback(async (assetId: string) => {
     await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&assetId=${encodeURIComponent(assetId)}`, { method: "DELETE" });
