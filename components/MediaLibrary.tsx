@@ -89,10 +89,10 @@ export const MediaLibrary: React.FC = () => {
     if (!files || files.length === 0) return;
 
     // Check file sizes before upload
-    const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // Vercel free plan: 4.5MB body limit
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // Vercel Pro: 50MB body limit
     for (let i = 0; i < files.length; i++) {
       if (files[i].size > MAX_FILE_SIZE) {
-        alert(`檔案 "${files[i].name}" 太大（${(files[i].size / 1024 / 1024).toFixed(1)} MB）。\n單檔上限 4.5 MB（Vercel 限制）。\n建議先壓縮後再上傳。`);
+        alert(`檔案 "${files[i].name}" 太大（${(files[i].size / 1024 / 1024).toFixed(1)} MB）。\n單檔上限 50 MB。\n建議先壓縮後再上傳。`);
         e.target.value = "";
         return;
       }
