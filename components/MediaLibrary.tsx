@@ -135,14 +135,18 @@ export const MediaLibrary: React.FC = () => {
             // Large file (> 4MB): Blob client upload → register in media library
             setUploadNotice({ type: "success", text: `正在上傳 ${file.name}（${(file.size / 1024 / 1024).toFixed(1)} MB）...` });
 
-            // Step 1: Upload to Vercel Blob
+            // Step 1: Upload to Vercel Blob (with timeout)
             let blobUrl: string;
             try {
               const { upload: blobUpload } = await import("@vercel/blob/client");
-              const blob = await blobUpload(file.name, file, {
+              const uploadPromise = blobUpload(file.name, file, {
                 access: "public",
                 handleUploadUrl: "/api/upload",
               });
+              const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("上傳超時（超過 3 分鐘），請檢查網路後重試")), 180_000)
+              );
+              const blob = await Promise.race([uploadPromise, timeoutPromise]);
               blobUrl = blob.url;
             } catch (blobErr) {
               throw new Error(`Blob 上傳失敗：${blobErr instanceof Error ? blobErr.message : "未知錯誤"}`);

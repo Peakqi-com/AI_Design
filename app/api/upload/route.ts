@@ -7,19 +7,28 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as HandleUploadBody;
 
+  // Get the production URL for callback
+  const prodUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : undefined;
+
   try {
     const jsonResponse = await handleUpload({
       body,
       request,
       onBeforeGenerateToken: async () => {
         return {
-          // Allow all content types — browser MIME detection is unreliable
           addRandomSuffix: true,
           maximumSizeInBytes: 100 * 1024 * 1024,
+          // Explicitly set callback URL to avoid resolution issues
+          ...(prodUrl ? { callbackUrl: `${prodUrl}/api/upload` } : {}),
         };
       },
       onUploadCompleted: async () => {
-        // Client handles registration in media library
+        // Intentionally empty — client handles registration
+        // This callback MUST return 200 quickly or the upload hangs
       },
     });
 
