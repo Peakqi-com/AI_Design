@@ -352,6 +352,16 @@ async function saveStore(store: SocialAssetStore): Promise<void> {
 const makeAssetId = (): string => `asset_${crypto.randomUUID()}`;
 
 const removeAssetFileSafe = async (asset: SocialAssetRecord): Promise<void> => {
+  // Delete from Vercel Blob if blobUrl exists
+  if (asset.meta?.blobUrl) {
+    try {
+      const { del } = await import("@vercel/blob");
+      await del(asset.meta.blobUrl);
+    } catch {
+      // ignore blob cleanup failures
+    }
+  }
+
   if (asset.storage.kind === "redis_base64") {
     if (!redis) {
       return;
@@ -442,20 +452,40 @@ export async function saveSocialAsset(input: SaveSocialAssetInput): Promise<Soci
   const baseName = sanitizeName(ensureDateName(rawBaseName, dateTag));
   const displayName = `${baseName}${ext}`;
   const outputName = `${baseName}_${id}${ext}`;
-  const relativePath = path.join("social-assets", outputName);
-  let storage: SocialAssetStorage = { kind: "missing" };
 
-  if (canUseRedis()) {
-    try {
-      const redisKey = await persistRedisAssetData(id, input.buffer);
-      storage = { kind: "redis_base64", redisKey };
-    } catch (error) {
-      handleRedisFailure(error);
+  // Try Vercel Blob first (unified storage, no size limit)
+  let blobUrl: string | undefined;
+  try {
+    const { put } = await import("@vercel/blob");
+    const blobPath = `assets/${userId}/${outputName}`;
+    const blob = await put(blobPath, input.buffer, {
+      access: "public",
+      contentType: mimeType,
+      addRandomSuffix: false,
+    });
+    blobUrl = blob.url;
+  } catch {
+    // Vercel Blob not configured — fall back to Redis/file storage
+  }
+
+  let storage: SocialAssetStorage = { kind: "missing" };
+  if (!blobUrl) {
+    // Fallback: original Redis/file storage for when Blob is not available
+    const relativePath = path.join("social-assets", outputName);
+    if (canUseRedis()) {
+      try {
+        const redisKey = await persistRedisAssetData(id, input.buffer);
+        storage = { kind: "redis_base64", redisKey };
+      } catch (error) {
+        handleRedisFailure(error);
+        storage = await persistAssetDataToFileOrInline(relativePath, input.buffer);
+      }
+    } else {
       storage = await persistAssetDataToFileOrInline(relativePath, input.buffer);
     }
-  } else {
-    storage = await persistAssetDataToFileOrInline(relativePath, input.buffer);
   }
+
+  const meta = { ...(input.meta ?? {}), ...(blobUrl ? { blobUrl } : {}) };
 
   const record: SocialAssetRecord = {
     id,
@@ -465,8 +495,8 @@ export async function saveSocialAsset(input: SaveSocialAssetInput): Promise<Soci
     mimeType,
     size: input.buffer.length,
     createdAt,
-    meta: input.meta ?? {},
-    storage,
+    meta,
+    storage: blobUrl ? { kind: "missing" } : storage, // No binary in Redis when using Blob
   };
 
   const nextItems = [record, ...store.items].slice(0, MAX_ASSETS_TOTAL);

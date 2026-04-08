@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Download, Film, FolderOpen, Image as ImageIcon, RefreshCw, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { Download, Film, FolderOpen, Image as ImageIcon, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
 interface AssetMeta {
@@ -46,7 +46,8 @@ export const MediaLibrary: React.FC = () => {
   const [expandedPackageId, setExpandedPackageId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<MediaAsset | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const imageUploadRef = useRef<HTMLInputElement>(null);
+  const videoUploadRef = useRef<HTMLInputElement>(null);
   const [trashItems, setTrashItems] = useState<MediaAsset[]>([]);
   const [isTrashLoading, setIsTrashLoading] = useState(false);
 
@@ -263,17 +264,33 @@ export const MediaLibrary: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => uploadInputRef.current?.click()}
+            onClick={() => imageUploadRef.current?.click()}
             disabled={isUploading}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors disabled:opacity-50"
           >
-            {isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {isUploading ? "上傳中..." : "上傳檔案"}
+            {isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+            {isUploading ? "上傳中..." : "上傳圖片"}
+          </button>
+          <button
+            onClick={() => videoUploadRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-800 text-white text-sm font-medium hover:bg-gray-900 transition-colors disabled:opacity-50"
+          >
+            <Film className="w-4 h-4" />
+            上傳影片
           </button>
           <input
-            ref={uploadInputRef}
+            ref={imageUploadRef}
             type="file"
-            accept="image/*,video/*"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            className="hidden"
+            onChange={handleUpload}
+          />
+          <input
+            ref={videoUploadRef}
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime"
             multiple
             className="hidden"
             onChange={handleUpload}
