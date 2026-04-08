@@ -46,6 +46,7 @@ export const MediaLibrary: React.FC = () => {
   const [expandedPackageId, setExpandedPackageId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<MediaAsset | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const videoUploadRef = useRef<HTMLInputElement>(null);
   const [trashItems, setTrashItems] = useState<MediaAsset[]>([]);
@@ -150,16 +151,20 @@ export const MediaLibrary: React.FC = () => {
         setAssets(items);
       } catch { /* ignore */ }
 
-      // Show result
+      // Show result as inline notice (not alert — can be blocked by browsers)
       if (successCount > 0 && !lastError) {
-        alert(`上傳成功！已新增 ${successCount} 個檔案`);
+        setUploadNotice({ type: "success", text: `上傳成功！已新增 ${successCount} 個檔案` });
       } else if (successCount > 0 && lastError) {
-        alert(`部分上傳成功（${successCount} 個），但有錯誤：${lastError}`);
+        setUploadNotice({ type: "error", text: `${successCount} 個成功，但有錯誤：${lastError}` });
       } else if (lastError) {
-        alert(`上傳失敗：${lastError}`);
+        setUploadNotice({ type: "error", text: `上傳失敗：${lastError}` });
+      } else {
+        setUploadNotice({ type: "error", text: "上傳未完成，請重試" });
       }
+      setTimeout(() => setUploadNotice(null), 6000);
     } catch (err) {
-      alert(`上傳失敗：${err instanceof Error ? err.message : "網路錯誤"}`);
+      setUploadNotice({ type: "error", text: `上傳失敗：${err instanceof Error ? err.message : "網路錯誤"}` });
+      setTimeout(() => setUploadNotice(null), 6000);
     } finally {
       setIsUploading(false);
       e.target.value = "";
@@ -239,6 +244,17 @@ export const MediaLibrary: React.FC = () => {
 
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col gap-4">
+      {/* 上傳通知 */}
+      {uploadNotice && (
+        <div className={`rounded-lg px-4 py-3 text-sm font-medium ${
+          uploadNotice.type === "success"
+            ? "bg-green-50 border border-green-200 text-green-800"
+            : "bg-red-50 border border-red-200 text-red-800"
+        }`}>
+          {uploadNotice.text}
+        </div>
+      )}
+
       {/* 頂部標題列 */}
       <div className="flex items-center justify-between">
         <div>
