@@ -51,6 +51,7 @@ export interface SocialAssetMeta {
   packageId?: string;
   packageLabel?: string;
   slotLabel?: string;
+  blobUrl?: string;
 }
 
 interface SocialAssetRecord {
@@ -226,7 +227,8 @@ const toClientItem = (record: SocialAssetRecord): SocialAssetItem => ({
   size: record.size,
   createdAt: record.createdAt,
   deletedAt: record.deletedAt,
-  url: `/api/social/assets/${record.id}/file?userId=${encodeURIComponent(record.userId)}`,
+  // Use blobUrl if available (large files uploaded via Vercel Blob)
+  url: record.meta?.blobUrl || `/api/social/assets/${record.id}/file?userId=${encodeURIComponent(record.userId)}`,
   meta: record.meta || {},
 });
 
