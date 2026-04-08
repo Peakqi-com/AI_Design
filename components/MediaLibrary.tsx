@@ -164,16 +164,21 @@ export const MediaLibrary: React.FC = () => {
           lastError = fetchErr instanceof Error ? fetchErr.message : `上傳 ${file.name} 失敗`;
         }
       }
-      if (successCount > 0) {
-        // Reload assets list
-        try {
-          const res = await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&limit=200`);
-          const data = (await res.json()) as { items?: MediaAsset[] };
-          setAssets(data.items || []);
-        } catch { /* ignore reload error */ }
-      }
-      if (lastError) {
-        alert(lastError);
+      // Reload assets
+      try {
+        const res = await fetch(`/api/social/assets?userId=${encodeURIComponent(userScopeId)}&limit=200`);
+        const data = (await res.json()) as { items?: MediaAsset[] };
+        const items = (data.items || []).map((a) => ({ ...a, url: a.meta?.blobUrl || a.url }));
+        setAssets(items);
+      } catch { /* ignore */ }
+
+      // Show result
+      if (successCount > 0 && !lastError) {
+        alert(`上傳成功！已新增 ${successCount} 個檔案`);
+      } else if (successCount > 0 && lastError) {
+        alert(`部分上傳成功（${successCount} 個），但有錯誤：${lastError}`);
+      } else if (lastError) {
+        alert(`上傳失敗：${lastError}`);
       }
     } catch (err) {
       alert(`上傳失敗：${err instanceof Error ? err.message : "網路錯誤"}`);
