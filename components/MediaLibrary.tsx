@@ -114,43 +114,21 @@ export const MediaLibrary: React.FC = () => {
         const kind = file.type.startsWith("video/") ? "video" : "image";
 
         try {
-          const BLOB_THRESHOLD = 3.5 * 1024 * 1024; // 3.5MB
-
-          if (file.size <= BLOB_THRESHOLD) {
-            // Small file: direct upload (faster, no Blob overhead)
-            const formData = new FormData();
-            formData.append("userId", userScopeId);
-            formData.append("kind", kind);
-            formData.append("file", file);
-            formData.append("meta", JSON.stringify({ origin: "manual-upload", summary: file.name }));
-            const res = await fetch("/api/social/assets", { method: "POST", body: formData });
-            if (!res.ok) {
-              const errBody = await res.text().catch(() => "");
-              throw new Error(errBody.includes("error") ? (JSON.parse(errBody) as {error:string}).error : `上傳失敗（${res.status}）`);
-            }
-            successCount++;
-          } else {
-            // Large file: Vercel Blob client upload
-            const { upload: blobUpload } = await import("@vercel/blob/client");
-            const blob = await blobUpload(file.name, file, {
-              access: "public",
-              handleUploadUrl: "/api/upload",
-            });
-
-            // Register metadata with blobUrl
-            const placeholder = new File([new Uint8Array(1)], file.name, { type: file.type });
-            const fd = new FormData();
-            fd.append("userId", userScopeId);
-            fd.append("kind", kind);
-            fd.append("file", placeholder);
-            fd.append("meta", JSON.stringify({ origin: "manual-upload", summary: file.name, blobUrl: blob.url }));
-            const metaRes = await fetch("/api/social/assets", { method: "POST", body: fd });
-            if (!metaRes.ok) {
-              const err = await metaRes.json().catch(() => ({}));
-              throw new Error((err as { error?: string }).error || "儲存失敗");
-            }
-            successCount++;
+          // All files: direct upload to /api/social/assets
+          // Server-side saveSocialAsset handles Blob upload internally
+          const formData = new FormData();
+          formData.append("userId", userScopeId);
+          formData.append("kind", kind);
+          formData.append("file", file);
+          formData.append("meta", JSON.stringify({ origin: "manual-upload", summary: file.name }));
+          const res = await fetch("/api/social/assets", { method: "POST", body: formData });
+          if (!res.ok) {
+            const errBody = await res.text().catch(() => "");
+            let errMsg = `上傳 ${file.name} 失敗（${res.status}）`;
+            try { errMsg = (JSON.parse(errBody) as {error:string}).error || errMsg; } catch { /* use default */ }
+            throw new Error(errMsg);
           }
+          successCount++;
         } catch (fetchErr) {
           lastError = fetchErr instanceof Error ? fetchErr.message : `上傳 ${file.name} 失敗`;
         }
