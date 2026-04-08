@@ -1,34 +1,42 @@
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
-import { put } from "@vercel/blob";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Client upload to Vercel Blob — bypasses the 4.5MB serverless function body limit.
- * POST /api/upload?filename=xxx.mp4
- * Body: raw file binary (not FormData)
+ * Client upload handler for Vercel Blob.
+ * The browser uploads directly to Vercel Blob (bypasses 4.5MB function limit).
+ * This route only handles the token exchange, not the actual file data.
  */
-export async function POST(request: Request) {
-  const url = new URL(request.url);
-  const filename = url.searchParams.get("filename") || `upload-${Date.now()}`;
-
-  if (!request.body) {
-    return NextResponse.json({ error: "No file body." }, { status: 400 });
-  }
+export async function POST(request: Request): Promise<NextResponse> {
+  const body = (await request.json()) as HandleUploadBody;
 
   try {
-    const blob = await put(filename, request.body, {
-      access: "public",
-      addRandomSuffix: true,
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async () => {
+        return {
+          allowedContentTypes: [
+            "image/jpeg", "image/png", "image/webp", "image/gif",
+            "video/mp4", "video/webm", "video/quicktime",
+          ],
+          addRandomSuffix: true,
+          maximumSizeInBytes: 100 * 1024 * 1024, // 100MB max
+        };
+      },
+      onUploadCompleted: async () => {
+        // Upload completed — nothing to do here
+        // The client will register the blob URL in media library
+      },
     });
 
-    return NextResponse.json({
-      url: blob.url,
-      pathname: blob.pathname,
-    });
+    return NextResponse.json(jsonResponse);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Upload failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: (error as Error).message },
+      { status: 400 },
+    );
   }
 }

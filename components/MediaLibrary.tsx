@@ -114,37 +114,25 @@ export const MediaLibrary: React.FC = () => {
 
         try {
           if (file.size > DIRECT_UPLOAD_LIMIT) {
-            // Large file: upload to Vercel Blob first, then register in media library
-            const blobRes = await fetch(`/api/upload?filename=${encodeURIComponent(file.name)}`, {
-              method: "POST",
-              body: file,
+            // Large file: client upload directly to Vercel Blob (bypasses 4.5MB limit)
+            const { upload: blobUpload } = await import("@vercel/blob/client");
+            const blob = await blobUpload(file.name, file, {
+              access: "public",
+              handleUploadUrl: "/api/upload",
             });
-            if (!blobRes.ok) {
-              const err = await blobRes.json().catch(() => ({}));
-              throw new Error((err as { error?: string }).error || "Blob 上傳失敗");
-            }
-            const blobData = await blobRes.json() as { url: string };
 
-            // Download from blob URL and re-upload to media library (small metadata request)
-            // Or: just save the blob URL as the asset URL
-            // For now: register directly with blob URL as external reference
-            const metaRes = await fetch("/api/social/assets", {
-              method: "POST",
-              body: (() => {
-                // Create a tiny placeholder file with the blob URL in meta
-                const placeholder = new File([new Blob(["blob"])], file.name, { type: file.type });
-                const fd = new FormData();
-                fd.append("userId", userScopeId);
-                fd.append("kind", kind);
-                fd.append("file", placeholder);
-                fd.append("meta", JSON.stringify({
-                  origin: "manual-upload",
-                  summary: file.name,
-                  blobUrl: blobData.url,
-                }));
-                return fd;
-              })(),
-            });
+            // Register blob URL in media library with a tiny placeholder
+            const placeholder = new File([new Blob(["blob"])], file.name, { type: file.type });
+            const fd = new FormData();
+            fd.append("userId", userScopeId);
+            fd.append("kind", kind);
+            fd.append("file", placeholder);
+            fd.append("meta", JSON.stringify({
+              origin: "manual-upload",
+              summary: file.name,
+              blobUrl: blob.url,
+            }));
+            const metaRes = await fetch("/api/social/assets", { method: "POST", body: fd });
             if (metaRes.ok) successCount++;
             else throw new Error("註冊素材失敗");
           } else {
