@@ -137,23 +137,19 @@ export const MediaLibrary: React.FC = () => {
 
             let blobUrl: string;
             try {
-              // Step 1: Get client token from server (tiny request)
-              const tokenRes = await fetch(`/api/upload?pathname=assets/${userScopeId}/${Date.now()}-${file.name}`);
-              if (!tokenRes.ok) {
-                const err = await tokenRes.json().catch(() => ({}));
-                throw new Error((err as { error?: string }).error || "取得上傳 token 失敗");
+              // Step 1: Get client token from server
+              const tokenRes = await fetch(`/api/upload?pathname=assets/${userScopeId}/${Date.now()}-${encodeURIComponent(file.name)}`);
+              const tokenData = await tokenRes.json() as { clientToken?: string; error?: string };
+              if (!tokenRes.ok || !tokenData.clientToken) {
+                throw new Error(tokenData.error || "取得上傳 token 失敗");
               }
-              const { clientToken } = await tokenRes.json() as { clientToken: string };
 
-              // Step 2: Upload directly to Blob with multipart + progress
+              // Step 2: Upload to Blob with multipart
               const { put } = await import("@vercel/blob");
               const blob = await put(file.name, file, {
                 access: "public",
-                token: clientToken,
+                token: tokenData.clientToken,
                 multipart: true,
-                onUploadProgress: ({ percentage }) => {
-                  setUploadNotice({ type: "success", text: `上傳 ${file.name}：${Math.round(percentage)}%` });
-                },
               });
               blobUrl = blob.url;
             } catch (blobErr) {
@@ -186,20 +182,20 @@ export const MediaLibrary: React.FC = () => {
         setAssets(items);
       } catch { /* ignore */ }
 
-      // Show result as inline notice (not alert — can be blocked by browsers)
+      // Show result
       if (successCount > 0 && !lastError) {
         setUploadNotice({ type: "success", text: `上傳成功！已新增 ${successCount} 個檔案` });
+        setTimeout(() => setUploadNotice(null), 5000);
       } else if (successCount > 0 && lastError) {
         setUploadNotice({ type: "error", text: `${successCount} 個成功，但有錯誤：${lastError}` });
+        // Error stays visible — user must see it
       } else if (lastError) {
         setUploadNotice({ type: "error", text: `上傳失敗：${lastError}` });
       } else {
         setUploadNotice({ type: "error", text: "上傳未完成，請重試" });
       }
-      setTimeout(() => setUploadNotice(null), 6000);
     } catch (err) {
       setUploadNotice({ type: "error", text: `上傳失敗：${err instanceof Error ? err.message : "網路錯誤"}` });
-      setTimeout(() => setUploadNotice(null), 6000);
     } finally {
       setIsUploading(false);
       e.target.value = "";
@@ -281,12 +277,13 @@ export const MediaLibrary: React.FC = () => {
     <div className="h-[calc(100vh-8rem)] flex flex-col gap-4">
       {/* 上傳通知 */}
       {uploadNotice && (
-        <div className={`rounded-lg px-4 py-3 text-sm font-medium ${
+        <div className={`rounded-lg px-4 py-3 text-sm font-medium flex items-center justify-between ${
           uploadNotice.type === "success"
             ? "bg-green-50 border border-green-200 text-green-800"
             : "bg-red-50 border border-red-200 text-red-800"
         }`}>
-          {uploadNotice.text}
+          <span>{uploadNotice.text}</span>
+          <button onClick={() => setUploadNotice(null)} className="ml-3 text-xs opacity-60 hover:opacity-100">✕</button>
         </div>
       )}
 
