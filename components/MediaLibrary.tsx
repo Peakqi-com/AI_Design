@@ -132,24 +132,32 @@ export const MediaLibrary: React.FC = () => {
             }
             successCount++;
           } else {
-            // Large file (> 4MB): Blob client upload → register in media library
+            // Large file (> 4MB): get client token → upload with progress
             setUploadNotice({ type: "success", text: `正在上傳 ${file.name}（${(file.size / 1024 / 1024).toFixed(1)} MB）...` });
 
-            // Step 1: Upload to Vercel Blob (with timeout)
             let blobUrl: string;
             try {
-              const { upload: blobUpload } = await import("@vercel/blob/client");
-              const uploadPromise = blobUpload(file.name, file, {
+              // Step 1: Get client token from server (tiny request)
+              const tokenRes = await fetch(`/api/upload?pathname=assets/${userScopeId}/${Date.now()}-${file.name}`);
+              if (!tokenRes.ok) {
+                const err = await tokenRes.json().catch(() => ({}));
+                throw new Error((err as { error?: string }).error || "取得上傳 token 失敗");
+              }
+              const { clientToken } = await tokenRes.json() as { clientToken: string };
+
+              // Step 2: Upload directly to Blob with multipart + progress
+              const { put } = await import("@vercel/blob");
+              const blob = await put(file.name, file, {
                 access: "public",
-                handleUploadUrl: "/api/upload",
+                token: clientToken,
+                multipart: true,
+                onUploadProgress: ({ percentage }) => {
+                  setUploadNotice({ type: "success", text: `上傳 ${file.name}：${Math.round(percentage)}%` });
+                },
               });
-              const timeoutPromise = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("上傳超時（超過 3 分鐘），請檢查網路後重試")), 180_000)
-              );
-              const blob = await Promise.race([uploadPromise, timeoutPromise]);
               blobUrl = blob.url;
             } catch (blobErr) {
-              throw new Error(`Blob 上傳失敗：${blobErr instanceof Error ? blobErr.message : "未知錯誤"}`);
+              throw new Error(`上傳失敗：${blobErr instanceof Error ? blobErr.message : "未知錯誤"}`);
             }
 
             // Step 2: Register in media library (tiny request)
