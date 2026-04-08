@@ -16,6 +16,7 @@ interface AssetMeta {
   generationPrompt?: string;
   aspectRatio?: string;
   durationSec?: number;
+  blobUrl?: string;
 }
 
 interface MediaAsset {
@@ -62,7 +63,12 @@ export const MediaLibrary: React.FC = () => {
         `/api/social/assets?userId=${encodeURIComponent(userScopeId)}&limit=200`
       );
       const data = (await res.json()) as { items?: MediaAsset[] };
-      setAssets(data.items || []);
+      // Use blobUrl if available (for large files uploaded via Vercel Blob)
+      const items = (data.items || []).map((a) => ({
+        ...a,
+        url: a.meta?.blobUrl || a.url,
+      }));
+      setAssets(items);
     } catch {
       // 忽略載入錯誤
     } finally {
@@ -88,11 +94,11 @@ export const MediaLibrary: React.FC = () => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    // Check file sizes before upload
-    const MAX_FILE_SIZE = 50 * 1024 * 1024; // Vercel Pro: 50MB body limit
+    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB absolute max
+    const DIRECT_UPLOAD_LIMIT = 4 * 1024 * 1024; // 4MB — below Vercel 4.5MB function limit
     for (let i = 0; i < files.length; i++) {
       if (files[i].size > MAX_FILE_SIZE) {
-        alert(`檔案 "${files[i].name}" 太大（${(files[i].size / 1024 / 1024).toFixed(1)} MB）。\n單檔上限 50 MB。\n建議先壓縮後再上傳。`);
+        alert(`檔案 "${files[i].name}" 太大（${(files[i].size / 1024 / 1024).toFixed(1)} MB）。\n單檔上限 100 MB。`);
         e.target.value = "";
         return;
       }
@@ -105,30 +111,68 @@ export const MediaLibrary: React.FC = () => {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const kind = file.type.startsWith("video/") ? "video" : "image";
-        const formData = new FormData();
-        formData.append("userId", userScopeId);
-        formData.append("kind", kind);
-        formData.append("file", file);
-        formData.append("meta", JSON.stringify({
-          origin: "manual-upload",
-          summary: file.name,
-        }));
+
         try {
-          const res = await fetch("/api/social/assets", { method: "POST", body: formData });
-          if (res.ok) {
-            successCount++;
-          } else {
-            let errMsg = `上傳 ${file.name} 失敗（${res.status}）`;
-            try {
-              const errData = await res.json();
-              if ((errData as { error?: string }).error) errMsg = (errData as { error: string }).error;
-            } catch {
-              if (res.status === 413) errMsg = `${file.name} 太大，超過伺服器上傳限制`;
+          if (file.size > DIRECT_UPLOAD_LIMIT) {
+            // Large file: upload to Vercel Blob first, then register in media library
+            const blobRes = await fetch(`/api/upload?filename=${encodeURIComponent(file.name)}`, {
+              method: "POST",
+              body: file,
+            });
+            if (!blobRes.ok) {
+              const err = await blobRes.json().catch(() => ({}));
+              throw new Error((err as { error?: string }).error || "Blob 上傳失敗");
             }
-            lastError = errMsg;
+            const blobData = await blobRes.json() as { url: string };
+
+            // Download from blob URL and re-upload to media library (small metadata request)
+            // Or: just save the blob URL as the asset URL
+            // For now: register directly with blob URL as external reference
+            const metaRes = await fetch("/api/social/assets", {
+              method: "POST",
+              body: (() => {
+                // Create a tiny placeholder file with the blob URL in meta
+                const placeholder = new File([new Blob(["blob"])], file.name, { type: file.type });
+                const fd = new FormData();
+                fd.append("userId", userScopeId);
+                fd.append("kind", kind);
+                fd.append("file", placeholder);
+                fd.append("meta", JSON.stringify({
+                  origin: "manual-upload",
+                  summary: file.name,
+                  blobUrl: blobData.url,
+                }));
+                return fd;
+              })(),
+            });
+            if (metaRes.ok) successCount++;
+            else throw new Error("註冊素材失敗");
+          } else {
+            // Small file: direct upload to media library
+            const formData = new FormData();
+            formData.append("userId", userScopeId);
+            formData.append("kind", kind);
+            formData.append("file", file);
+            formData.append("meta", JSON.stringify({
+              origin: "manual-upload",
+              summary: file.name,
+            }));
+            const res = await fetch("/api/social/assets", { method: "POST", body: formData });
+            if (res.ok) {
+              successCount++;
+            } else {
+              let errMsg = `上傳 ${file.name} 失敗（${res.status}）`;
+              try {
+                const errData = await res.json();
+                if ((errData as { error?: string }).error) errMsg = (errData as { error: string }).error;
+              } catch {
+                if (res.status === 413) errMsg = `${file.name} 超過 4MB，上傳失敗`;
+              }
+              throw new Error(errMsg);
+            }
           }
         } catch (fetchErr) {
-          lastError = `上傳 ${file.name} 失敗：${fetchErr instanceof Error ? fetchErr.message : "網路錯誤"}`;
+          lastError = fetchErr instanceof Error ? fetchErr.message : `上傳 ${file.name} 失敗`;
         }
       }
       if (successCount > 0) {
