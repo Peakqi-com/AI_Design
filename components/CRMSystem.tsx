@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -69,6 +70,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export const CRMSystem: React.FC = () => {
   const { data: session } = useSession();
+  const credits = useCredits();
   const sessionUser = session?.user as Record<string, unknown> | undefined;
   const userScope = resolveClientUserScopeId(
     (sessionUser?.id ?? sessionUser?.sub) as string | undefined,
@@ -259,6 +261,8 @@ export const CRMSystem: React.FC = () => {
 
   const runCardScan = async () => {
     if (!cardImage) return;
+    const d = await credits.tryDeduct("ai-social-post");
+    if (!d.ok) { alert(d.error || "點數不足"); return; }
     setScanLoading(true);
     setScanResult(null);
     try {

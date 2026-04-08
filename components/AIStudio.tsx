@@ -1022,7 +1022,8 @@ export const AIStudio: React.FC = () => {
       setLabeledFloorPlan(payload.imageDataUrl);
       setMultiPhase("review");
 
-      // 同時啟動面積估算（不阻塞主流程）
+      // 同時啟動面積估算（不阻塞主流程，扣 1 點）
+      credits.tryDeduct("ai-social-post").catch(() => {});
       setIsEstimatingArea(true);
       fetch("/api/ai/render", {
         method: "POST",

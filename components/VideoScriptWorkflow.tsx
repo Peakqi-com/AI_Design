@@ -79,6 +79,9 @@ export const VideoScriptWorkflow: React.FC = () => {
   /* ---------- AI generate script from brief ---------- */
   const handleGenerateScript = async () => {
     if (!briefInput.trim()) return;
+    const d = await credits.tryDeduct("ai-social-post");
+    if (!d.ok) { setInsufficientMsg(d.error || "點數不足"); return; }
+    setInsufficientMsg(null);
     setIsGeneratingScript(true);
     try {
       const res = await fetch("/api/ai/text", {
