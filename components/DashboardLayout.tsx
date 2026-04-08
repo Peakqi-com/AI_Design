@@ -67,8 +67,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   const planMap: Record<string, string> = {
     free: '免費版',
     pro: '專業版',
+    business: '商務版',
     enterprise: '企業版'
   };
+
+  const displayPlan = userPlan || user.plan;
 
   const sidebarContent = (
     <>
@@ -195,7 +198,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-medium text-gray-900">{user.name}</p>
-                <p className="text-xs text-gray-500 capitalize">{planMap[user.plan] || user.plan} 方案</p>
+                <p className="text-xs text-gray-500 capitalize">{planMap[displayPlan] || displayPlan} 方案</p>
               </div>
               <img src={user.avatar} alt="用戶頭像" className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-gray-200 border border-gray-200" />
             </div>
