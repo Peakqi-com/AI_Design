@@ -215,7 +215,7 @@ export const MediaLibrary: React.FC = () => {
 
   // 分類素材
   const singleImages = assets.filter(
-    (a) => a.kind === "image" && a.meta?.origin === "ai-studio" && !a.meta?.packageId
+    (a) => a.kind === "image" && !a.meta?.packageId
   );
   const packagedImages = assets.filter(
     (a) => a.kind === "image" && Boolean(a.meta?.packageId)
