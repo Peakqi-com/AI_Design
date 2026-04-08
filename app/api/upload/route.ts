@@ -22,6 +22,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const clientToken = await generateClientTokenFromReadWriteToken({
       token,
       pathname,
+      validUntil: Math.floor(Date.now() / 1000) + 600, // 10 minutes from now
     });
 
     return NextResponse.json({ clientToken, pathname });
