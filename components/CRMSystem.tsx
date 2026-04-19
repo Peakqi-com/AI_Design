@@ -4,6 +4,7 @@ import { Button } from "./Button";
 import {
   Camera,
   Edit3,
+  FileText,
   Phone,
   Mail,
   MapPin,
@@ -68,7 +69,58 @@ const STATUS_COLORS: Record<string, string> = {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export const CRMSystem: React.FC = () => {
+interface GeneratedProjectPayload {
+  id: string;
+  name: string;
+  clientName: string;
+  status: "draft" | "active" | "quoted" | "completed";
+  phase: string;
+  budget: string;
+  coverImageUrl?: string;
+  linkedContactId?: string;
+  note?: string;
+  lastSyncedToCrmAt?: string;
+  archivedAt?: string;
+  filedAt?: string;
+  deletedAt?: string;
+  deletePurgeAt?: string;
+  quotationItems?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
+  workflowTasks?: Array<{
+    id: string;
+    date?: string;
+    time: string;
+    title: string;
+    detail?: string;
+    owner?: string;
+    done?: boolean;
+  }>;
+  dressSelectionRecords?: Array<{
+    id: string;
+    dressName?: string;
+    dressSpec?: string;
+    sourceLabel?: string;
+  }>;
+  quotationMeta?: {
+    quoteNo?: string;
+    validUntil?: string;
+    status?: "draft" | "sent" | "accepted";
+    note?: string;
+    updatedAt?: string;
+  };
+  updatedAt?: string;
+}
+
+interface CRMSystemProps {
+  onOpenQuotationDraft?: (project: GeneratedProjectPayload) => void;
+}
+
+export const CRMSystem: React.FC<CRMSystemProps> = ({ onOpenQuotationDraft }) => {
   const { data: session } = useSession();
   const credits = useCredits();
   const sessionUser = session?.user as Record<string, unknown> | undefined;
@@ -86,6 +138,7 @@ export const CRMSystem: React.FC = () => {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
+  const [creatingQuoteDraft, setCreatingQuoteDraft] = useState(false);
 
   /* detail panel edits */
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -248,6 +301,37 @@ export const CRMSystem: React.FC = () => {
     });
     setSelectedId(null);
     await fetchContacts();
+  };
+
+  const handleCreateQuoteDraft = async () => {
+    if (!selected) return;
+    setCreatingQuoteDraft(true);
+    try {
+      const response = await fetch(`/api/crm/contacts/${selected.id}/quote-draft`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ userId: userScope }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        project?: GeneratedProjectPayload;
+        model?: string;
+      };
+      if (!response.ok || !payload.project) {
+        throw new Error(payload.error || "建立報價草稿失敗");
+      }
+      await fetchContacts();
+      alert(
+        payload.model
+          ? `已根據 LINE 對話建立報價草稿（${payload.model}）。`
+          : "已根據 LINE 對話建立報價草稿。",
+      );
+      onOpenQuotationDraft?.(payload.project);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "建立報價草稿失敗");
+    } finally {
+      setCreatingQuoteDraft(false);
+    }
   };
 
   /* ---- scan business card ---- */
@@ -641,7 +725,26 @@ export const CRMSystem: React.FC = () => {
             )}
 
             {/* delete button */}
-            <div className="px-6 py-4">
+            <div className="px-6 py-4 flex flex-wrap gap-2">
+              {selected.source === "line" && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={handleCreateQuoteDraft}
+                  disabled={creatingQuoteDraft}
+                  className="gap-1"
+                >
+                  {creatingQuoteDraft ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" /> 整理中...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-4 h-4" /> 由 LINE 對話建立報價草稿
+                    </>
+                  )}
+                </Button>
+              )}
               <Button size="sm" variant="ghost" onClick={deleteContact} className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1">
                 <Trash2 className="w-4 h-4" /> 刪除客戶
               </Button>

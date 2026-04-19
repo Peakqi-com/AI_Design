@@ -864,6 +864,7 @@ export async function updateContact(
 }
 
 export interface UpsertLineContactInput {
+  userId?: string;
   lineUserId: string;
   displayName: string;
   avatarUrl?: string | null;
@@ -872,27 +873,40 @@ export interface UpsertLineContactInput {
 export async function upsertLineContact(input: UpsertLineContactInput): Promise<CrmContact> {
   return mutateStore((store) => {
     const now = nowIso();
+    const normalizedUserId = input.userId?.trim() || undefined;
     const normalizedName = input.displayName.trim() || `LINE ${input.lineUserId.slice(-6)}`;
+    const existingIndex = normalizedUserId
+      ? store.contacts.findIndex(
+          (contact) => contact.lineUserId === input.lineUserId && contact.userId === normalizedUserId,
+        )
+      : store.contacts.findIndex(
+          (contact) => contact.lineUserId === input.lineUserId && !contact.userId,
+        );
+    const fallbackIndex =
+      existingIndex >= 0 || !normalizedUserId
+        ? -1
+        : store.contacts.findIndex(
+            (contact) => contact.lineUserId === input.lineUserId && !contact.userId,
+          );
+    const targetIndex = existingIndex >= 0 ? existingIndex : fallbackIndex;
 
-    const existingIndex = store.contacts.findIndex(
-      (contact) => contact.lineUserId === input.lineUserId,
-    );
-
-    if (existingIndex >= 0) {
-      const existing = store.contacts[existingIndex];
+    if (targetIndex >= 0) {
+      const existing = store.contacts[targetIndex];
       const updated: CrmContact = {
         ...existing,
+        userId: existing.userId || normalizedUserId,
         displayName: normalizedName,
         avatarUrl: input.avatarUrl ?? existing.avatarUrl ?? null,
         source: "line",
         updatedAt: now,
       };
-      store.contacts[existingIndex] = updated;
+      store.contacts[targetIndex] = updated;
       return updated;
     }
 
     const created: CrmContact = {
       id: createId("contact"),
+      userId: normalizedUserId,
       source: "line",
       lineUserId: input.lineUserId,
       displayName: normalizedName,
