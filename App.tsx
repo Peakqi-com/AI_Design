@@ -51,6 +51,38 @@ const toAppUser = (sessionUser: unknown): User | null => {
   };
 };
 
+type QuotationProjectPayload = Parameters<
+  NonNullable<React.ComponentProps<typeof CRMSystem>["onOpenQuotationDraft"]>
+>[0];
+
+const mapGeneratedProjectToAppProject = (project: QuotationProjectPayload): Project => ({
+  id: project.id,
+  name: project.name,
+  client: project.clientName,
+  status: project.status,
+  phase: project.phase,
+  budget: project.budget,
+  date: new Date(project.updatedAt || Date.now()).toISOString().slice(0, 10),
+  img: project.coverImageUrl || "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?w=1200",
+  linkedContactId: project.linkedContactId,
+  note: project.note,
+  lastSyncedToCrmAt: project.lastSyncedToCrmAt,
+  archivedAt: project.archivedAt,
+  filedAt: project.filedAt,
+  deletedAt: project.deletedAt,
+  deletePurgeAt: project.deletePurgeAt,
+  quotationItems: project.quotationItems || [],
+  workflowTasks: project.workflowTasks || [],
+  dressSelectionRecords: (project.dressSelectionRecords || []).map((item) => ({
+    id: item.id,
+    dressName: item.dressName || "未命名渲染紀錄",
+    dressSpec: item.dressSpec,
+    sourceLabel: item.sourceLabel,
+    createdAt: project.updatedAt || new Date().toISOString(),
+  })),
+  quotationMeta: project.quotationMeta,
+});
+
 const App: React.FC = () => {
   const { data: session, status } = useSession();
   const [viewState, setViewState] = useState<ViewState>("landing");
@@ -118,6 +150,11 @@ const App: React.FC = () => {
       setDashboardView("quotation");
   };
 
+  const handleOpenProjectQuotation = (project: QuotationProjectPayload) => {
+      setSelectedProject(mapGeneratedProjectToAppProject(project));
+      setDashboardView("quotation");
+  };
+
   const handleViewChange = (view: DashboardView) => {
       setDashboardView(view);
       if (view !== 'projects' && view !== "quotation") {
@@ -155,7 +192,7 @@ const App: React.FC = () => {
       case "video-studio":
         return <VideoStudio />;
       case "crm":
-        return <CRMSystem />;
+        return <CRMSystem onOpenQuotationDraft={handleOpenProjectQuotation} />;
       case "media-library":
         return <MediaLibrary />;
       case "presentation":

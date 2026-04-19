@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveServerUserScopeId } from "@/lib/server/user-scope";
 import { saveAttachment } from "@/lib/crm/attachments";
 import {
   downloadLineMessageContent,
@@ -101,6 +102,7 @@ const getSourceKey = (source?: LineWebhookSource): string | null => {
 async function processLineMessageEvent(
   event: LineWebhookEvent,
   channelAccessToken: string,
+  userScopeId: string,
 ): Promise<void> {
   const sourceKey = getSourceKey(event.source);
   const userId = event.source?.userId;
@@ -111,6 +113,7 @@ async function processLineMessageEvent(
 
   const profile = userId ? await fetchLineProfile(userId, channelAccessToken) : null;
   const contact = await upsertLineContact({
+    userId: userScopeId,
     lineUserId: sourceKey,
     displayName: profile?.displayName ?? getFallbackName(sourceKey),
     avatarUrl: profile?.pictureUrl ?? null,
@@ -234,7 +237,11 @@ async function processLineMessageEvent(
   });
 }
 
-async function processEvent(event: LineWebhookEvent, channelAccessToken: string): Promise<void> {
+async function processEvent(
+  event: LineWebhookEvent,
+  channelAccessToken: string,
+  userScopeId: string,
+): Promise<void> {
   const eventType = event.type;
   const userId = event.source?.userId;
   const sourceKey = getSourceKey(event.source);
@@ -249,6 +256,7 @@ async function processEvent(event: LineWebhookEvent, channelAccessToken: string)
     }
     const profile = await fetchLineProfile(userId, channelAccessToken);
     await upsertLineContact({
+      userId: userScopeId,
       lineUserId: userId,
       displayName: profile?.displayName ?? getFallbackName(userId),
       avatarUrl: profile?.pictureUrl ?? null,
@@ -260,7 +268,7 @@ async function processEvent(event: LineWebhookEvent, channelAccessToken: string)
     if (!sourceKey) {
       return;
     }
-    await processLineMessageEvent(event, channelAccessToken);
+    await processLineMessageEvent(event, channelAccessToken, userScopeId);
   }
 }
 
@@ -283,7 +291,8 @@ export async function POST(request: Request) {
 
   let scopedSettings: { userScopeId: string; settings: LineIntegrationSettings };
   if (requestedUserScopeId) {
-    const scoped = await getLineSettings(requestedUserScopeId);
+    const resolvedScopeId = await resolveServerUserScopeId(requestedUserScopeId);
+    const scoped = await getLineSettings(resolvedScopeId);
     if (!scoped?.enabled || !scoped.channelSecret || !scoped.channelAccessToken) {
       return NextResponse.json(
         { error: "LINE integration settings are missing." },
@@ -293,7 +302,7 @@ export async function POST(request: Request) {
     if (!verifyLineSignature(rawBody, signature, scoped.channelSecret)) {
       return NextResponse.json({ error: "Invalid signature." }, { status: 401 });
     }
-    scopedSettings = { userScopeId: requestedUserScopeId, settings: scoped };
+    scopedSettings = { userScopeId: resolvedScopeId, settings: scoped };
   } else {
     const candidates = await listLineSettingsByScope();
     const matched = candidates.find(
@@ -326,7 +335,7 @@ export async function POST(request: Request) {
 
   for (const event of events) {
     try {
-      await processEvent(event, scopedSettings.settings.channelAccessToken);
+      await processEvent(event, scopedSettings.settings.channelAccessToken, scopedSettings.userScopeId);
       processed += 1;
     } catch (error) {
       failed += 1;
