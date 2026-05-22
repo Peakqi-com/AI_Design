@@ -813,7 +813,11 @@ export const MarketingCenter: React.FC = () => {
       return;
     }
     const platformCount = Math.max(1, selectedPlatforms.length);
-    const deduction = await credits.tryDeduct("ai-social-post", platformCount);
+    const deduction = await credits.confirmAndDeduct(
+      `生成 ${platformCount} 個平台的文案`,
+      "ai-social-post",
+      platformCount,
+    );
     if (!deduction.ok) {
       return;
     }

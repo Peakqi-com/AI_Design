@@ -1539,9 +1539,9 @@ export const VideoStudio: React.FC = () => {
     if (isGenerating) {
       return;
     }
-    const deduction = await credits.tryDeduct("ai-video");
+    const deduction = await credits.confirmAndDeduct("生成影片", "ai-video");
     if (!deduction.ok) {
-      setErrorMessage(deduction.error || "點數不足，請至訂閱頁面儲值");
+      if (!deduction.cancelled) setErrorMessage(deduction.error || "點數不足，請至訂閱頁面儲值");
       return;
     }
 

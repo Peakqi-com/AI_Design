@@ -341,9 +341,9 @@ export const CrmInteriorIntakePanel: React.FC<InteriorIntakePanelProps> = ({
       setError("請先完整填寫問卷，再產生 AI 推薦。");
       return;
     }
-    const deduction = await credits.tryDeduct("ai-text");
+    const deduction = await credits.confirmAndDeduct("AI 室內推薦", "ai-text");
     if (!deduction.ok) {
-      setError(deduction.error || "點數不足");
+      if (!deduction.cancelled) setError(deduction.error || "點數不足");
       return;
     }
     setGenerating(true);

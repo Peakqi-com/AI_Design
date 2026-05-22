@@ -93,11 +93,27 @@ export function useCredits() {
     [userScopeId, state.credits, modal],
   );
 
+  /**
+   * Confirm cost with the user first, then deduct.
+   * Returns { ok: false, cancelled: true } if user cancelled.
+   */
+  const confirmAndDeduct = useCallback(
+    async (label: string, action: string, quantity: number = 1): Promise<{ ok: boolean; cancelled?: boolean; remaining: number; cost?: number; error?: string }> => {
+      if (modal) {
+        const ok = await modal.confirmCost(label, action, quantity);
+        if (!ok) return { ok: false, cancelled: true, remaining: state.credits };
+      }
+      return tryDeduct(action, quantity);
+    },
+    [modal, tryDeduct, state.credits],
+  );
+
   return {
     ...state,
     userScopeId,
     userEmail,
     refresh,
     tryDeduct,
+    confirmAndDeduct,
   };
 }

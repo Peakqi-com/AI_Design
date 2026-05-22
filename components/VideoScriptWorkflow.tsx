@@ -79,8 +79,8 @@ export const VideoScriptWorkflow: React.FC = () => {
   /* ---------- AI generate script from brief ---------- */
   const handleGenerateScript = async () => {
     if (!briefInput.trim()) return;
-    const d = await credits.tryDeduct("ai-social-post");
-    if (!d.ok) { setInsufficientMsg(d.error || "點數不足"); return; }
+    const d = await credits.confirmAndDeduct("生成腳本", "ai-social-post");
+    if (!d.ok) { if (!d.cancelled) setInsufficientMsg(d.error || "點數不足"); return; }
     setInsufficientMsg(null);
     setIsGeneratingScript(true);
     try {
@@ -139,9 +139,9 @@ export const VideoScriptWorkflow: React.FC = () => {
       if (!seg || !seg.prompt.trim()) return;
 
       // Credit check
-      const deduction = await credits.tryDeduct("ai-video");
+      const deduction = await credits.confirmAndDeduct("生成影片片段", "ai-video");
       if (!deduction.ok) {
-        setInsufficientMsg(deduction.error || "點數不足");
+        if (!deduction.cancelled) setInsufficientMsg(deduction.error || "點數不足");
         return;
       }
       setInsufficientMsg(null);

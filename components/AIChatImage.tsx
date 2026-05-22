@@ -108,7 +108,7 @@ export const AIChatImage: React.FC = () => {
     if (isGenerating) return;
 
     // Credit check
-    const deduction = await credits.tryDeduct("ai-render");
+    const deduction = await credits.confirmAndDeduct("AI 生成設計圖", "ai-render");
     if (!deduction.ok) {
       setInsufficientMsg(deduction.error || "點數不足");
       return;

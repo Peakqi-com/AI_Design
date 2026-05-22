@@ -24,7 +24,7 @@ import { useCredits } from "@/lib/client/use-credits";
    Types
    ================================================================ */
 
-type SlideLayout = "full-image" | "left-image" | "right-image" | "text-only";
+type SlideLayout = "full-image" | "left-image" | "right-image" | "text-only" | "ai-full";
 
 interface SlideData {
   id: string;
@@ -195,25 +195,22 @@ export const PresentationMaker: React.FC = () => {
      Step 1 - AI outline generation
      ================================================================ */
 
-  const handleGenerateOutline = async () => {
-    // 先預扣典型張數 6 × 0.15 = 0.9 點（基礎費）以防止點數不足；
-    // 生成完後如果實際張數更多，補扣超出的；如果更少，不退（簡化處理）
-    const baseSlides = 6;
-    const baseDeduct = await credits.tryDeduct("ai-text", baseSlides);
-    if (!baseDeduct.ok) { return; }
-    setIsGeneratingOutline(true);
-    try {
-      const prompt =
-        `你是室內設計公司的簡報顧問。請根據以下資訊，為一份設計提案簡報生成投影片大綱。\n\n` +
-        `專案名稱：${projectTitle || "室內設計方案"}\n` +
-        `設計師：${designerName || "設計師"}\n` +
-        (briefDesc ? `說明：${briefDesc}\n` : "") +
-        `\n請輸出 JSON 格式的投影片陣列，每張投影片包含 title 和 body（繁體中文），格式：\n` +
-        `[{"title":"封面","body":"..."},{"title":"設計概述","body":"..."},...]` +
-        `\n規則：(1) 第一頁為封面（含專案名稱與設計師名稱）(2) 最後一頁為結語/聯繫方式 ` +
-        `(3) 中間安排 4-6 頁內容（設計理念、風格定位、空間規劃、材質配色、預算說明等）` +
-        `(4) 使用專業室內設計用語 (5) 只輸出 JSON 陣列，不要其他文字。`;
+  /** Core outline generator — returns slide array, callers handle state. */
+  const requestOutlineSlides = async (
+    layoutFn: (i: number, total: number) => SlideLayout = getDefaultLayout,
+  ): Promise<SlideData[]> => {
+    const prompt =
+      `你是室內設計公司的簡報顧問。請根據以下資訊，為一份設計提案簡報生成投影片大綱。\n\n` +
+      `專案名稱：${projectTitle || "室內設計方案"}\n` +
+      `設計師：${designerName || "設計師"}\n` +
+      (briefDesc ? `說明：${briefDesc}\n` : "") +
+      `\n請輸出 JSON 格式的投影片陣列，每張投影片包含 title 和 body（繁體中文），格式：\n` +
+      `[{"title":"封面","body":"..."},{"title":"設計概述","body":"..."},...]` +
+      `\n規則：(1) 第一頁為封面（含專案名稱與設計師名稱）(2) 最後一頁為結語/聯繫方式 ` +
+      `(3) 中間安排 4-6 頁內容（設計理念、風格定位、空間規劃、材質配色、預算說明等）` +
+      `(4) 使用專業室內設計用語 (5) 只輸出 JSON 陣列，不要其他文字。`;
 
+    try {
       const res = await fetch("/api/ai/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -226,47 +223,130 @@ export const PresentationMaker: React.FC = () => {
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       let parsed: Array<{ title?: string; body?: string }> = [];
       if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch {
-          /* fallback */
-        }
+        try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
       }
-
       if (parsed.length > 0) {
-        // 補扣超出基礎張數的部分
-        if (parsed.length > baseSlides) {
-          await credits.tryDeduct("ai-text", parsed.length - baseSlides).catch(() => {});
-        }
-        setSlides(
-          parsed.map((s, i) => ({
-            id: uid(),
-            title: s.title || "",
-            body: s.body || "",
-            imageUrl: null,
-            layout: getDefaultLayout(i, parsed.length),
-          })),
-        );
-      } else {
-        // fallback
-        const fallback = [
-          { title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}\n日期：${new Date().toLocaleDateString("zh-TW")}` },
-          { title: "設計概述", body: "整體設計理念與風格定位" },
-          { title: "空間規劃", body: "各空間的機能配置與動線安排" },
-          { title: "材質與配色", body: "主要材質選擇與色彩搭配方案" },
-          { title: "感謝觀看", body: "期待與您合作\n如有任何問題歡迎聯繫" },
-        ];
-        setSlides(fallback.map((s, i) => ({ id: uid(), ...s, imageUrl: null, layout: getDefaultLayout(i, fallback.length) })));
+        return parsed.map((s, i) => ({
+          id: uid(),
+          title: s.title || "",
+          body: s.body || "",
+          imageUrl: null,
+          layout: layoutFn(i, parsed.length),
+        }));
       }
-    } catch {
-      const fb = [
-        { title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}` },
-        { title: "設計概述", body: "整體設計理念與風格定位" },
-        { title: "感謝觀看", body: "期待與您合作" },
-      ];
-      setSlides(fb.map((s, i) => ({ id: uid(), ...s, imageUrl: null, layout: getDefaultLayout(i, fb.length) })));
+    } catch { /* fall through to fallback */ }
+
+    const fallback = [
+      { title: projectTitle || "室內設計提案", body: `設計師：${designerName || "設計師"}\n日期：${new Date().toLocaleDateString("zh-TW")}` },
+      { title: "設計概述", body: "整體設計理念與風格定位" },
+      { title: "空間規劃", body: "各空間的機能配置與動線安排" },
+      { title: "材質與配色", body: "主要材質選擇與色彩搭配方案" },
+      { title: "感謝觀看", body: "期待與您合作\n如有任何問題歡迎聯繫" },
+    ];
+    return fallback.map((s, i) => ({ id: uid(), ...s, imageUrl: null, layout: layoutFn(i, fallback.length) }));
+  };
+
+  const handleGenerateOutline = async () => {
+    const baseSlides = 6;
+    const baseDeduct = await credits.confirmAndDeduct("AI 生成簡報大綱", "ai-text", baseSlides);
+    if (!baseDeduct.ok) return;
+    setIsGeneratingOutline(true);
+    try {
+      const newSlides = await requestOutlineSlides();
+      if (newSlides.length > baseSlides) {
+        await credits.tryDeduct("ai-text", newSlides.length - baseSlides).catch(() => {});
+      }
+      setSlides(newSlides);
     } finally {
       setIsGeneratingOutline(false);
+    }
+  };
+
+  /**
+   * Nano Banana 一鍵模式：先生大綱，然後每張用 Gemini text-to-image 產整頁海報圖
+   * (含標題、內文、設計排版)。產出後跳到下載步驟。
+   */
+  const [isNanoBananaMode, setIsNanoBananaMode] = useState(false);
+  const [nanoBananaProgress, setNanoBananaProgress] = useState<string>("");
+
+  const handleNanoBananaGenerate = async () => {
+    if (!projectTitle.trim()) {
+      alert("請先輸入專案名稱");
+      return;
+    }
+
+    // Step 1: 先 confirm 大綱費用（典型 6 張）
+    const outlineDeduct = await credits.confirmAndDeduct(
+      "Step 1/2：AI 生成簡報大綱（≈6 張）",
+      "ai-text",
+      6,
+    );
+    if (!outlineDeduct.ok) return;
+
+    setIsNanoBananaMode(true);
+    setIsGeneratingOutline(true);
+    setNanoBananaProgress("生成大綱中...");
+    let workingSlides: SlideData[] = [];
+    try {
+      workingSlides = await requestOutlineSlides(() => "ai-full");
+      // 大綱比預期多時補扣
+      if (workingSlides.length > 6) {
+        await credits.tryDeduct("ai-text", workingSlides.length - 6).catch(() => {});
+      }
+      setSlides(workingSlides);
+    } finally {
+      setIsGeneratingOutline(false);
+    }
+
+    if (workingSlides.length === 0) {
+      setIsNanoBananaMode(false);
+      setNanoBananaProgress("");
+      return;
+    }
+
+    // Step 2: confirm 每頁海報圖費用
+    const imgDeduct = await credits.confirmAndDeduct(
+      `Step 2/2：Nano Banana 生成 ${workingSlides.length} 頁整頁海報式投影片`,
+      "ai-render",
+      workingSlides.length,
+    );
+    if (!imgDeduct.ok) {
+      setIsNanoBananaMode(false);
+      setNanoBananaProgress("");
+      return;
+    }
+
+    // 逐頁生成
+    try {
+      for (let i = 0; i < workingSlides.length; i++) {
+        const slide = workingSlides[i];
+        setNanoBananaProgress(`Nano Banana 生成中 ${i + 1}/${workingSlides.length}：${slide.title}`);
+        try {
+          const res = await fetch("/api/ai/presentation/page-generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: slide.title,
+              body: slide.body,
+              projectTitle,
+              designerName,
+              pageIndex: i,
+              totalPages: workingSlides.length,
+              styleLabel: selectedStyle.label,
+              isFirst: i === 0,
+              isLast: i === workingSlides.length - 1,
+            }),
+          });
+          const data = (await res.json()) as { imageDataUrl?: string; error?: string };
+          if (res.ok && data.imageDataUrl) {
+            updateSlide(slide.id, { imageUrl: data.imageDataUrl, layout: "ai-full" });
+          }
+        } catch { /* skip this page on error */ }
+      }
+    } finally {
+      setNanoBananaProgress("");
+      setIsNanoBananaMode(false);
+      setStep(4);
     }
   };
 
@@ -387,6 +467,19 @@ export const PresentationMaker: React.FC = () => {
         const isFirst = idx === 0;
         const isLast = idx === slides.length - 1;
         const s = pptx.addSlide();
+
+        /* ---- Nano Banana / AI 整頁圖 ---- */
+        if (slide.layout === "ai-full" && slide.imageUrl) {
+          const aiBase64 = await fetchImageAsBase64(slide.imageUrl);
+          if (aiBase64) {
+            s.addImage({
+              data: `image/jpeg;base64,${aiBase64}`,
+              x: 0, y: 0, w: 13.33, h: 7.5,
+              sizing: { type: "cover", w: 13.33, h: 7.5 },
+            });
+            continue;
+          }
+        }
 
         /* ---- cover slide ---- */
         if (isFirst) {
@@ -609,17 +702,44 @@ export const PresentationMaker: React.FC = () => {
         />
       </div>
       <button
+        onClick={() => void handleNanoBananaGenerate()}
+        disabled={isGeneratingOutline || isNanoBananaMode}
+        className="w-full py-3 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 text-white rounded-lg text-sm font-semibold hover:from-amber-600 hover:to-amber-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+      >
+        {isNanoBananaMode ? (
+          <>
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            <span className="text-xs">{nanoBananaProgress || "生成中..."}</span>
+          </>
+        ) : (
+          <>
+            <span className="text-base">🍌</span>
+            <span>Nano Banana 一鍵完整生成</span>
+          </>
+        )}
+      </button>
+      <p className="text-[10px] text-gray-400 text-center -mt-2">
+        AI 一次產出大綱 + 每頁整頁海報式設計（含文字排版）
+      </p>
+
+      <div className="flex items-center gap-2 my-1">
+        <div className="flex-1 h-px bg-gray-200" />
+        <span className="text-[10px] text-gray-400">或經典模式</span>
+        <div className="flex-1 h-px bg-gray-200" />
+      </div>
+
+      <button
         onClick={() => void handleGenerateOutline()}
-        disabled={isGeneratingOutline}
+        disabled={isGeneratingOutline || isNanoBananaMode}
         className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
       >
-        {isGeneratingOutline ? (
+        {isGeneratingOutline && !isNanoBananaMode ? (
           <>
             <RefreshCw className="w-4 h-4 animate-spin" /> 生成中...
           </>
         ) : (
           <>
-            <Sparkles className="w-4 h-4" /> AI 生成大綱
+            <Sparkles className="w-4 h-4" /> 僅生成大綱（手動配圖）
           </>
         )}
       </button>
@@ -1123,7 +1243,18 @@ export const PresentationMaker: React.FC = () => {
                     : `#${selectedStyle.contentBg}`,
                 }}
               >
-                {isCoverOrEnd ? (
+                {slide.layout === "ai-full" ? (
+                  <div className="flex-1 relative bg-gray-100">
+                    {slide.imageUrl ? (
+                      <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
+                        <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                        AI 生成中...
+                      </div>
+                    )}
+                  </div>
+                ) : isCoverOrEnd ? (
                   <div className="flex-1 flex flex-col items-center justify-center px-8" style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}>
                     <div className="absolute top-0 left-0 right-0 h-1.5" style={{ backgroundColor: `#${selectedStyle.accent}` }} />
                     <p

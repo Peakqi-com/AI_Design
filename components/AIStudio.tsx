@@ -844,10 +844,10 @@ export const AIStudio: React.FC = () => {
     if (!uploadedImage || isGenerating) {
       return;
     }
-    // 扣點檢查
-    const deduction = await credits.tryDeduct("ai-render");
+    // 扣點檢查（先 confirm 預估費用）
+    const deduction = await credits.confirmAndDeduct("生成室內渲染", "ai-render");
     if (!deduction.ok) {
-      setInsufficientCreditsMsg(deduction.error || "點數不足");
+      if (!deduction.cancelled) setInsufficientCreditsMsg(deduction.error || "點數不足");
       return;
     }
     setIsGenerating(true);
@@ -995,9 +995,9 @@ export const AIStudio: React.FC = () => {
   // 第一步：分析平面圖空間
   const handleAnalyzeFloorPlan = async () => {
     if (!uploadedImage || isAnalyzing) return;
-    const deduction = await credits.tryDeduct("ai-render-analyze");
+    const deduction = await credits.confirmAndDeduct("分析平面圖", "ai-render-analyze");
     if (!deduction.ok) {
-      setInsufficientCreditsMsg(deduction.error || "點數不足");
+      if (!deduction.cancelled) setInsufficientCreditsMsg(deduction.error || "點數不足");
       return;
     }
     setIsAnalyzing(true);
@@ -1106,9 +1106,9 @@ export const AIStudio: React.FC = () => {
     const referenceImage = getCompletedImageDataUrl(slot.referenceSource);
     if (!referenceImage) return;
 
-    const deduction = await credits.tryDeduct("ai-render");
+    const deduction = await credits.confirmAndDeduct(`生成視角：${slot.label}`, "ai-render");
     if (!deduction.ok) {
-      setInsufficientCreditsMsg(deduction.error || "點數不足");
+      if (!deduction.cancelled) setInsufficientCreditsMsg(deduction.error || "點數不足");
       return;
     }
     setInsufficientCreditsMsg(null);
@@ -1361,6 +1361,23 @@ export const AIStudio: React.FC = () => {
       if (r.status === "done" && r.imageDataUrl) completedImages.set(r.slotKey, r.imageDataUrl);
     });
 
+    const pendingSlots = FIXED_VIEW_SLOTS.filter((slot) => {
+      const existing = multiViewResults.find((r) => r.slotKey === slot.slotKey);
+      return existing?.status !== "done";
+    });
+    if (pendingSlots.length === 0) return;
+
+    // loop 外先 confirm 整體費用
+    const batch = await credits.confirmAndDeduct(
+      `一鍵生成剩餘 ${pendingSlots.length} 個視角`,
+      "ai-render",
+      pendingSlots.length,
+    );
+    if (!batch.ok) {
+      if (!batch.cancelled) setInsufficientCreditsMsg(batch.error || "點數不足");
+      return;
+    }
+
     setIsMultiGenerating(true);
 
     for (const slot of FIXED_VIEW_SLOTS) {
@@ -1369,13 +1386,6 @@ export const AIStudio: React.FC = () => {
 
       const referenceImage = completedImages.get(slot.referenceSource);
       if (!referenceImage) continue;
-
-      // 每張視角扣 1 次圖片點數
-      const slotDeduct = await credits.tryDeduct("ai-render");
-      if (!slotDeduct.ok) {
-        setInsufficientCreditsMsg(slotDeduct.error || "點數不足，已中止後續生成");
-        break;
-      }
 
       setCurrentMultiSlot(slot.slotKey);
       setMultiViewResults((prev) =>

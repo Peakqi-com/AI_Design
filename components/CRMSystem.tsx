@@ -261,7 +261,7 @@ export const CRMSystem: React.FC = () => {
 
   const runCardScan = async () => {
     if (!cardImage) return;
-    const d = await credits.tryDeduct("ai-social-post");
+    const d = await credits.confirmAndDeduct("名片 OCR 掃描", "ai-social-post");
     if (!d.ok) { return; }
     setScanLoading(true);
     setScanResult(null);
