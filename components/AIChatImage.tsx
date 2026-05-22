@@ -412,7 +412,7 @@ export const AIChatImage: React.FC = () => {
           </button>
         </div>
         <p className="text-[10px] text-gray-400 mt-1.5 text-center">
-          每次生成消耗 2 點 · 使用 Gemini 模型 · 生成的圖片自動儲存到媒體庫
+          每張生成消耗 0.55 點 · 使用 Gemini 模型 · 生成的圖片自動儲存到媒體庫
         </p>
       </div>
 

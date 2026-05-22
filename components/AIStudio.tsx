@@ -1649,7 +1649,7 @@ export const AIStudio: React.FC = () => {
             <>
               <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
                 <span>估計點數</span>
-                <span className="font-bold text-brand-600">2 點</span>
+                <span className="font-bold text-brand-600">0.55 點</span>
               </div>
               <Button fullWidth onClick={handleGenerate} disabled={!uploadedImage || isGenerating}>
                 {isGenerating ? (
@@ -1689,7 +1689,7 @@ export const AIStudio: React.FC = () => {
             <>
               <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
                 <span>第二步・確認格局</span>
-                <span className="font-bold text-brand-600">16 點</span>
+                <span className="font-bold text-brand-600">4.4 點 (8 視角)</span>
               </div>
               <Button
                 fullWidth

@@ -2141,7 +2141,7 @@ export const VideoStudio: React.FC = () => {
           <div className="p-4 border-t border-gray-100 bg-gray-50">
             <div className="flex justify-between text-xs text-gray-500 mb-2">
               <span>預估時長：{durationSec}s</span>
-              <span>消耗：5 點</span>
+              <span>消耗：12.5 點</span>
             </div>
             <div className="flex items-center gap-2">
               <Button

@@ -169,7 +169,7 @@ export const AdminPanel: React.FC = () => {
             { label: "註冊會員", value: stats.total, icon: Users, color: "text-brand-600" },
             { label: "免費會員", value: stats.free, icon: Users, color: "text-gray-600" },
             { label: "付費會員", value: stats.paid, icon: Crown, color: "text-purple-600" },
-            { label: "總使用點數", value: stats.totalCreditsUsed, icon: Settings, color: "text-amber-600" },
+            { label: "總使用點數", value: formatCredits(stats.totalCreditsUsed), icon: Settings, color: "text-amber-600" },
             { label: "匿名訪客", value: stats.guests, icon: Users, color: "text-gray-400" },
           ].map((s) => (
             <div key={s.label} className="bg-gray-50 rounded-lg p-3">

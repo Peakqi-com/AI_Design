@@ -489,7 +489,7 @@ export const VideoScriptWorkflow: React.FC = () => {
             )}
           </button>
           <p className="text-[10px] text-gray-400 text-center mt-1.5">
-            有圖=Grok・無圖=Kling v2.6 · 每段 5 點 · 共 15 點
+            有圖=Grok・無圖=Kling v2.6 · 每段 12.5 點 · 共 37.5 點
           </p>
         </div>
       </div>
