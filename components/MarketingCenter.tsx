@@ -815,7 +815,6 @@ export const MarketingCenter: React.FC = () => {
     const platformCount = Math.max(1, selectedPlatforms.length);
     const deduction = await credits.tryDeduct("ai-social-post", platformCount);
     if (!deduction.ok) {
-      alert(deduction.error || "點數不足");
       return;
     }
     setIsGeneratingCopy(true);

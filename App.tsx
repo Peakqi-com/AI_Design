@@ -19,6 +19,7 @@ import { AdminPanel } from "./components/AdminPanel";
 import { AIChatImage } from "./components/AIChatImage";
 import { VideoScriptWorkflow } from "./components/VideoScriptWorkflow";
 import { useCredits } from "./lib/client/use-credits";
+import { CreditsModalProvider } from "./lib/client/credits-modal-context";
 
 const DEMO_USER: User = {
   id: "u_demo",
@@ -26,7 +27,7 @@ const DEMO_USER: User = {
   email: "team@interiorpro.tw",
   avatar: "https://picsum.photos/200",
   plan: "free",
-  credits: 50,
+  credits: 30,
 };
 
 const toAppUser = (sessionUser: unknown): User | null => {
@@ -47,7 +48,7 @@ const toAppUser = (sessionUser: unknown): User | null => {
     email: user.email || "oauth-user@example.com",
     avatar: user.image || "https://picsum.photos/200",
     plan: user.plan || "free",
-    credits: typeof user.credits === "number" ? user.credits : 50,
+    credits: typeof user.credits === "number" ? user.credits : 30,
   };
 };
 
@@ -170,34 +171,43 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="antialiased text-slate-900 font-sans">
-      {viewState === "landing" && (
-        <LandingPage onGetStarted={() => setViewState('login')} />
-      )}
+    <CreditsModalProvider
+      isLoggedIn={!!user}
+      onUpgrade={() => {
+        setViewState("dashboard");
+        setDashboardView("subscription");
+      }}
+      onSignUp={() => setViewState("login")}
+    >
+      <div className="antialiased text-slate-900 font-sans">
+        {viewState === "landing" && (
+          <LandingPage onGetStarted={() => setViewState('login')} />
+        )}
 
-      {viewState === "login" && (
-        <LoginPage
-          onLogin={handleLogin}
-          onBack={() => setViewState("landing")}
-        />
-      )}
+        {viewState === "login" && (
+          <LoginPage
+            onLogin={handleLogin}
+            onBack={() => setViewState("landing")}
+          />
+        )}
 
-      {viewState === "dashboard" && user && (
-        <DashboardLayout
-          user={user}
-          currentView={dashboardView}
-          onChangeView={handleViewChange}
-          onLogout={handleLogout}
-          isAdmin={isAdmin}
-          liveCredits={credits.credits}
-          liveStorageUsed={credits.storageUsedBytes}
-          liveStorageQuota={credits.storageQuotaBytes}
-          userPlan={credits.plan}
-        >
-          {renderDashboardContent()}
-        </DashboardLayout>
-      )}
-    </div>
+        {viewState === "dashboard" && user && (
+          <DashboardLayout
+            user={user}
+            currentView={dashboardView}
+            onChangeView={handleViewChange}
+            onLogout={handleLogout}
+            isAdmin={isAdmin}
+            liveCredits={credits.credits}
+            liveStorageUsed={credits.storageUsedBytes}
+            liveStorageQuota={credits.storageQuotaBytes}
+            userPlan={credits.plan}
+          >
+            {renderDashboardContent()}
+          </DashboardLayout>
+        )}
+      </div>
+    </CreditsModalProvider>
   );
 };
 

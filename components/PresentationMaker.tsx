@@ -200,7 +200,7 @@ export const PresentationMaker: React.FC = () => {
     // 生成完後如果實際張數更多，補扣超出的；如果更少，不退（簡化處理）
     const baseSlides = 6;
     const baseDeduct = await credits.tryDeduct("ai-text", baseSlides);
-    if (!baseDeduct.ok) { alert(baseDeduct.error || "點數不足"); return; }
+    if (!baseDeduct.ok) { return; }
     setIsGeneratingOutline(true);
     try {
       const prompt =
@@ -299,7 +299,6 @@ export const PresentationMaker: React.FC = () => {
         // 每張前扣 0.55 點
         const deduction = await credits.tryDeduct("ai-render");
         if (!deduction.ok) {
-          alert(deduction.error || "點數不足，已中止後續生成");
           break;
         }
 

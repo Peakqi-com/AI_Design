@@ -262,7 +262,7 @@ export const CRMSystem: React.FC = () => {
   const runCardScan = async () => {
     if (!cardImage) return;
     const d = await credits.tryDeduct("ai-social-post");
-    if (!d.ok) { alert(d.error || "點數不足"); return; }
+    if (!d.ok) { return; }
     setScanLoading(true);
     setScanResult(null);
     try {

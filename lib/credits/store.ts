@@ -2,7 +2,7 @@
  * Credits persistence layer — Redis primary, in-memory fallback.
  *
  * Plan tiers (依 2026-04-29 成本計算表):
- *   free        → 50   點（一次性體驗，無每月重置）
+ *   free        → 30   點（註冊預設體驗，無每月重置）
  *   pro         → 500  點/月  (NT$2,500 / 月，年費 NT$30,000)
  *   business    → 1500 點/月  (NT$6,600 / 月，年費 NT$79,800)
  *   enterprise  → 客製化
@@ -70,7 +70,7 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "ai.allen.task@gmail.com")
   .filter(Boolean);
 
 const PLAN_INITIAL_CREDITS: Record<UserPlan, number> = {
-  free: 50,
+  free: 30,
   pro: 500,
   business: 1500,
   enterprise: 9999,
@@ -275,9 +275,9 @@ export async function listAllUsers(): Promise<UserCreditRecord[]> {
  */
 export const PLAN_INFO: Record<UserPlan, { label: string; price: string; creditsPerMonth: number; features: string[] }> = {
   free: {
-    label: "10 天免費體驗版",
+    label: "免費體驗版",
     price: "NT$ 0",
-    creditsPerMonth: 50,
+    creditsPerMonth: 30,
     features: ["AI 室內設計風格套用", "AI 空間渲染", "AI 彩色平面圖", "AI 立體平面圖", "AI 動畫影片", "AI 社群發文中心"],
   },
   pro: {

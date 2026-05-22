@@ -11,11 +11,11 @@ export const SubscriptionPage: React.FC = () => {
   const plans: PricingPlan[] = [
     {
       id: 'free',
-      title: '10 天免費體驗版',
+      title: '免費體驗版',
       price: 'NT$ 0',
       description: '適合初次體驗 AI 室內設計功能',
       features: [
-        '50 點體驗（≈ 10 圖片 + 1 影片）',
+        '註冊送 30 點體驗（≈ 54 張圖 / 2 部影片）',
         'AI 室內設計風格套用',
         'AI 空間渲染',
         'AI 彩色 / 立體平面圖',

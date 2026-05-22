@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { resolveClientUserScopeId } from "./user-scope";
 import { useSession } from "next-auth/react";
+import { useCreditsModal } from "./credits-modal-context";
 
 export interface CreditState {
   credits: number;
@@ -18,6 +19,7 @@ export interface CreditState {
 
 export function useCredits() {
   const { data: session } = useSession();
+  const modal = useCreditsModal();
   const [state, setState] = useState<CreditState>({
     credits: 0,
     plan: "free",
@@ -76,6 +78,10 @@ export function useCredits() {
         });
         const data = await res.json();
         if (!res.ok) {
+          // 402 = 點數不足 — 顯示全域 popup
+          if (res.status === 402 && modal) {
+            modal.showInsufficientCredits(data.error);
+          }
           return { ok: false, remaining: data.remaining ?? state.credits, error: data.error };
         }
         setState((prev) => ({ ...prev, credits: data.remaining }));
@@ -84,7 +90,7 @@ export function useCredits() {
         return { ok: false, remaining: state.credits, error: "扣點失敗，請重試" };
       }
     },
-    [userScopeId, state.credits],
+    [userScopeId, state.credits, modal],
   );
 
   return {
