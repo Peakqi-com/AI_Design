@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
-import { canAccessFeature, type UserPlan } from '@/lib/credits/store';
+import { canAccessFeature, formatCredits, type UserPlan } from '@/lib/credits/store';
 
 interface DashboardLayoutProps {
   user: User;
@@ -121,7 +121,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 shadow-sm">
           <p className="text-xs font-semibold text-brand-800 uppercase mb-1">AI 算力點數</p>
           <div className="flex justify-between items-end">
-            <span className="text-2xl font-bold text-brand-600">{typeof liveCredits === "number" ? liveCredits : user.credits}</span>
+            <span className="text-2xl font-bold text-brand-600">{formatCredits(typeof liveCredits === "number" ? liveCredits : user.credits)}</span>
             <button
               onClick={() => { onChangeView('subscription'); setMobileMenuOpen(false); }}
               className="text-xs text-brand-600 hover:text-brand-700 underline"

@@ -20,8 +20,9 @@ export interface PricingPlan {
   description: string;
   features: string[];
   recommended?: boolean;
-  type: 'subscription' | 'credits' | 'course';
+  type: 'subscription' | 'credits' | 'course' | 'addon';
   buttonText: string;
+  paymentUrl?: string;
 }
 
 export interface NavItem {

@@ -1,14 +1,16 @@
 /**
  * Credits persistence layer — Redis primary, in-memory fallback.
  *
- * Each user has a record keyed by their userScopeId:
- *   { credits, plan, createdAt, updatedAt }
+ * Plan tiers (依 2026-04-29 成本計算表):
+ *   free        → 50   點（一次性體驗，無每月重置）
+ *   pro         → 500  點/月  (NT$2,500 / 月，年費 NT$30,000)
+ *   business    → 1500 點/月  (NT$6,600 / 月，年費 NT$79,800)
+ *   enterprise  → 客製化
  *
- * Plan tiers:
- *   free        → 30  initial credits, no monthly refresh
- *   pro         → 800 credits/month  (NT$2,500)
- *   business    → 2400 credits/month (NT$6,600)
- *   enterprise  → custom
+ * 扣點規則：
+ *   圖片 = 0.55 點 / 張   (ai-render*, ai-upscale, ai-social-image, ai-presentation)
+ *   影片 = 12.5 點 / 部   (ai-video — 不分中國/美國產地)
+ *   文字 = 0.15 點 / 則   (ai-social-post, ai-text)
  */
 
 import { Redis } from "@upstash/redis";
@@ -68,22 +70,29 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "ai.allen.task@gmail.com")
   .filter(Boolean);
 
 const PLAN_INITIAL_CREDITS: Record<UserPlan, number> = {
-  free: 30,
-  pro: 800,
-  business: 2400,
+  free: 50,
+  pro: 500,
+  business: 1500,
   enterprise: 9999,
 };
 
+const CREDIT_COST_IMAGE = 0.55;
+const CREDIT_COST_VIDEO = 12.5;
+const CREDIT_COST_TEXT = 0.15;
+
 export const CREDIT_COSTS: Record<string, number> = {
-  "ai-render": 2,
-  "ai-render-analyze": 2,
-  "ai-render-regional": 2,
-  "ai-video": 5,
-  "ai-upscale": 1,
-  "ai-social-post": 1,
-  "ai-social-image": 1,
-  "ai-presentation": 2,
+  "ai-render": CREDIT_COST_IMAGE,
+  "ai-render-analyze": CREDIT_COST_IMAGE,
+  "ai-render-regional": CREDIT_COST_IMAGE,
+  "ai-upscale": CREDIT_COST_IMAGE,
+  "ai-social-image": CREDIT_COST_IMAGE,
+  "ai-presentation": CREDIT_COST_IMAGE,
+  "ai-video": CREDIT_COST_VIDEO,
+  "ai-social-post": CREDIT_COST_TEXT,
+  "ai-text": CREDIT_COST_TEXT,
 };
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /* ---------- in-memory fallback ---------- */
 
@@ -175,20 +184,20 @@ export async function deductCredits(
   userId: string,
   action: string,
 ): Promise<{ success: boolean; remaining: number; cost: number; error?: string }> {
-  const cost = CREDIT_COSTS[action] ?? 2;
+  const cost = CREDIT_COSTS[action] ?? CREDIT_COST_IMAGE;
   const record = await getUserCredits(userId);
 
   if (record.credits < cost) {
     return {
       success: false,
-      remaining: record.credits,
+      remaining: round2(record.credits),
       cost,
-      error: `點數不足（需要 ${cost} 點，目前剩餘 ${record.credits} 點）`,
+      error: `點數不足（需要 ${cost} 點，目前剩餘 ${round2(record.credits)} 點）`,
     };
   }
 
-  record.credits -= cost;
-  record.totalUsed += cost;
+  record.credits = round2(record.credits - cost);
+  record.totalUsed = round2(record.totalUsed + cost);
   await saveUserCredits(record);
 
   return { success: true, remaining: record.credits, cost };
@@ -263,30 +272,46 @@ export async function listAllUsers(): Promise<UserCreditRecord[]> {
  */
 export const PLAN_INFO: Record<UserPlan, { label: string; price: string; creditsPerMonth: number; features: string[] }> = {
   free: {
-    label: "免費體驗版",
+    label: "10 天免費體驗版",
     price: "NT$ 0",
-    creditsPerMonth: 30,
-    features: ["AI 空間渲染", "多視角輸出", "媒體庫", "簡報製作"],
+    creditsPerMonth: 50,
+    features: ["AI 室內設計風格套用", "AI 空間渲染", "AI 彩色平面圖", "AI 立體平面圖", "AI 動畫影片", "AI 社群發文中心"],
   },
   pro: {
     label: "專業版",
     price: "NT$ 2,500 / 月",
-    creditsPerMonth: 800,
-    features: ["AI 空間渲染", "多視角輸出", "媒體庫", "簡報製作", "社群發文中心", "AI 報價"],
+    creditsPerMonth: 500,
+    features: ["AI 室內設計風格套用", "AI 空間渲染", "AI 彩色/立體平面圖", "AI 立面圖、材料說明", "AI 簡報製作", "AI 動畫影片", "AI 社群發文中心", "客戶 CRM 系統", "媒體庫（可自行上傳）", "作品無浮水印"],
   },
   business: {
     label: "商務版",
     price: "NT$ 6,600 / 月",
-    creditsPerMonth: 2400,
-    features: ["所有專業版功能", "客戶關係 CRM", "專案管理", "優先算力", "專屬客服"],
+    creditsPerMonth: 1500,
+    features: ["所有專業版功能", "圖片畫質增強", "優先算力支持", "免費行銷文案創作", "新功能優先體驗內測"],
   },
   enterprise: {
     label: "企業版",
-    price: "聯繫業務",
+    price: "聯繫客服",
     creditsPerMonth: 9999,
-    features: ["全功能客製化", "無限點數", "API 存取", "專屬部署", "SLA 保證"],
+    features: ["每月客製化點數", "所有商務版功能", "API 串接存取", "客製化企業 AI 功能", "企業專屬 AI 部署", "SLA 服務保證", "專屬客戶客服經理"],
   },
 };
+
+export const CREDIT_RATES = {
+  image: CREDIT_COST_IMAGE,
+  video: CREDIT_COST_VIDEO,
+  text: CREDIT_COST_TEXT,
+} as const;
+
+/**
+ * Format credits for display — integers show as-is, fractions show 2 decimals.
+ * e.g. 500 → "500", 499.45 → "499.45", 12.5 → "12.5"
+ */
+export function formatCredits(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "0";
+  const rounded = round2(value);
+  return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(2).replace(/0$/, "");
+}
 
 /**
  * Feature access by plan — returns true if the user's plan allows access.

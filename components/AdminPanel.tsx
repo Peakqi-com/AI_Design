@@ -8,6 +8,7 @@ import {
   Shield,
   Users,
 } from "lucide-react";
+import { formatCredits } from "@/lib/credits/store";
 
 interface UserRecord {
   userId: string;
@@ -254,8 +255,8 @@ export const AdminPanel: React.FC = () => {
                         {badge.label}
                       </span>
                     </span>
-                    <span className="text-gray-700 font-semibold">{user.credits}</span>
-                    <span className="text-gray-500">{user.totalUsed}</span>
+                    <span className="text-gray-700 font-semibold">{formatCredits(user.credits)}</span>
+                    <span className="text-gray-500">{formatCredits(user.totalUsed)}</span>
                     <span className="text-[11px] text-gray-400">
                       {new Date(user.updatedAt).toLocaleDateString("zh-TW")}
                     </span>

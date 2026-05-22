@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import { useCredits } from "@/lib/client/use-credits";
+import { formatCredits } from "@/lib/credits/store";
 
 interface ChatMessage {
   id: string;
@@ -256,7 +257,7 @@ export const AIChatImage: React.FC = () => {
           <p className="text-[11px] text-gray-500 mt-0.5">輸入描述或上傳圖片，AI 即時生成室內設計圖</p>
         </div>
         <div className="text-xs text-gray-400">
-          剩餘 <span className="font-bold text-brand-600">{credits.credits}</span> 點
+          剩餘 <span className="font-bold text-brand-600">{formatCredits(credits.credits)}</span> 點
         </div>
       </div>
 
