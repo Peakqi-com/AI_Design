@@ -812,7 +812,8 @@ export const MarketingCenter: React.FC = () => {
       alert("請先從素材庫選擇圖片或影片");
       return;
     }
-    const deduction = await credits.tryDeduct("ai-social-post");
+    const platformCount = Math.max(1, selectedPlatforms.length);
+    const deduction = await credits.tryDeduct("ai-social-post", platformCount);
     if (!deduction.ok) {
       alert(deduction.error || "點數不足");
       return;

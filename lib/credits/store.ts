@@ -183,8 +183,11 @@ export async function saveUserCredits(record: UserCreditRecord): Promise<void> {
 export async function deductCredits(
   userId: string,
   action: string,
+  quantity: number = 1,
 ): Promise<{ success: boolean; remaining: number; cost: number; error?: string }> {
-  const cost = CREDIT_COSTS[action] ?? CREDIT_COST_IMAGE;
+  const unitCost = CREDIT_COSTS[action] ?? CREDIT_COST_IMAGE;
+  const qty = Math.max(1, Math.floor(Number(quantity) || 1));
+  const cost = round2(unitCost * qty);
   const record = await getUserCredits(userId);
 
   if (record.credits < cost) {

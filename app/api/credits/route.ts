@@ -164,8 +164,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
   }
 
+  const quantity = Math.max(1, Math.floor(Number(body.quantity) || 1));
+
   try {
-    const result = await deductCredits(userId, action);
+    const result = await deductCredits(userId, action, quantity);
     if (!result.success) {
       return NextResponse.json({ error: result.error, ...result }, { status: 402 });
     }

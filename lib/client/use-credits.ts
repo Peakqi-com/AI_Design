@@ -64,22 +64,22 @@ export function useCredits() {
 
   /**
    * Try to deduct credits for an action.
-   * Returns { ok: true, remaining } on success, { ok: false, error } on failure.
+   * @param quantity How many units to deduct (e.g. 8 for 8 viewpoints, N for N slides). Default 1.
    */
   const tryDeduct = useCallback(
-    async (action: string): Promise<{ ok: boolean; remaining: number; error?: string }> => {
+    async (action: string, quantity: number = 1): Promise<{ ok: boolean; remaining: number; cost?: number; error?: string }> => {
       try {
         const res = await fetch("/api/credits", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: userScopeId, action }),
+          body: JSON.stringify({ userId: userScopeId, action, quantity }),
         });
         const data = await res.json();
         if (!res.ok) {
           return { ok: false, remaining: data.remaining ?? state.credits, error: data.error };
         }
         setState((prev) => ({ ...prev, credits: data.remaining }));
-        return { ok: true, remaining: data.remaining };
+        return { ok: true, remaining: data.remaining, cost: data.cost };
       } catch {
         return { ok: false, remaining: state.credits, error: "扣點失敗，請重試" };
       }

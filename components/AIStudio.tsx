@@ -888,19 +888,29 @@ export const AIStudio: React.FC = () => {
       let upscaleInfo: UpscaleApiResponse | null = null;
 
       if (outputQuality === "detail" || outputQuality === "hd2x") {
-        setGenerationStatusText("正在進行細節修復...");
-        setGenerationProgress((prev) => Math.max(prev, 86));
-        refineInfo = await requestRefine(finalImage);
-        finalImage = refineInfo.imageDataUrl;
-        qualityTag = "細節修復";
+        const refineDeduct = await credits.tryDeduct("ai-render");
+        if (!refineDeduct.ok) {
+          setInsufficientCreditsMsg(refineDeduct.error || "點數不足（細節修復）");
+        } else {
+          setGenerationStatusText("正在進行細節修復...");
+          setGenerationProgress((prev) => Math.max(prev, 86));
+          refineInfo = await requestRefine(finalImage);
+          finalImage = refineInfo.imageDataUrl;
+          qualityTag = "細節修復";
+        }
       }
 
       if (outputQuality === "hd2x") {
-        setGenerationStatusText("正在進行高清增強...");
-        setGenerationProgress((prev) => Math.max(prev, 92));
-        upscaleInfo = await requestUpscale(finalImage);
-        finalImage = upscaleInfo.imageDataUrl;
-        qualityTag = `細節修復 + 高清 x${upscaleInfo.scaleApplied}`;
+        const upscaleDeduct = await credits.tryDeduct("ai-render");
+        if (!upscaleDeduct.ok) {
+          setInsufficientCreditsMsg(upscaleDeduct.error || "點數不足（高清增強）");
+        } else {
+          setGenerationStatusText("正在進行高清增強...");
+          setGenerationProgress((prev) => Math.max(prev, 92));
+          upscaleInfo = await requestUpscale(finalImage);
+          finalImage = upscaleInfo.imageDataUrl;
+          qualityTag = `細節修復 + 高清 x${upscaleInfo.scaleApplied}`;
+        }
       }
 
       const dimensions = await getImageDimensions(finalImage).catch(() => null);
@@ -1022,8 +1032,7 @@ export const AIStudio: React.FC = () => {
       setLabeledFloorPlan(payload.imageDataUrl);
       setMultiPhase("review");
 
-      // 同時啟動面積估算（不阻塞主流程，扣 1 點）
-      credits.tryDeduct("ai-social-post").catch(() => {});
+      // 同時啟動面積估算（內含在平面圖分析扣點裡，這裡不重複扣）
       setIsEstimatingArea(true);
       fetch("/api/ai/render", {
         method: "POST",
@@ -1360,6 +1369,13 @@ export const AIStudio: React.FC = () => {
 
       const referenceImage = completedImages.get(slot.referenceSource);
       if (!referenceImage) continue;
+
+      // 每張視角扣 1 次圖片點數
+      const slotDeduct = await credits.tryDeduct("ai-render");
+      if (!slotDeduct.ok) {
+        setInsufficientCreditsMsg(slotDeduct.error || "點數不足，已中止後續生成");
+        break;
+      }
 
       setCurrentMultiSlot(slot.slotKey);
       setMultiViewResults((prev) =>

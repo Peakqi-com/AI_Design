@@ -179,6 +179,8 @@ export const PresentationMaker: React.FC = () => {
 
   /* step 2 */
   const [imagePickerSlideId, setImagePickerSlideId] = useState<string | null>(null);
+  const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
+  const [imageGenProgress, setImageGenProgress] = useState<string>("");
 
   /* step 3 */
   const [selectedStyleId, setSelectedStyleId] = useState<string>("bold-signal");
@@ -194,8 +196,11 @@ export const PresentationMaker: React.FC = () => {
      ================================================================ */
 
   const handleGenerateOutline = async () => {
-    const deduction = await credits.tryDeduct("ai-presentation");
-    if (!deduction.ok) { alert(deduction.error || "點數不足"); return; }
+    // 先預扣典型張數 6 × 0.15 = 0.9 點（基礎費）以防止點數不足；
+    // 生成完後如果實際張數更多，補扣超出的；如果更少，不退（簡化處理）
+    const baseSlides = 6;
+    const baseDeduct = await credits.tryDeduct("ai-text", baseSlides);
+    if (!baseDeduct.ok) { alert(baseDeduct.error || "點數不足"); return; }
     setIsGeneratingOutline(true);
     try {
       const prompt =
@@ -229,6 +234,10 @@ export const PresentationMaker: React.FC = () => {
       }
 
       if (parsed.length > 0) {
+        // 補扣超出基礎張數的部分
+        if (parsed.length > baseSlides) {
+          await credits.tryDeduct("ai-text", parsed.length - baseSlides).catch(() => {});
+        }
         setSlides(
           parsed.map((s, i) => ({
             id: uid(),
@@ -258,6 +267,72 @@ export const PresentationMaker: React.FC = () => {
       setSlides(fb.map((s, i) => ({ id: uid(), ...s, imageUrl: null, layout: getDefaultLayout(i, fb.length) })));
     } finally {
       setIsGeneratingOutline(false);
+    }
+  };
+
+  /* ================================================================
+     AI 一鍵生成所有缺圖配圖（每張扣 0.55 點）
+     ================================================================ */
+
+  const handleGenerateAllImages = async () => {
+    const slidesToFill = slides.filter((s) => !s.imageUrl);
+    if (slidesToFill.length === 0) {
+      alert("所有投影片都已有配圖");
+      return;
+    }
+    if (assets.length === 0) {
+      alert("請先在媒體庫加入至少一張參考圖，AI 才能據此風格生成配圖");
+      return;
+    }
+    const confirmed = window.confirm(
+      `將為 ${slidesToFill.length} 張缺圖投影片 AI 生成配圖，預計扣 ${(slidesToFill.length * 0.55).toFixed(2)} 點。繼續？`,
+    );
+    if (!confirmed) return;
+
+    setIsGeneratingAllImages(true);
+    let done = 0;
+    try {
+      for (let i = 0; i < slidesToFill.length; i++) {
+        const slide = slidesToFill[i];
+        setImageGenProgress(`生成中 ${i + 1} / ${slidesToFill.length}：${slide.title}`);
+
+        // 每張前扣 0.55 點
+        const deduction = await credits.tryDeduct("ai-render");
+        if (!deduction.ok) {
+          alert(deduction.error || "點數不足，已中止後續生成");
+          break;
+        }
+
+        // 用素材庫的圖循環當風格參考
+        const refAsset = assets[i % assets.length];
+        const refBase64 = await fetchImageAsBase64(refAsset.url);
+        if (!refBase64) continue;
+
+        try {
+          const res = await fetch("/api/ai/social/image/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageDataUrl: `data:image/jpeg;base64,${refBase64}`,
+              prompt: `為室內設計簡報投影片生成配圖。投影片標題：${slide.title}。內容：${slide.body}。風格參考上傳的圖片。專業攝影風格，高質感。`,
+              style: "interior-design",
+            }),
+          });
+          const data = (await res.json()) as { imageDataUrl?: string; error?: string };
+          if (res.ok && data.imageDataUrl) {
+            updateSlide(slide.id, { imageUrl: data.imageDataUrl });
+            done++;
+          }
+        } catch {
+          /* skip this slide on error */
+        }
+      }
+    } finally {
+      setIsGeneratingAllImages(false);
+      setImageGenProgress("");
+      if (done > 0) {
+        alert(`完成：成功生成 ${done} 張配圖`);
+      }
     }
   };
 
@@ -642,11 +717,33 @@ export const PresentationMaker: React.FC = () => {
      Render: Step 2 - Image selection
      ================================================================ */
 
-  const renderStep2Left = () => (
+  const renderStep2Left = () => {
+    const missingCount = slides.filter((s) => !s.imageUrl).length;
+    return (
     <div className="space-y-3">
       <p className="text-xs text-gray-500">
         為每張投影片選擇配圖。點擊圖片區域即可從素材庫挑選。
       </p>
+      {missingCount > 0 && (
+        <button
+          onClick={() => void handleGenerateAllImages()}
+          disabled={isGeneratingAllImages || assets.length === 0}
+          className="w-full py-2 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-lg text-xs font-medium hover:from-brand-600 hover:to-brand-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          title={assets.length === 0 ? "請先在媒體庫加入參考圖" : ""}
+        >
+          {isGeneratingAllImages ? (
+            <>
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>{imageGenProgress || "生成中..."}</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>AI 一鍵生成所有缺圖（{missingCount} 張，共扣 {(missingCount * 0.55).toFixed(2)} 點）</span>
+            </>
+          )}
+        </button>
+      )}
       {slides.map((slide, i) => (
         <div key={slide.id} className="bg-gray-50 rounded-lg p-2.5 border border-gray-200">
           <div className="flex items-center gap-2 mb-2">
@@ -674,19 +771,13 @@ export const PresentationMaker: React.FC = () => {
             )}
             <div className="flex-1 min-w-0">
               <p className="text-[10px] text-gray-500 truncate">{slide.body}</p>
-              <button
-                disabled
-                className="mt-1 text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-400 cursor-not-allowed"
-                title="即將推出"
-              >
-                AI 生成配圖
-              </button>
             </div>
           </div>
         </div>
       ))}
     </div>
-  );
+    );
+  };
 
   const renderStep2Right = () => {
     if (!imagePickerSlideId) {
