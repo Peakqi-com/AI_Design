@@ -468,15 +468,70 @@ export const PresentationMaker: React.FC = () => {
         const isLast = idx === slides.length - 1;
         const s = pptx.addSlide();
 
-        /* ---- Nano Banana / AI 整頁圖 ---- */
+        /* ---- Nano Banana 模式：AI 純背景圖 + 程式文字 overlay ---- */
         if (slide.layout === "ai-full" && slide.imageUrl) {
           const aiBase64 = await fetchImageAsBase64(slide.imageUrl);
           if (aiBase64) {
+            // 1) 鋪滿背景圖
             s.addImage({
               data: `image/jpeg;base64,${aiBase64}`,
               x: 0, y: 0, w: 13.33, h: 7.5,
               sizing: { type: "cover", w: 13.33, h: 7.5 },
             });
+
+            if (isFirst || isLast) {
+              // 封面/結尾：中央大字 + 半透明深色遮罩
+              s.addShape(pptx.ShapeType.rect, {
+                x: 0, y: 2.4, w: 13.33, h: 2.7,
+                fill: { color: "000000", transparency: 50 },
+                line: { color: "000000", transparency: 100 },
+              });
+              s.addText(slide.title, {
+                x: 0.5, y: 2.7, w: 12.33, h: 1.4,
+                fontSize: 44, bold: true, color: "FFFFFF",
+                fontFace: font, align: "center", lineSpacingMultiple: 1.2,
+              });
+              s.addText(slide.body, {
+                x: 0.8, y: 4.1, w: 11.73, h: 1.0,
+                fontSize: 18, color: "FFFFFF",
+                fontFace: font, align: "center", lineSpacingMultiple: 1.4,
+              });
+              s.addText(new Date().toLocaleDateString("zh-TW"), {
+                x: 0.5, y: 6.9, w: 12.33, h: 0.4,
+                fontSize: 11, color: "FFFFFF", fontFace: font, align: "center",
+              });
+            } else {
+              // 內容頁：上方標題條 + 下方內文條
+              // 上方標題遮罩
+              s.addShape(pptx.ShapeType.rect, {
+                x: 0, y: 0, w: 13.33, h: 1.4,
+                fill: { color: "000000", transparency: 55 },
+                line: { color: "000000", transparency: 100 },
+              });
+              s.addText(slide.title, {
+                x: 0.6, y: 0.35, w: 12.13, h: 0.7,
+                fontSize: 28, bold: true, color: "FFFFFF",
+                fontFace: font, valign: "middle",
+              });
+
+              // 下方內文遮罩
+              s.addShape(pptx.ShapeType.rect, {
+                x: 0, y: 5.2, w: 13.33, h: 2.3,
+                fill: { color: "000000", transparency: 55 },
+                line: { color: "000000", transparency: 100 },
+              });
+              s.addText(slide.body, {
+                x: 0.8, y: 5.45, w: 11.73, h: 1.8,
+                fontSize: 16, color: "FFFFFF",
+                fontFace: font, valign: "top", lineSpacingMultiple: 1.5,
+              });
+
+              // 右下頁碼
+              s.addText(`${idx + 1} / ${slides.length}`, {
+                x: 10.83, y: 7.05, w: 2, h: 0.35,
+                fontSize: 10, color: "FFFFFF", fontFace: font, align: "right",
+              });
+            }
             continue;
           }
         }
@@ -1244,9 +1299,35 @@ export const PresentationMaker: React.FC = () => {
                 }}
               >
                 {slide.layout === "ai-full" ? (
-                  <div className="flex-1 relative bg-gray-100">
+                  <div
+                    className="flex-1 relative bg-gray-100"
+                    style={{ fontFamily: "'Microsoft JhengHei', 'Arial', sans-serif" }}
+                  >
                     {slide.imageUrl ? (
-                      <img src={slide.imageUrl} alt="" className="w-full h-full object-cover" />
+                      <>
+                        <img src={slide.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                        {isFirst || isLast ? (
+                          <>
+                            <div className="absolute left-0 right-0 top-1/3 bottom-1/3 bg-black/50 flex flex-col items-center justify-center px-6 text-center">
+                              <p className="text-2xl md:text-4xl font-bold text-white leading-tight">{slide.title}</p>
+                              <div className="w-12 h-0.5 my-3 bg-white/70 rounded" />
+                              <p className="text-xs md:text-base text-white whitespace-pre-wrap leading-relaxed max-w-md">{slide.body}</p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="absolute top-0 left-0 right-0 bg-black/50 px-4 md:px-6 py-2.5 md:py-3">
+                              <p className="text-base md:text-xl font-bold text-white leading-tight">{slide.title}</p>
+                            </div>
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-4 md:px-6 py-2.5 md:py-3">
+                              <p className="text-xs md:text-sm text-white leading-relaxed whitespace-pre-wrap line-clamp-3">{slide.body}</p>
+                              <p className="text-[9px] md:text-[10px] text-white/70 text-right mt-1">
+                                {i + 1} / {slides.length}
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
                         <RefreshCw className="w-4 h-4 animate-spin mr-2" />

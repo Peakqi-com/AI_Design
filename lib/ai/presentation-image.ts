@@ -105,36 +105,35 @@ const discoverModels = async (authHeaders: Record<string, string>): Promise<stri
 
 const buildSlidePrompt = (input: GeneratePresentationPageInput): string => {
   const style = input.styleLabel || "現代簡約、室內設計風格、淡雅高質感色調";
-  const pageMeta = `第 ${input.pageIndex + 1} / ${input.totalPages} 頁`;
   const role = input.isFirst
-    ? "封面頁"
+    ? "封面背景"
     : input.isLast
-      ? "結尾感謝頁"
-      : "內容頁";
+      ? "結尾感謝頁背景"
+      : "內容頁背景";
+  const themeHint = input.title ? `本頁主題提示（供視覺發想，請不要寫進圖裡）：${input.title}` : "";
 
   return [
-    "你是專業簡報設計師，請設計 1 張 16:9 高畫質室內設計提案簡報投影片。",
-    `投影片角色：${role}（${pageMeta}）`,
-    `風格基調：${style}。整體美術風格簡潔、留白合宜、無雜訊。`,
-    `投影片標題：「${input.title}」`,
-    `投影片內文：${input.body}`,
-    input.projectTitle ? `專案名稱：${input.projectTitle}` : "",
-    input.designerName ? `設計師：${input.designerName}` : "",
+    "你是專業視覺設計師。請為一份室內設計簡報生成 1 張「純視覺背景圖」。",
+    `用途：${role}（第 ${input.pageIndex + 1} / ${input.totalPages} 頁）`,
+    `風格基調：${style}`,
+    themeHint,
     "",
-    "排版要求：",
-    "- 16:9 比例，1920×1080 解析度概念。",
-    "- 上半部放標題（大字、清晰），下半部放內文（適中字級、易讀）。",
-    "- 留白充足，視覺呼吸感佳。背景可為純色、漸層或低調設計元素。",
-    "- 文字必須完全使用繁體中文，字體清晰可辨識，不可有亂碼或外語雜字。",
-    "- 不要 watermark、不要外框、不要時間戳、不要 placeholder 文字。",
-    "- 右下角可顯示頁碼「" + (input.pageIndex + 1) + "/" + input.totalPages + "」。",
-    input.isFirst
-      ? "- 封面頁：標題置中放大，副標題顯示設計師與專案名，視覺感官需專業大氣。"
-      : input.isLast
-        ? "- 結尾頁：以致謝語為主視覺，配色與封面呼應。"
-        : "- 內容頁：可搭配室內設計相關的抽象視覺裝飾元素。",
+    "🚫 嚴格禁止（絕對不可違反）：",
+    "- 圖片中【絕對不可】出現任何文字、字母、數字、標點、符號、頁碼、標題、watermark、logo",
+    "- 不要中文字、不要英文字、不要阿拉伯數字、不要圖騰文字、不要假字",
+    "- 文字會由程式之後另外排在圖上，AI 只負責純粹的視覺背景",
+    "- 任何形狀只要看起來像字就算違反，必須完全避免",
     "",
-    "只輸出 1 張圖片，不要文字描述。",
+    "✅ 視覺要求：",
+    "- 16:9 寬螢幕構圖（1920×1080）",
+    "- 室內設計相關的抽象視覺元素（例：簡約幾何、淡雅色塊、極簡建築線條、空間意象、材質紋理）",
+    "- 留白充足。**上方 1/4 與下方 1/3 區域必須留出乾淨單色或低對比區域**，這些區域之後要放文字",
+    "- 視覺重心放在中央或邊角，避免把主視覺元素放在「上方標題區」與「下方內文區」",
+    "- 高質感、專業設計感、適合室內設計提案",
+    "- 避免雜亂、避免拼貼、避免照片寫真風（要設計感 / 插畫感 / 渲染感）",
+    input.isFirst ? "- 封面：色調可較大膽、有氣勢" : input.isLast ? "- 結尾：色調可柔和、有溫度" : "- 內容頁：色調穩重專業",
+    "",
+    "只輸出 1 張純背景圖片，不要任何解釋。",
   ]
     .filter(Boolean)
     .join("\n");
