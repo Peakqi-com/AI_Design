@@ -49,6 +49,7 @@ interface CrmContact {
   notes?: string;
   cardImageUrl?: string;
   unread: number;
+  lastMessageText?: string;
   lastMessageAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -459,6 +460,94 @@ export const CRMSystem: React.FC = () => {
     if (editingField) updateField(editingField, editValue);
   };
 
+  /* ---- messages / chat ---- */
+  interface ChatMessage {
+    id: string;
+    contactId: string;
+    direction: "inbound" | "outbound";
+    senderType: "customer" | "agent" | "system";
+    messageType: string;
+    text?: string;
+    attachment?: { type: string; dataUrl?: string; url?: string; name?: string };
+    timestamp: string;
+  }
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContactIdRef = useRef<string | null>(null);
+
+  const fetchMessages = useCallback(async (contactId: string) => {
+    setChatLoading(true);
+    try {
+      const res = await fetch(
+        `/api/crm/messages?contactId=${encodeURIComponent(contactId)}&markRead=1`,
+        { headers: buildHeaders() },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages(data.messages ?? []);
+        setContacts((prev) =>
+          prev.map((c) => (c.id === contactId ? { ...c, unread: 0 } : c)),
+        );
+      }
+    } catch { /* ignore */ } finally {
+      setChatLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (selected && selected.id !== chatContactIdRef.current) {
+      chatContactIdRef.current = selected.id;
+      setShowDetail(false);
+      fetchMessages(selected.id);
+    }
+    if (!selected) {
+      chatContactIdRef.current = null;
+      setChatMessages([]);
+    }
+  }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages.length]);
+
+  const sendMessage = async () => {
+    if (!selected || !chatInput.trim()) return;
+    setChatSending(true);
+    try {
+      const res = await fetch("/api/crm/messages", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ contactId: selected.id, text: chatInput.trim() }),
+      });
+      if (res.ok) {
+        setChatInput("");
+        await fetchMessages(selected.id);
+        await fetchContacts();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`傳送失敗：${(err as { error?: string }).error || res.statusText}`);
+      }
+    } catch {
+      alert("傳送失敗：網路錯誤");
+    } finally {
+      setChatSending(false);
+    }
+  };
+
+  /* ---- polling for new messages ---- */
+  useEffect(() => {
+    if (!selected) return;
+    const interval = setInterval(() => {
+      if (selected) fetchMessages(selected.id);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* ---- copy webhook URL ---- */
   const copyWebhookUrl = async () => {
     if (!lineData?.webhookUrl) return;
@@ -796,217 +885,282 @@ export const CRMSystem: React.FC = () => {
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-gray-900 truncate">
+                    <span className={`font-medium text-sm truncate ${c.unread > 0 ? "text-gray-900 font-semibold" : "text-gray-900"}`}>
                       {c.displayName}
                     </span>
+                    {c.source === "line" && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-green-100 text-green-700">LINE</span>
+                    )}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-600"}`}>
                       {STATUS_LABELS[c.status as StatusFilter] ?? c.status}
                     </span>
                   </div>
-                  {c.company && (
+                  {c.lastMessageText ? (
+                    <p className={`text-xs truncate mt-0.5 ${c.unread > 0 ? "text-gray-700 font-medium" : "text-gray-400"}`}>
+                      {c.lastMessageText}
+                    </p>
+                  ) : c.company ? (
                     <p className="text-xs text-gray-500 truncate">{c.company}</p>
-                  )}
-                  {c.phone && (
-                    <p className="text-xs text-gray-400 truncate">{c.phone}</p>
-                  )}
-                  {c.tags.length > 0 && (
-                    <div className="flex gap-1 mt-1 flex-wrap">
-                      {c.tags.slice(0, 3).map((t) => (
-                        <span key={t} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                          {t}
-                        </span>
-                      ))}
-                      {c.tags.length > 3 && (
-                        <span className="text-[10px] text-gray-400">+{c.tags.length - 3}</span>
-                      )}
-                    </div>
+                  ) : null}
+                  {c.lastMessageAt && (
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      {new Date(c.lastMessageAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </p>
                   )}
                 </div>
+                {c.unread > 0 && (
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {c.unread > 9 ? "9+" : c.unread}
+                  </span>
+                )}
               </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* ---------- RIGHT PANEL: Detail ---------- */}
+      {/* ---------- RIGHT PANEL: Chat + Detail ---------- */}
       <div className="w-2/3 flex flex-col">
         {!selected ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
-            <UserCircle className="w-16 h-16 mb-3" />
-            <p className="text-lg">選擇客戶查看詳情</p>
+            <MessageCircle className="w-16 h-16 mb-3" />
+            <p className="text-lg">選擇客戶查看對話</p>
+            <p className="text-sm mt-1">LINE 客戶的訊息會即時顯示在這裡</p>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto">
-            {/* header */}
-            <div className="flex items-center gap-4 p-6 border-b border-gray-100">
+          <>
+            {/* Chat header */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white shrink-0">
               {selected.avatarUrl ? (
-                <img src={selected.avatarUrl} alt="" className="w-16 h-16 rounded-full object-cover" />
+                <img src={selected.avatarUrl} alt="" className="w-9 h-9 rounded-full object-cover" />
               ) : (
-                <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center">
-                  <User className="w-8 h-8 text-gray-500" />
+                <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center">
+                  <User className="w-4 h-4 text-gray-500" />
                 </div>
               )}
-              <div className="flex-1">
-                <h2 className="text-xl font-semibold text-gray-900">{selected.displayName}</h2>
-                {selected.company && (
-                  <p className="text-sm text-gray-500">{selected.company}</p>
-                )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-gray-900">{selected.displayName}</span>
+                  {selected.source === "line" && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">LINE</span>
+                  )}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_COLORS[selected.status]}`}>
+                    {STATUS_LABELS[selected.status as StatusFilter] ?? selected.status}
+                  </span>
+                </div>
+                {selected.company && <p className="text-xs text-gray-500 truncate">{selected.company}</p>}
               </div>
-              <select
-                value={selected.status}
-                onChange={(e) => updateStatus(e.target.value)}
-                className={`text-sm px-3 py-1.5 rounded-full border-0 cursor-pointer ${STATUS_COLORS[selected.status]}`}
-              >
-                <option value="new">新客戶</option>
-                <option value="contacted">已聯繫</option>
-                <option value="proposal">提案中</option>
-                <option value="signed">已簽約</option>
-              </select>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowDetail(!showDetail)}
+                  className={`p-2 rounded-lg transition-colors ${showDetail ? "bg-brand-50 text-brand-600" : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"}`}
+                  title="客戶詳情"
+                >
+                  <User className="w-4 h-4" />
+                </button>
+                <select
+                  value={selected.status}
+                  onChange={(e) => updateStatus(e.target.value)}
+                  className="text-xs px-2 py-1 rounded-lg border border-gray-200 cursor-pointer bg-white"
+                >
+                  <option value="new">新客戶</option>
+                  <option value="contacted">已聯繫</option>
+                  <option value="proposal">提案中</option>
+                  <option value="signed">已簽約</option>
+                </select>
+              </div>
             </div>
 
-            {/* info grid */}
-            <div className="grid grid-cols-2 gap-4 p-6 border-b border-gray-100">
-              {([
-                { key: "phone", icon: Phone, label: "電話" },
-                { key: "email", icon: Mail, label: "電子郵件" },
-                { key: "title", icon: Briefcase, label: "職稱" },
-                { key: "address", icon: MapPin, label: "地址" },
-              ] as const).map(({ key, icon: Icon, label }) => (
-                <div key={key} className="group">
-                  <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">
-                    <Icon className="w-3 h-3" /> {label}
-                  </label>
-                  {editingField === key ? (
-                    <div className="flex gap-1">
-                      <input
-                        autoFocus
-                        className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitEdit();
-                          if (e.key === "Escape") setEditingField(null);
-                        }}
-                      />
-                      <button onClick={commitEdit} className="text-brand-600 text-sm">
-                        儲存
-                      </button>
+            <div className="flex-1 flex min-h-0 overflow-hidden">
+              {/* Chat messages */}
+              <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+                  {chatLoading && chatMessages.length === 0 && (
+                    <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
+                      <RefreshCw className="w-4 h-4 animate-spin mr-2" /> 載入對話...
                     </div>
-                  ) : (
-                    <p
-                      className="text-sm text-gray-800 cursor-pointer hover:text-brand-600 flex items-center gap-1"
-                      onClick={() =>
-                        startEdit(key, (selected[key] as string) ?? "")
-                      }
+                  )}
+                  {!chatLoading && chatMessages.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-sm">
+                      <MessageCircle className="w-8 h-8 mb-2 opacity-30" />
+                      <p>尚無對話記錄</p>
+                      {selected.source === "line" && <p className="text-xs mt-1">客戶在 LINE 傳送訊息後會顯示在這裡</p>}
+                    </div>
+                  )}
+                  {chatMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`flex ${msg.direction === "outbound" ? "justify-end" : "justify-start"}`}
                     >
-                      {(selected[key] as string) || (
-                        <span className="text-gray-300">未填寫</span>
-                      )}
-                      <Edit3 className="w-3 h-3 opacity-0 group-hover:opacity-50" />
-                    </p>
+                      <div className={`max-w-[75%] ${msg.direction === "outbound" ? "" : ""}`}>
+                        {msg.attachment?.dataUrl && msg.messageType === "image" && (
+                          <img
+                            src={msg.attachment.dataUrl}
+                            alt="附件"
+                            className="max-w-full max-h-60 rounded-lg mb-1 cursor-pointer border border-gray-200"
+                            onClick={() => window.open(msg.attachment!.dataUrl!, "_blank")}
+                          />
+                        )}
+                        {msg.attachment?.url && msg.messageType === "image" && !msg.attachment.dataUrl && (
+                          <img
+                            src={msg.attachment.url}
+                            alt="附件"
+                            className="max-w-full max-h-60 rounded-lg mb-1 cursor-pointer border border-gray-200"
+                            onClick={() => window.open(msg.attachment!.url!, "_blank")}
+                          />
+                        )}
+                        <div
+                          className={`rounded-2xl px-4 py-2 text-sm ${
+                            msg.direction === "outbound"
+                              ? "bg-brand-600 text-white rounded-br-md"
+                              : "bg-white text-gray-800 border border-gray-200 rounded-bl-md shadow-sm"
+                          }`}
+                        >
+                          <p className="whitespace-pre-wrap break-words">{msg.text || `[${msg.messageType}]`}</p>
+                        </div>
+                        <p className={`text-[10px] mt-0.5 px-1 ${msg.direction === "outbound" ? "text-right text-gray-400" : "text-gray-400"}`}>
+                          {new Date(msg.timestamp).toLocaleString("zh-TW", { hour: "2-digit", minute: "2-digit" })}
+                          {msg.direction === "outbound" && <span className="ml-1">· 你</span>}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Message input */}
+                <div className="px-4 py-3 border-t border-gray-200 bg-white shrink-0">
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder={selected.source === "line" ? "輸入訊息（會推送到客戶的 LINE）..." : "輸入備註訊息..."}
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          sendMessage();
+                        }
+                      }}
+                      disabled={chatSending}
+                    />
+                    <button
+                      onClick={sendMessage}
+                      disabled={chatSending || !chatInput.trim()}
+                      className="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium shrink-0"
+                    >
+                      {chatSending ? "傳送中..." : "傳送"}
+                    </button>
+                  </div>
+                  {selected.source === "line" && (
+                    <p className="text-[10px] text-gray-400 mt-1 text-center">訊息會透過 LINE OA 推送給客戶</p>
                   )}
                 </div>
-              ))}
-            </div>
+              </div>
 
-            {/* company (editable) */}
-            <div className="px-6 py-4 border-b border-gray-100 group">
-              <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">
-                <Building className="w-3 h-3" /> 公司
-              </label>
-              {editingField === "company" ? (
-                <div className="flex gap-1">
-                  <input
-                    autoFocus
-                    className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitEdit();
-                      if (e.key === "Escape") setEditingField(null);
-                    }}
-                  />
-                  <button onClick={commitEdit} className="text-brand-600 text-sm">
-                    儲存
-                  </button>
+              {/* Detail sidebar (toggleable) */}
+              {showDetail && (
+                <div className="w-72 border-l border-gray-200 overflow-y-auto shrink-0 bg-white">
+                  {/* info grid */}
+                  <div className="p-4 space-y-3 border-b border-gray-100">
+                    {([
+                      { key: "phone", icon: Phone, label: "電話" },
+                      { key: "email", icon: Mail, label: "電子郵件" },
+                      { key: "company", icon: Building, label: "公司" },
+                      { key: "title", icon: Briefcase, label: "職稱" },
+                      { key: "address", icon: MapPin, label: "地址" },
+                    ] as const).map(({ key, icon: Icon, label }) => (
+                      <div key={key} className="group">
+                        <label className="text-[10px] text-gray-400 flex items-center gap-1 mb-0.5">
+                          <Icon className="w-3 h-3" /> {label}
+                        </label>
+                        {editingField === key ? (
+                          <div className="flex gap-1">
+                            <input
+                              autoFocus
+                              className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") commitEdit();
+                                if (e.key === "Escape") setEditingField(null);
+                              }}
+                            />
+                            <button onClick={commitEdit} className="text-brand-600 text-xs">OK</button>
+                          </div>
+                        ) : (
+                          <p
+                            className="text-xs text-gray-800 cursor-pointer hover:text-brand-600 flex items-center gap-1"
+                            onClick={() => startEdit(key, (selected[key] as string) ?? "")}
+                          >
+                            {(selected[key] as string) || <span className="text-gray-300">未填寫</span>}
+                            <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-50" />
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* tags */}
+                  <div className="p-4 border-b border-gray-100">
+                    <label className="text-[10px] text-gray-400 flex items-center gap-1 mb-2">
+                      <Tag className="w-3 h-3" /> 標籤
+                    </label>
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {selected.tags.map((t) => (
+                        <span key={t} className="inline-flex items-center gap-0.5 text-[10px] bg-brand-50 text-brand-700 px-1.5 py-0.5 rounded-full">
+                          {t}
+                          <button onClick={() => removeTag(t)} className="hover:text-red-500"><X className="w-2.5 h-2.5" /></button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
+                      <input
+                        className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="新增標籤..."
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addTag(newTag); }}
+                      />
+                      <button onClick={() => addTag(newTag)} className="text-brand-600 text-xs px-1">+</button>
+                    </div>
+                  </div>
+
+                  {/* notes */}
+                  <div className="p-4 border-b border-gray-100">
+                    <label className="text-[10px] text-gray-400 mb-1 block">備註</label>
+                    <textarea
+                      className="w-full text-xs border border-gray-200 rounded-lg p-2 min-h-[80px] focus:outline-none focus:ring-1 focus:ring-brand-500 resize-y"
+                      placeholder="輸入備註..."
+                      value={notesDraft}
+                      onChange={(e) => handleNotesChange(e.target.value)}
+                    />
+                    <p className="text-[9px] text-gray-400 mt-0.5">自動儲存</p>
+                  </div>
+
+                  {/* card image */}
+                  {selected.cardImageUrl && (
+                    <div className="p-4 border-b border-gray-100">
+                      <label className="text-[10px] text-gray-400 mb-1 block">名片</label>
+                      <img
+                        src={selected.cardImageUrl}
+                        alt="名片"
+                        className="w-full rounded-lg border border-gray-200 max-h-32 object-contain bg-gray-50 cursor-pointer"
+                        onClick={() => window.open(selected.cardImageUrl!, "_blank")}
+                      />
+                    </div>
+                  )}
+
+                  {/* delete */}
+                  <div className="p-4">
+                    <button onClick={deleteContact} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                      <Trash2 className="w-3 h-3" /> 刪除客戶
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <p
-                  className="text-sm text-gray-800 cursor-pointer hover:text-brand-600 flex items-center gap-1"
-                  onClick={() => startEdit("company", selected.company ?? "")}
-                >
-                  {selected.company || <span className="text-gray-300">未填寫</span>}
-                  <Edit3 className="w-3 h-3 opacity-0 group-hover:opacity-50" />
-                </p>
               )}
             </div>
-
-            {/* tags */}
-            <div className="px-6 py-4 border-b border-gray-100">
-              <label className="text-xs text-gray-400 flex items-center gap-1 mb-2">
-                <Tag className="w-3 h-3" /> 標籤
-              </label>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {selected.tags.map((t) => (
-                  <span
-                    key={t}
-                    className="inline-flex items-center gap-1 text-xs bg-brand-50 text-brand-700 px-2 py-1 rounded-full"
-                  >
-                    {t}
-                    <button onClick={() => removeTag(t)} className="hover:text-red-500">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-1">
-                <input
-                  className="flex-1 text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  placeholder="新增標籤..."
-                  value={newTag}
-                  onChange={(e) => setNewTag(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addTag(newTag);
-                  }}
-                />
-                <Button size="sm" variant="ghost" onClick={() => addTag(newTag)}>
-                  <Plus className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-
-            {/* notes */}
-            <div className="px-6 py-4 border-b border-gray-100">
-              <label className="text-xs text-gray-400 mb-2 block">備註</label>
-              <textarea
-                className="w-full text-sm border border-gray-200 rounded-lg p-3 min-h-[120px] focus:outline-none focus:ring-2 focus:ring-brand-500 resize-y"
-                placeholder="輸入備註..."
-                value={notesDraft}
-                onChange={(e) => handleNotesChange(e.target.value)}
-              />
-              <p className="text-[10px] text-gray-400 mt-1">自動儲存</p>
-            </div>
-
-            {/* card image */}
-            {selected.cardImageUrl && (
-              <div className="px-6 py-4 border-b border-gray-100">
-                <label className="text-xs text-gray-400 mb-2 block">名片照片</label>
-                <img
-                  src={selected.cardImageUrl}
-                  alt="名片"
-                  className="w-full rounded-lg border border-gray-200 max-h-48 object-contain bg-gray-50 cursor-pointer"
-                  onClick={() => window.open(selected.cardImageUrl!, "_blank")}
-                />
-              </div>
-            )}
-
-            {/* delete button */}
-            <div className="px-6 py-4">
-              <Button size="sm" variant="ghost" onClick={deleteContact} className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1">
-                <Trash2 className="w-4 h-4" /> 刪除客戶
-              </Button>
-            </div>
-          </div>
+          </>
         )}
       </div>
 
