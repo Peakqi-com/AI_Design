@@ -1806,7 +1806,7 @@ export const VideoStudio: React.FC = () => {
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden">
-        <div className="w-full lg:w-80 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden flex-shrink-0">
+        <div className="w-full lg:w-80 max-h-[35vh] lg:max-h-none bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden flex-shrink-0">
           <div className="p-4 border-b border-gray-100 bg-gray-50">
             <h3 className="font-bold text-gray-900 flex items-center gap-2">
               <Settings className="w-4 h-4" /> 影片生成設定
@@ -2167,7 +2167,7 @@ export const VideoStudio: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 bg-gray-900 rounded-xl overflow-hidden flex flex-col shadow-2xl relative">
+        <div className="flex-1 min-h-[200px] lg:min-h-0 bg-gray-900 rounded-xl overflow-hidden flex flex-col shadow-2xl relative">
           <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/65 to-transparent z-20 flex justify-between items-start">
             <div className="text-white text-xs font-mono">
               {isGenerating ? generationStage : resultVideoUrl ? "PREVIEW MODE" : "STANDBY"}

@@ -1440,7 +1440,7 @@ export const PresentationMaker: React.FC = () => {
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
       {/* Left panel */}
-      <div className="w-full lg:w-[380px] bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+      <div className="w-full lg:w-[380px] max-h-[35vh] lg:max-h-none bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -1478,7 +1478,7 @@ export const PresentationMaker: React.FC = () => {
       </div>
 
       {/* Right panel */}
-      <div className="flex-1 min-h-0 bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-[200px] lg:min-h-0 bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col">
         {rightContent()}
       </div>
     </div>

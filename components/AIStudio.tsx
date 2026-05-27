@@ -1470,7 +1470,7 @@ export const AIStudio: React.FC = () => {
         className="hidden"
       />
 
-      <div className="w-full lg:w-80 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+      <div className="w-full lg:w-80 max-h-[35vh] lg:max-h-none bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
         <div className="p-4 border-b border-gray-100 bg-gray-50">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
             <Sliders className="w-4 h-4" /> 室內設計模擬設定
@@ -1776,7 +1776,7 @@ export const AIStudio: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 bg-gray-900/5 rounded-xl border border-gray-200 flex flex-col overflow-hidden relative">
+      <div className="flex-1 min-h-[200px] lg:min-h-0 bg-gray-900/5 rounded-xl border border-gray-200 flex flex-col overflow-hidden relative">
         {viewMode === "single" ? (
           <>
             {resultImage && !isGenerating && (

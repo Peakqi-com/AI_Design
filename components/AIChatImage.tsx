@@ -324,7 +324,7 @@ export const AIChatImage: React.FC = () => {
                     className="max-w-full rounded-lg border border-gray-200 shadow-md cursor-pointer"
                     onClick={() => setPreviewImage(msg.imageUrl!)}
                   />
-                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute top-2 right-2 flex gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => handleDownload(msg.imageUrl!)}
                       className="p-1.5 bg-black/50 hover:bg-black/70 rounded-lg text-white backdrop-blur-sm"
