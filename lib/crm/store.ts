@@ -805,8 +805,17 @@ export async function listContacts(options: ListContactsOptions = {}): Promise<C
 
   return store.contacts
     .filter((contact) => {
-      // User scope: only show contacts owned by this user
-      if (filterUserId && contact.userId && contact.userId !== filterUserId) {
+      // User scope: only show contacts owned by this user.
+      // The LINE OA is a single shared account stored under the global scope,
+      // so its contacts (created by the webhook) carry userId="__global__".
+      // Surface those to every authenticated user — otherwise received LINE
+      // messages exist in the store but are filtered out of everyone's view.
+      if (
+        filterUserId &&
+        contact.userId &&
+        contact.userId !== filterUserId &&
+        contact.userId !== GLOBAL_LINE_SETTINGS_SCOPE
+      ) {
         return false;
       }
       // Hide legacy contacts without userId when a userId filter is active
