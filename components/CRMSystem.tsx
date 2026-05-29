@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
+  AlertTriangle,
   Camera,
   Check,
   ClipboardCopy,
@@ -594,6 +595,25 @@ export const CRMSystem: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
           <h2 className="text-lg font-semibold text-gray-900 mb-1">LINE Official Account 串接</h2>
           <p className="text-sm text-gray-500 mb-6">將你的 LINE OA 連接到 CRM，自動接收客戶訊息並管理對話</p>
+
+          {/* Storage backend warning — memory mode breaks webhooks on serverless */}
+          {lineData?.storageBackend === "memory" && (
+            <div className="mb-6 border border-amber-300 bg-amber-50 rounded-xl p-4">
+              <div className="flex gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-sm text-amber-800">
+                  <p className="font-semibold mb-1">資料庫尚未設定，LINE 訊息無法正常接收</p>
+                  <p className="text-amber-700 leading-relaxed">
+                    目前儲存模式為「記憶體」(memory)，在 Vercel serverless 環境下資料不會持久化、各實例不共用，
+                    導致 LINE webhook 找不到設定而失敗（事件數卡住）。請在 Vercel 加上 Upstash Redis 或 Vercel KV，
+                    設定 <span className="font-mono">UPSTASH_REDIS_REST_URL</span> /{" "}
+                    <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> 後重新部署，
+                    儲存模式會自動變成 redis，再重新填寫下方設定即可。
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Connection status */}
           {lineLoading ? (
