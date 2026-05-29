@@ -867,6 +867,7 @@ export interface UpsertLineContactInput {
   lineUserId: string;
   displayName: string;
   avatarUrl?: string | null;
+  userId?: string;
 }
 
 export async function upsertLineContact(input: UpsertLineContactInput): Promise<CrmContact> {
@@ -878,6 +879,8 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
       (contact) => contact.lineUserId === input.lineUserId,
     );
 
+    const scopeId = input.userId?.trim() || undefined;
+
     if (existingIndex >= 0) {
       const existing = store.contacts[existingIndex];
       const updated: CrmContact = {
@@ -885,6 +888,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
         displayName: normalizedName,
         avatarUrl: input.avatarUrl ?? existing.avatarUrl ?? null,
         source: "line",
+        userId: existing.userId ?? scopeId,
         updatedAt: now,
       };
       store.contacts[existingIndex] = updated;
@@ -895,6 +899,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
       id: createId("contact"),
       source: "line",
       lineUserId: input.lineUserId,
+      userId: scopeId,
       displayName: normalizedName,
       avatarUrl: input.avatarUrl ?? null,
       tags: [],
