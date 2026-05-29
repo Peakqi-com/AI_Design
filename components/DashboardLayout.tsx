@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Palette,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { NavItem, User, DashboardView } from '../types';
 import { canAccessFeature, formatCredits, type UserPlan } from '@/lib/credits/store';
+import { resolveClientUserScopeId } from '@/lib/client/user-scope';
 
 interface DashboardLayoutProps {
   user: User;
@@ -63,6 +64,33 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   ];
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const crmScope = resolveClientUserScopeId(user.id, user.email);
+  useEffect(() => {
+    let active = true;
+    const fetchUnread = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (crmScope) params.set('userId', crmScope);
+        const res = await fetch(`/api/crm/contacts?${params.toString()}`, {
+          headers: crmScope ? { 'x-user-scope': crmScope } : {},
+        });
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        const list: Array<{ unread?: number }> = data.contacts ?? data ?? [];
+        setUnreadCount(list.reduce((sum, c) => sum + (c.unread || 0), 0));
+      } catch {
+        /* ignore */
+      }
+    };
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 20000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [crmScope, currentView]);
 
   const planMap: Record<string, string> = {
     free: '免費版',
@@ -190,9 +218,17 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
           </div>
 
           <div className="flex items-center gap-2 md:gap-4">
-            <button className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 relative">
+            <button
+              onClick={() => onChangeView('crm')}
+              className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 relative"
+              title={unreadCount > 0 ? `${unreadCount} 則未讀客戶訊息` : '客戶訊息'}
+            >
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border border-white">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
             </button>
             <div className="h-8 w-px bg-gray-200 hidden sm:block"></div>
             <div className="flex items-center gap-3">
