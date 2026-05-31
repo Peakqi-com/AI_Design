@@ -14,6 +14,7 @@ import {
   CrmProject,
   CrmStore,
   LineIntegrationSettings,
+  PresentationDraft,
 } from "@/lib/crm/types";
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -119,6 +120,7 @@ const createDefaultStore = (): CrmStore => ({
   contacts: [],
   messages: [],
   projects: [],
+  presentations: [],
 });
 
 const cloneStore = (store: CrmStore): CrmStore => structuredClone(store);
@@ -220,6 +222,7 @@ const normalizeStore = (raw: unknown): CrmStore => {
     contacts: Array.isArray(maybe.contacts) ? maybe.contacts : [],
     messages: Array.isArray(maybe.messages) ? maybe.messages : [],
     projects: normalizedProjects,
+    presentations: Array.isArray(maybe.presentations) ? maybe.presentations : [],
   };
 };
 
@@ -1240,6 +1243,101 @@ export async function createProject(input: CreateProjectInput): Promise<CrmProje
   store.projects.unshift(project);
   await saveStore(store);
   return project;
+}
+
+/* ================================================================
+   Presentations (draft persistence)
+   ================================================================ */
+
+export interface ListPresentationsOptions {
+  userId?: string;
+  linkedProjectId?: string;
+}
+
+export async function listPresentations(
+  options: ListPresentationsOptions = {},
+): Promise<PresentationDraft[]> {
+  const store = await getStore();
+  const all = store.presentations ?? [];
+  const filterUserId = options.userId?.trim();
+  return all
+    .filter((p) => {
+      if (filterUserId && p.userId && p.userId !== filterUserId) return false;
+      if (filterUserId && !p.userId) return false;
+      if (options.linkedProjectId && p.linkedProjectId !== options.linkedProjectId) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+export async function getPresentationById(id: string): Promise<PresentationDraft | null> {
+  const store = await getStore();
+  return (store.presentations ?? []).find((p) => p.id === id) ?? null;
+}
+
+export interface SavePresentationInput {
+  id?: string;
+  userId?: string;
+  title: string;
+  designerName?: string;
+  briefDesc?: string;
+  linkedProjectId?: string;
+  slides: PresentationDraft["slides"];
+  styleId?: string;
+  step?: number;
+}
+
+/** Upsert a presentation draft (create if no id, else update in place). */
+export async function savePresentation(input: SavePresentationInput): Promise<PresentationDraft> {
+  return mutateStore((store) => {
+    const now = nowIso();
+    if (!store.presentations) store.presentations = [];
+
+    if (input.id) {
+      const idx = store.presentations.findIndex((p) => p.id === input.id);
+      if (idx >= 0) {
+        const existing = store.presentations[idx];
+        const updated: PresentationDraft = {
+          ...existing,
+          title: input.title.trim() || existing.title,
+          designerName: input.designerName ?? existing.designerName,
+          briefDesc: input.briefDesc ?? existing.briefDesc,
+          linkedProjectId: input.linkedProjectId ?? existing.linkedProjectId,
+          slides: input.slides ?? existing.slides,
+          styleId: input.styleId ?? existing.styleId,
+          step: input.step ?? existing.step,
+          updatedAt: now,
+        };
+        store.presentations[idx] = updated;
+        return updated;
+      }
+    }
+
+    const created: PresentationDraft = {
+      id: input.id || createId("deck"),
+      userId: input.userId?.trim() || undefined,
+      title: input.title.trim() || "未命名簡報",
+      designerName: input.designerName,
+      briefDesc: input.briefDesc,
+      linkedProjectId: input.linkedProjectId,
+      slides: input.slides ?? [],
+      styleId: input.styleId,
+      step: input.step,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.presentations.push(created);
+    return created;
+  });
+}
+
+export async function deletePresentation(id: string): Promise<boolean> {
+  return mutateStore((store) => {
+    if (!store.presentations) return false;
+    const before = store.presentations.length;
+    store.presentations = store.presentations.filter((p) => p.id !== id);
+    return store.presentations.length !== before;
+  });
 }
 
 export interface UpdateProjectInput {

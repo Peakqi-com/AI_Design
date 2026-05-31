@@ -165,6 +165,28 @@ export interface ProjectNotificationTemplate {
   content: string;
 }
 
+export interface PresentationSlideDraft {
+  id: string;
+  title: string;
+  body: string;
+  imageUrl: string | null;
+  layout: string;
+}
+
+export interface PresentationDraft {
+  id: string;
+  userId?: string;
+  title: string;
+  designerName?: string;
+  briefDesc?: string;
+  linkedProjectId?: string;
+  slides: PresentationSlideDraft[];
+  styleId?: string;
+  step?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CrmStore {
   version: number;
   lineSettings: LineIntegrationSettings | null;
@@ -172,4 +194,5 @@ export interface CrmStore {
   contacts: CrmContact[];
   messages: CrmMessage[];
   projects: CrmProject[];
+  presentations?: PresentationDraft[];
 }

@@ -12,6 +12,7 @@ import {
   Plus,
   Presentation,
   RefreshCw,
+  Save,
   Sparkles,
   Trash2,
   Upload,
@@ -74,6 +75,18 @@ interface SourceProject {
   quotationItems?: SourceProjectQuotationItem[];
   workflowTasks?: SourceProjectWorkflowTask[];
   linkedAssetIds?: string[];
+}
+
+interface PresentationDraftClient {
+  id: string;
+  title: string;
+  designerName?: string;
+  briefDesc?: string;
+  linkedProjectId?: string;
+  slides?: Array<{ id?: string; title?: string; body?: string; imageUrl?: string | null; layout?: string }>;
+  styleId?: string;
+  step?: number;
+  updatedAt: string;
 }
 
 /* ================================================================
@@ -214,6 +227,7 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   /* ---- apply a project's data into the outline form ---- */
   const applyProjectToForm = useCallback((project: SourceProject) => {
     setSourceProject(project);
+    setLinkedProjectId(project.id);
     setProjectTitle(project.name || "");
     const lines: string[] = [];
     if (project.clientName) lines.push(`客戶：${project.clientName}`);
@@ -282,8 +296,141 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   /* step 4 */
   const [isDownloading, setIsDownloading] = useState(false);
 
+  /* ---- draft persistence ---- */
+  const [presentationId, setPresentationId] = useState<string | null>(null);
+  const [linkedProjectId, setLinkedProjectId] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [savedDrafts, setSavedDrafts] = useState<
+    Array<{ id: string; title: string; updatedAt: string; slideCount: number; linkedProjectId?: string }>
+  >([]);
+  const autosaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRestoringRef = React.useRef(false);
+
   const selectedStyle: StylePreset =
     STYLE_PRESETS.find((s) => s.id === selectedStyleId) || STYLE_PRESETS[0];
+
+  /* ---- save (upsert) the current deck ---- */
+  const persistDraft = useCallback(
+    async (opts: { silent?: boolean } = {}): Promise<string | null> => {
+      // Nothing meaningful to save yet
+      if (slides.length === 0 && !projectTitle.trim()) return presentationId;
+      if (!opts.silent) setSaveState("saving");
+      else setSaveState("saving");
+      try {
+        const res = await fetch("/api/presentations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: presentationId || undefined,
+            userId: userScopeId,
+            title: projectTitle || "未命名簡報",
+            designerName,
+            briefDesc,
+            linkedProjectId: linkedProjectId || undefined,
+            slides,
+            styleId: selectedStyleId,
+            step,
+          }),
+        });
+        if (!res.ok) throw new Error("save failed");
+        const data = (await res.json()) as { presentation?: { id: string; updatedAt: string } };
+        if (data.presentation) {
+          if (!presentationId) setPresentationId(data.presentation.id);
+          setLastSavedAt(data.presentation.updatedAt);
+          setSaveState("saved");
+          return data.presentation.id;
+        }
+        throw new Error("no presentation in response");
+      } catch {
+        setSaveState("error");
+        return null;
+      }
+    },
+    [presentationId, userScopeId, projectTitle, designerName, briefDesc, linkedProjectId, slides, selectedStyleId, step],
+  );
+
+  /* ---- debounced autosave whenever the deck changes ---- */
+  useEffect(() => {
+    if (isRestoringRef.current) return; // don't autosave while restoring a draft
+    if (slides.length === 0) return; // nothing to save until a deck exists
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      void persistDraft({ silent: true });
+    }, 1500);
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
+  }, [slides, projectTitle, designerName, briefDesc, selectedStyleId, step, persistDraft]);
+
+  /* ---- load the list of saved drafts (for the resume picker) ---- */
+  const loadSavedDrafts = useCallback(async () => {
+    if (!userScopeId) return;
+    try {
+      const res = await fetch(`/api/presentations?userId=${encodeURIComponent(userScopeId)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        presentations?: Array<{ id: string; title: string; updatedAt: string; slides?: unknown[]; linkedProjectId?: string }>;
+      };
+      setSavedDrafts(
+        (data.presentations || []).map((p) => ({
+          id: p.id,
+          title: p.title,
+          updatedAt: p.updatedAt,
+          slideCount: Array.isArray(p.slides) ? p.slides.length : 0,
+          linkedProjectId: p.linkedProjectId,
+        })),
+      );
+    } catch { /* ignore */ }
+  }, [userScopeId]);
+
+  useEffect(() => {
+    void loadSavedDrafts();
+  }, [loadSavedDrafts]);
+
+  /* ---- restore a saved draft ---- */
+  const restoreDraft = useCallback(async (id: string) => {
+    isRestoringRef.current = true;
+    try {
+      const res = await fetch(`/api/presentations/${encodeURIComponent(id)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { presentation?: PresentationDraftClient };
+      const p = data.presentation;
+      if (!p) return;
+      setPresentationId(p.id);
+      setProjectTitle(p.title || "");
+      setDesignerName(p.designerName || "");
+      setBriefDesc(p.briefDesc || "");
+      setLinkedProjectId(p.linkedProjectId || null);
+      setSlides(
+        (p.slides || []).map((s) => ({
+          id: s.id || uid(),
+          title: s.title || "",
+          body: s.body || "",
+          imageUrl: s.imageUrl ?? null,
+          layout: (s.layout as SlideLayout) || "text-only",
+        })),
+      );
+      if (p.styleId) setSelectedStyleId(p.styleId);
+      setStep(p.step && p.step >= 1 && p.step <= 4 ? p.step : 1);
+      setLastSavedAt(p.updatedAt);
+      setSaveState("saved");
+    } finally {
+      // release the restore lock after state settles
+      setTimeout(() => { isRestoringRef.current = false; }, 300);
+    }
+  }, []);
+
+  /* ---- delete a saved draft ---- */
+  const deleteDraft = useCallback(async (id: string) => {
+    try {
+      await fetch(`/api/presentations/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setSavedDrafts((prev) => prev.filter((d) => d.id !== id));
+      if (id === presentationId) {
+        setPresentationId(null);
+      }
+    } catch { /* ignore */ }
+  }, [presentationId]);
 
   /* ================================================================
      Step 1 - AI outline generation
@@ -850,6 +997,44 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
 
   const renderStep1Left = () => (
     <div className="space-y-4">
+      {/* 草稿續編 */}
+      {savedDrafts.length > 0 && (
+        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50/60">
+          <p className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
+            <Save className="w-3.5 h-3.5" /> 已儲存的簡報草稿（{savedDrafts.length}）
+          </p>
+          <div className="space-y-1.5 max-h-40 overflow-y-auto">
+            {savedDrafts.map((d) => (
+              <div
+                key={d.id}
+                className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 bg-white ${
+                  d.id === presentationId ? "border-brand-400 ring-1 ring-brand-200" : "border-gray-200"
+                }`}
+              >
+                <button
+                  onClick={() => void restoreDraft(d.id)}
+                  className="flex-1 min-w-0 text-left"
+                  title="繼續編輯"
+                >
+                  <p className="text-xs font-medium text-gray-800 truncate">{d.title || "未命名簡報"}</p>
+                  <p className="text-[10px] text-gray-400">
+                    {d.slideCount} 頁 · {new Date(d.updatedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {d.id === presentationId ? " · 編輯中" : ""}
+                  </p>
+                </button>
+                <button
+                  onClick={() => void deleteDraft(d.id)}
+                  className="text-gray-300 hover:text-red-500 shrink-0 p-1"
+                  title="刪除草稿"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 從專案歸納 */}
       <div className="bg-gradient-to-br from-brand-50 to-purple-50 border border-brand-100 rounded-lg p-3">
         <label className="block text-xs font-semibold text-brand-700 mb-1.5 flex items-center gap-1.5">
@@ -1595,10 +1780,30 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
       {/* Left panel */}
       <div className="w-full lg:w-[380px] max-h-[35vh] lg:max-h-none bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
             <Presentation className="w-4 h-4" /> 簡報製作
           </h3>
+          <div className="flex items-center gap-2">
+            {/* Save status */}
+            <span className="text-[10px] text-gray-400 flex items-center gap-1">
+              {saveState === "saving" && (<><RefreshCw className="w-3 h-3 animate-spin" /> 儲存中</>)}
+              {saveState === "saved" && lastSavedAt && (
+                <><CheckCircle2 className="w-3 h-3 text-green-500" /> 已儲存 {new Date(lastSavedAt).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" })}</>
+              )}
+              {saveState === "error" && (<span className="text-red-500">儲存失敗</span>)}
+            </span>
+            {slides.length > 0 && (
+              <button
+                onClick={() => { void persistDraft(); void loadSavedDrafts(); }}
+                disabled={saveState === "saving"}
+                className="text-[11px] px-2 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-white hover:border-brand-300 hover:text-brand-700 transition-colors flex items-center gap-1 disabled:opacity-50"
+                title="立即儲存草稿"
+              >
+                <Save className="w-3 h-3" /> 儲存
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Step indicator */}
