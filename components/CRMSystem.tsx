@@ -549,6 +549,89 @@ export const CRMSystem: React.FC = () => {
     return () => clearInterval(interval);
   }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ---- AI conversation summary ---- */
+  interface ChatSummary {
+    topic: string;
+    customerIntent: string;
+    keyPoints: string[];
+    nextActions: string[];
+    sentiment: "positive" | "neutral" | "negative" | "urgent";
+    suggestedReply?: string;
+  }
+
+  const [summary, setSummary] = useState<ChatSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
+
+  // Reset summary when switching contacts
+  useEffect(() => {
+    setSummary(null);
+    setSummaryError(null);
+    setShowSummary(false);
+  }, [selected?.id]);
+
+  const runSummary = async () => {
+    if (!selected || chatMessages.length === 0) return;
+    const d = await credits.confirmAndDeduct("AI 對話整理", "ai-social-post");
+    if (!d.ok) return;
+
+    setSummaryLoading(true);
+    setSummaryError(null);
+    setShowSummary(true);
+    try {
+      const transcript = chatMessages
+        .slice(-50)
+        .map((m) => {
+          const who = m.direction === "outbound" ? "我方" : selected.displayName;
+          const time = new Date(m.timestamp).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const content = m.text || `[${m.messageType}]`;
+          return `[${time}] ${who}：${content}`;
+        })
+        .join("\n");
+
+      const prompt = `你是一位專業的客戶服務顧問。下面是我（室內設計師）與客戶「${selected.displayName}」在 LINE 上的對話記錄，請幫我整理重點。
+
+對話記錄：
+${transcript}
+
+請以 JSON 格式回覆，只輸出 JSON 不要其他文字，欄位如下：
+{
+  "topic": "這段對話的主題（一句話，10-20 字）",
+  "customerIntent": "客戶目前的意圖或需求（具體說明，30-60 字）",
+  "keyPoints": ["3-5 個對話中提到的關鍵資訊或客戶訴求"],
+  "nextActions": ["2-4 個我應該採取的後續行動（具體、可執行）"],
+  "sentiment": "positive / neutral / negative / urgent 其中一個（評估客戶情緒/急迫性）",
+  "suggestedReply": "如果客戶最後一句話需要回覆，給我一句適合的回覆內容（沒必要回覆就留空字串）"
+}`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "AI 整理失敗");
+      }
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || text;
+      const parsed = JSON.parse(jsonStr) as ChatSummary;
+      setSummary(parsed);
+    } catch (e) {
+      setSummaryError(e instanceof Error ? e.message : "整理失敗，請重試");
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const useReplyDraft = () => {
+    if (summary?.suggestedReply) {
+      setChatInput(summary.suggestedReply);
+    }
+  };
+
   /* ---- copy webhook URL ---- */
   const copyWebhookUrl = async () => {
     if (!lineData?.webhookUrl) return;
@@ -972,6 +1055,29 @@ export const CRMSystem: React.FC = () => {
               </div>
               <div className="flex items-center gap-1">
                 <button
+                  onClick={() => {
+                    if (summary && !summaryLoading) {
+                      setShowSummary((v) => !v);
+                    } else {
+                      void runSummary();
+                    }
+                  }}
+                  disabled={summaryLoading || chatMessages.length === 0}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    showSummary && summary
+                      ? "bg-brand-50 text-brand-700 border border-brand-200"
+                      : "bg-brand-600 text-white hover:bg-brand-700"
+                  }`}
+                  title="AI 整理整段對話"
+                >
+                  {summaryLoading ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  {summaryLoading ? "整理中..." : summary ? (showSummary ? "收合摘要" : "展開摘要") : "AI 整理對話"}
+                </button>
+                <button
                   onClick={() => setShowDetail(!showDetail)}
                   className={`p-2 rounded-lg transition-colors ${showDetail ? "bg-brand-50 text-brand-600" : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"}`}
                   title="客戶詳情"
@@ -994,6 +1100,106 @@ export const CRMSystem: React.FC = () => {
             <div className="flex-1 flex min-h-0 overflow-hidden">
               {/* Chat messages */}
               <div className="flex-1 flex flex-col min-w-0">
+                {/* AI Summary card */}
+                {showSummary && (
+                  <div className="shrink-0 border-b border-brand-200 bg-gradient-to-br from-brand-50 to-purple-50 px-4 py-3 max-h-[40%] overflow-y-auto">
+                    {summaryLoading && !summary && (
+                      <div className="flex items-center gap-2 text-sm text-brand-700 py-2">
+                        <RefreshCw className="w-4 h-4 animate-spin" /> AI 正在分析這段對話...
+                      </div>
+                    )}
+                    {summaryError && (
+                      <div className="text-sm text-red-600 py-2 flex items-center justify-between gap-2">
+                        <span>整理失敗：{summaryError}</span>
+                        <button onClick={runSummary} className="text-xs underline">重試</button>
+                      </div>
+                    )}
+                    {summary && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Sparkles className="w-4 h-4 text-brand-600 shrink-0" />
+                            <h4 className="text-sm font-semibold text-gray-900 truncate">{summary.topic}</h4>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              summary.sentiment === "urgent" ? "bg-red-100 text-red-700"
+                              : summary.sentiment === "negative" ? "bg-orange-100 text-orange-700"
+                              : summary.sentiment === "positive" ? "bg-green-100 text-green-700"
+                              : "bg-gray-100 text-gray-600"
+                            }`}>
+                              {summary.sentiment === "urgent" ? "緊急" : summary.sentiment === "negative" ? "不滿" : summary.sentiment === "positive" ? "正面" : "中性"}
+                            </span>
+                            <button
+                              onClick={runSummary}
+                              disabled={summaryLoading}
+                              className="p-1 text-gray-400 hover:text-brand-600 hover:bg-white/50 rounded transition-colors disabled:opacity-40"
+                              title="重新整理"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${summaryLoading ? "animate-spin" : ""}`} />
+                            </button>
+                            <button
+                              onClick={() => setShowSummary(false)}
+                              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-white/50 rounded transition-colors"
+                              title="收合"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/70 rounded-lg p-2.5 border border-brand-100">
+                          <p className="text-[10px] font-semibold text-brand-700 mb-0.5">客戶意圖</p>
+                          <p className="text-xs text-gray-800 leading-relaxed">{summary.customerIntent}</p>
+                        </div>
+
+                        {summary.keyPoints?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-brand-700 mb-1">關鍵重點</p>
+                            <ul className="space-y-0.5">
+                              {summary.keyPoints.map((p, i) => (
+                                <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                                  <span className="text-brand-500 shrink-0">•</span>
+                                  <span>{p}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {summary.nextActions?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-brand-700 mb-1">建議行動</p>
+                            <ul className="space-y-0.5">
+                              {summary.nextActions.map((a, i) => (
+                                <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                                  <Check className="w-3 h-3 text-green-600 shrink-0 mt-0.5" />
+                                  <span>{a}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {summary.suggestedReply && (
+                          <div className="bg-white border border-brand-200 rounded-lg p-2.5">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-[10px] font-semibold text-brand-700">建議回覆</p>
+                              <button
+                                onClick={useReplyDraft}
+                                className="text-[10px] px-2 py-0.5 bg-brand-600 text-white rounded hover:bg-brand-700 transition-colors"
+                              >
+                                使用此回覆
+                              </button>
+                            </div>
+                            <p className="text-xs text-gray-800 leading-relaxed italic">「{summary.suggestedReply}」</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
                   {chatLoading && chatMessages.length === 0 && (
                     <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
