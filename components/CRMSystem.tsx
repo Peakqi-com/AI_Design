@@ -1101,7 +1101,7 @@ ${transcript}
   /* ================================================================ */
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-xl shadow overflow-hidden">
+    <div className="flex flex-col bg-white rounded-xl shadow overflow-hidden h-full min-h-[calc(100vh-8rem)]">
       {/* ===== TOP TAB BAR ===== */}
       <div className="flex border-b border-gray-200 shrink-0">
         <button
@@ -1371,7 +1371,7 @@ ${transcript}
       {activeTab === "contacts" && (
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ---------- LEFT PANEL: Client List ---------- */}
-      <div className="w-1/3 border-r border-gray-200 flex flex-col">
+      <div className="w-80 shrink-0 border-r border-gray-200 flex flex-col min-w-0">
         {/* search */}
         <div className="p-3 border-b border-gray-100">
           <div className="relative">
@@ -1442,24 +1442,27 @@ ${transcript}
                     <User className="w-5 h-5 text-gray-500" />
                   </div>
                 )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-medium text-sm truncate ${c.unread > 0 ? "text-gray-900 font-semibold" : "text-gray-900"}`}>
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`font-medium text-sm truncate min-w-0 ${c.unread > 0 ? "text-gray-900 font-semibold" : "text-gray-900"}`}>
                       {c.displayName}
                     </span>
                     {c.source === "line" && (
-                      <span className="text-[10px] px-1 py-0.5 rounded bg-green-100 text-green-700">LINE</span>
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-green-100 text-green-700 shrink-0">LINE</span>
                     )}
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-600"}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-600"}`}>
                       {STATUS_LABELS[c.status as StatusFilter] ?? c.status}
                     </span>
                   </div>
                   {c.lastMessageText ? (
-                    <p className={`text-xs truncate mt-0.5 ${c.unread > 0 ? "text-gray-700 font-medium" : "text-gray-400"}`}>
+                    <p
+                      className={`text-xs mt-0.5 truncate overflow-hidden whitespace-nowrap ${c.unread > 0 ? "text-gray-700 font-medium" : "text-gray-400"}`}
+                      title={c.lastMessageText}
+                    >
                       {c.lastMessageText}
                     </p>
                   ) : c.company ? (
-                    <p className="text-xs text-gray-500 truncate">{c.company}</p>
+                    <p className="text-xs text-gray-500 truncate overflow-hidden whitespace-nowrap">{c.company}</p>
                   ) : null}
                   {c.lastMessageAt && (
                     <p className="text-[10px] text-gray-400 mt-0.5">
@@ -1479,7 +1482,7 @@ ${transcript}
       </div>
 
       {/* ---------- RIGHT PANEL: Chat + Detail ---------- */}
-      <div className="w-2/3 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {!selected ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
             <MessageCircle className="w-16 h-16 mb-3" />
