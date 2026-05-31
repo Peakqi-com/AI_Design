@@ -20,6 +20,9 @@ import {
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import { useCredits } from "@/lib/client/use-credits";
+import { SLIDE_THEMES, getTheme, buildGoogleFontsHref, resolveRichLayout } from "@/lib/presentation/themes";
+import { SlideCanvas, SLIDE_W, SLIDE_H, type CanvasSlide } from "@/components/presentation/SlideCanvas";
+import { rasterizeSlide, exportToPptx, exportToPdf } from "@/lib/presentation/export";
 
 /* ================================================================
    Types
@@ -189,6 +192,13 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
 
+  /* ---- NEW: beautiful HTML/CSS theme engine ---- */
+  const [selectedThemeId, setSelectedThemeId] = useState<string>("nordic");
+  const activeTheme = getTheme(selectedThemeId);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState("");
+  const exportStageRef = React.useRef<HTMLDivElement>(null);
+
   const loadAssets = useCallback(async () => {
     if (!userScopeId) return;
     setIsLoadingAssets(true);
@@ -208,6 +218,20 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   useEffect(() => {
     void loadAssets();
   }, [loadAssets]);
+
+  /* ---- load Google Fonts for the active theme (preview + export) ---- */
+  useEffect(() => {
+    const href = buildGoogleFontsHref(activeTheme);
+    const id = "deck-fonts";
+    let link = document.getElementById(id) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      document.head.appendChild(link);
+    }
+    link.href = href;
+  }, [activeTheme]);
 
   /* ---- load project list for the "從專案讀取" dropdown ---- */
   const loadProjectList = useCallback(async () => {
@@ -309,6 +333,17 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
 
   const selectedStyle: StylePreset =
     STYLE_PRESETS.find((s) => s.id === selectedStyleId) || STYLE_PRESETS[0];
+
+  const toCanvasSlide = useCallback(
+    (slide: SlideData, index: number): CanvasSlide => ({
+      id: slide.id,
+      title: slide.title,
+      body: slide.body,
+      imageUrl: slide.imageUrl,
+      layout: resolveRichLayout(slide.layout, index, slides.length, Boolean(slide.imageUrl), slide.title, slide.body),
+    }),
+    [slides.length],
+  );
 
   /* ---- save (upsert) the current deck ---- */
   const persistDraft = useCallback(
@@ -715,6 +750,37 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   /* ================================================================
      Step 4 - PPT Download
      ================================================================ */
+
+  /* ---- rich export: rasterize SlideCanvas nodes → PPTX / PDF ---- */
+  const handleRichExport = async (format: "pptx" | "pdf") => {
+    if (slides.length === 0 || !exportStageRef.current) return;
+    setIsExporting(true);
+    setExportProgress("準備字體與版面...");
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((r) => setTimeout(r, 400));
+      const nodes = Array.from(
+        exportStageRef.current.querySelectorAll<HTMLElement>("[data-export-slide]"),
+      );
+      const pngs: string[] = [];
+      for (let i = 0; i < nodes.length; i++) {
+        setExportProgress(`渲染第 ${i + 1} / ${nodes.length} 頁...`);
+        if (i === 0) await rasterizeSlide(nodes[i]).catch(() => "");
+        pngs.push(await rasterizeSlide(nodes[i]));
+      }
+      const dateStr = new Date().toLocaleDateString("zh-TW").replace(/\//g, "");
+      const fileName = `${projectTitle || "設計簡報"}_${dateStr}.${format}`;
+      setExportProgress("封裝檔案...");
+      if (format === "pptx") await exportToPptx(pngs, fileName);
+      else await exportToPdf(pngs, fileName);
+    } catch (err) {
+      console.error("rich export error:", err);
+      alert("匯出失敗，請重試");
+    } finally {
+      setIsExporting(false);
+      setExportProgress("");
+    }
+  };
 
   const handleDownloadPptx = async () => {
     if (slides.length === 0) return;
@@ -1385,10 +1451,46 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
 
   const renderStep3Left = () => (
     <div className="space-y-5">
-      {/* Style presets */}
+      {/* NEW: beautiful theme picker (Gamma-grade HTML/CSS render) */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
-          <Palette className="w-3.5 h-3.5" /> 風格選擇
+          <Sparkles className="w-3.5 h-3.5 text-brand-600" /> 簡報主題（高級渲染）
+        </label>
+        <div className="grid grid-cols-1 gap-2">
+          {SLIDE_THEMES.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setSelectedThemeId(t.id)}
+              className={`rounded-xl border p-3 text-left transition-all ${
+                selectedThemeId === t.id
+                  ? "border-brand-500 ring-2 ring-brand-200 shadow-sm"
+                  : "border-gray-200 hover:border-brand-300"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex rounded-lg overflow-hidden border border-gray-200 shrink-0">
+                  <div className="w-6 h-10" style={{ background: t.colors.bg }} />
+                  <div className="w-6 h-10" style={{ background: t.colors.surface }} />
+                  <div className="w-4 h-10" style={{ background: t.colors.accent }} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-gray-800">{t.label}</p>
+                  <p className="text-[11px] text-gray-500 leading-snug">{t.description}</p>
+                </div>
+                {selectedThemeId === t.id && <CheckCircle2 className="w-4 h-4 text-brand-600 shrink-0" />}
+              </div>
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-gray-400 mt-2">
+          主題決定字體、配色與版型質感。右側即時預覽，匯出 PDF / PPTX 完全一致。
+        </p>
+      </div>
+
+      {/* Style presets (legacy PPTX colors) */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+          <Palette className="w-3.5 h-3.5" /> 經典 PPTX 配色（舊版）
         </label>
         <div className="grid grid-cols-2 gap-2">
           {STYLE_PRESETS.map((preset) => (
@@ -1568,6 +1670,71 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
      Render: Step 4 - Preview + Download
      ================================================================ */
 
+  /* ---- NEW: rich live preview (scaled SlideCanvas) ---- */
+  const renderRichPreview = () => (
+    <div className="h-full flex flex-col">
+      <div className="p-4 border-b border-gray-100">
+        <p className="text-sm font-semibold text-gray-700">即時預覽 · {activeTheme.label}</p>
+        <p className="text-[11px] text-gray-400 mt-0.5">所見即所得，匯出 PDF / PPTX 完全一致（共 {slides.length} 頁）</p>
+      </div>
+      <div className="flex-1 overflow-y-auto p-5 bg-gray-100 space-y-5">
+        {slides.map((slide, i) => (
+          <div key={slide.id} className="mx-auto w-full max-w-[600px]">
+            <div
+              className="relative w-full rounded-xl overflow-hidden shadow-lg ring-1 ring-black/5"
+              style={{ aspectRatio: `${SLIDE_W} / ${SLIDE_H}` }}
+            >
+              <div
+                style={{
+                  width: SLIDE_W,
+                  height: SLIDE_H,
+                  transform: "scale(0.46875)",
+                  transformOrigin: "top left",
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                }}
+              >
+                <SlideCanvas
+                  slide={toCanvasSlide(slide, i)}
+                  theme={activeTheme}
+                  index={i}
+                  total={slides.length}
+                  projectTitle={projectTitle}
+                  designerName={designerName}
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5 text-center">{i + 1}. {slide.title}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* ---- hidden full-size stage used only for rasterized export ---- */
+  const renderExportStage = () => (
+    <div
+      ref={exportStageRef}
+      aria-hidden
+      style={{ position: "fixed", left: -99999, top: 0, pointerEvents: "none", opacity: 0 }}
+    >
+      {slides.map((slide, i) => (
+        <div key={slide.id} data-export-slide style={{ width: SLIDE_W, height: SLIDE_H }}>
+          <SlideCanvas
+            slide={toCanvasSlide(slide, i)}
+            theme={activeTheme}
+            index={i}
+            total={slides.length}
+            projectTitle={projectTitle}
+            designerName={designerName}
+            exportMode
+          />
+        </div>
+      ))}
+    </div>
+  );
+
   const renderStep4Left = () => (
     <div className="space-y-4">
       <div className="bg-brand-50 rounded-lg p-3 border border-brand-100">
@@ -1590,21 +1757,49 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
         ))}
       </div>
 
+      {/* NEW: Gamma-grade theme-rendered export */}
       <button
-        onClick={() => void handleDownloadPptx()}
-        disabled={isDownloading || slides.length === 0}
-        className="w-full py-3 bg-gray-800 text-white rounded-lg text-sm font-medium hover:bg-gray-900 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        onClick={() => void handleRichExport("pdf")}
+        disabled={isExporting || slides.length === 0}
+        className="w-full py-3 bg-brand-600 text-white rounded-lg text-sm font-semibold hover:bg-brand-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
       >
-        {isDownloading ? (
-          <>
-            <RefreshCw className="w-4 h-4 animate-spin" /> 製作 PPT 中...
-          </>
+        {isExporting ? (
+          <><RefreshCw className="w-4 h-4 animate-spin" /> {exportProgress || "匯出中..."}</>
         ) : (
-          <>
-            <Download className="w-4 h-4" /> 下載 PPT 檔案
-          </>
+          <><Download className="w-4 h-4" /> 下載 PDF（推薦 · 最漂亮）</>
         )}
       </button>
+      <button
+        onClick={() => void handleRichExport("pptx")}
+        disabled={isExporting || slides.length === 0}
+        className="w-full py-2.5 bg-gray-800 text-white rounded-lg text-sm font-medium hover:bg-gray-900 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {isExporting ? (
+          <><RefreshCw className="w-4 h-4 animate-spin" /> {exportProgress || "匯出中..."}</>
+        ) : (
+          <><Download className="w-4 h-4" /> 下載 PPTX（高畫質圖片版）</>
+        )}
+      </button>
+      <p className="text-[10px] text-gray-400 text-center">
+        以「{activeTheme.label}」主題渲染，畫面與預覽完全一致。
+      </p>
+
+      <details className="border-t border-gray-100 pt-2">
+        <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600">
+          進階：舊版可編輯文字 PPTX
+        </summary>
+        <button
+          onClick={() => void handleDownloadPptx()}
+          disabled={isDownloading || slides.length === 0}
+          className="mt-2 w-full py-2 border border-gray-300 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {isDownloading ? (
+            <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> 製作中...</>
+          ) : (
+            <><Download className="w-3.5 h-3.5" /> 下載舊版 PPT（文字可編輯）</>
+          )}
+        </button>
+      </details>
     </div>
   );
 
@@ -1769,14 +1964,18 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
     switch (step) {
       case 1: return renderStep1Right();
       case 2: return renderStep2Right();
-      case 3: return renderStep3Right();
-      case 4: return renderStep4Right();
+      case 3: return renderRichPreview();
+      case 4: return renderRichPreview();
       default: return null;
     }
   };
+  // legacy preview renderers superseded by renderRichPreview
+  void renderStep3Right;
+  void renderStep4Right;
 
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
+      {renderExportStage()}
       {/* Left panel */}
       <div className="w-full lg:w-[380px] max-h-[35vh] lg:max-h-none bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
         {/* Header */}
