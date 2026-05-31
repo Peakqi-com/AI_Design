@@ -58,6 +58,7 @@ const App: React.FC = () => {
   const [dashboardView, setDashboardView] = useState<DashboardView>("overview");
   const [manualUser, setManualUser] = useState<User | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [presentationProjectId, setPresentationProjectId] = useState<string | undefined>(undefined);
   const credits = useCredits();
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
@@ -119,10 +120,19 @@ const App: React.FC = () => {
       setDashboardView("quotation");
   };
 
+  const handleGoToPresentation = (projectId: string) => {
+      setPresentationProjectId(projectId);
+      setDashboardView("presentation");
+  };
+
   const handleViewChange = (view: DashboardView) => {
       setDashboardView(view);
       if (view !== 'projects' && view !== "quotation") {
           setSelectedProject(null);
+      }
+      // Sidebar navigation to presentation = fresh (not from a project)
+      if (view === "presentation") {
+          setPresentationProjectId(undefined);
       }
   };
 
@@ -144,6 +154,7 @@ const App: React.FC = () => {
               onBack={handleBackToProjects}
               onGoToAI={handleGoToAI}
               onGoToQuotation={handleGoToQuotation}
+              onGoToPresentation={handleGoToPresentation}
               onProjectUpdated={handleProjectUpdated}
             />
           );
@@ -160,7 +171,7 @@ const App: React.FC = () => {
       case "media-library":
         return <MediaLibrary />;
       case "presentation":
-        return <PresentationMaker />;
+        return <PresentationMaker initialProjectId={presentationProjectId} />;
       case "video-script":
         return <VideoScriptWorkflow />;
       case "admin":

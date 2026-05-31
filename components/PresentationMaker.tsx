@@ -51,6 +51,31 @@ interface MediaAsset {
   };
 }
 
+interface SourceProjectQuotationItem {
+  name: string;
+  description?: string;
+  quantity: number;
+  unitPrice: number;
+}
+interface SourceProjectWorkflowTask {
+  title: string;
+  detail?: string;
+  date?: string;
+  time?: string;
+  done?: boolean;
+}
+interface SourceProject {
+  id: string;
+  name: string;
+  clientName: string;
+  phase?: string;
+  budget?: string;
+  note?: string;
+  quotationItems?: SourceProjectQuotationItem[];
+  workflowTasks?: SourceProjectWorkflowTask[];
+  linkedAssetIds?: string[];
+}
+
 /* ================================================================
    Style Presets
    ================================================================ */
@@ -132,7 +157,11 @@ const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
    Component
    ================================================================ */
 
-export const PresentationMaker: React.FC = () => {
+interface PresentationMakerProps {
+  initialProjectId?: string;
+}
+
+export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialProjectId }) => {
   const { data: session } = useSession();
   const credits = useCredits();
 
@@ -167,6 +196,66 @@ export const PresentationMaker: React.FC = () => {
     void loadAssets();
   }, [loadAssets]);
 
+  /* ---- load project list for the "從專案讀取" dropdown ---- */
+  const loadProjectList = useCallback(async () => {
+    if (!userScopeId) return;
+    try {
+      const res = await fetch(`/api/projects?userId=${encodeURIComponent(userScopeId)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { projects?: SourceProject[] };
+      setProjectOptions(data.projects || []);
+    } catch { /* ignore */ }
+  }, [userScopeId]);
+
+  useEffect(() => {
+    void loadProjectList();
+  }, [loadProjectList]);
+
+  /* ---- apply a project's data into the outline form ---- */
+  const applyProjectToForm = useCallback((project: SourceProject) => {
+    setSourceProject(project);
+    setProjectTitle(project.name || "");
+    const lines: string[] = [];
+    if (project.clientName) lines.push(`客戶：${project.clientName}`);
+    if (project.phase) lines.push(`目前階段：${project.phase}`);
+    if (project.budget) lines.push(`預算：${project.budget}`);
+    if (project.note) lines.push(`需求重點：${project.note}`);
+    if (project.quotationItems?.length) {
+      lines.push(
+        `報價項目：${project.quotationItems.map((i) => i.name).filter(Boolean).join("、")}`,
+      );
+    }
+    if (project.workflowTasks?.length) {
+      lines.push(
+        `施工時程：${project.workflowTasks.map((t) => t.title).filter(Boolean).join("、")}`,
+      );
+    }
+    setBriefDesc(lines.join("\n"));
+  }, []);
+
+  /* ---- fetch a single project by id and apply ---- */
+  const loadProjectById = useCallback(async (projectId: string) => {
+    if (!projectId) return;
+    setLoadingProject(true);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { project?: SourceProject };
+      if (data.project) applyProjectToForm(data.project);
+    } catch { /* ignore */ } finally {
+      setLoadingProject(false);
+    }
+  }, [applyProjectToForm]);
+
+  /* ---- entry A: pre-fill from a project passed via prop ---- */
+  const appliedInitialRef = React.useRef(false);
+  useEffect(() => {
+    if (initialProjectId && !appliedInitialRef.current) {
+      appliedInitialRef.current = true;
+      void loadProjectById(initialProjectId);
+    }
+  }, [initialProjectId, loadProjectById]);
+
   /* ---- wizard state ---- */
   const [step, setStep] = useState(1);
 
@@ -176,6 +265,11 @@ export const PresentationMaker: React.FC = () => {
   const [briefDesc, setBriefDesc] = useState("");
   const [slides, setSlides] = useState<SlideData[]>([]);
   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
+
+  /* step 1 — source project (從專案歸納) */
+  const [projectOptions, setProjectOptions] = useState<SourceProject[]>([]);
+  const [sourceProject, setSourceProject] = useState<SourceProject | null>(null);
+  const [loadingProject, setLoadingProject] = useState(false);
 
   /* step 2 */
   const [imagePickerSlideId, setImagePickerSlideId] = useState<string | null>(null);
@@ -199,15 +293,42 @@ export const PresentationMaker: React.FC = () => {
   const requestOutlineSlides = async (
     layoutFn: (i: number, total: number) => SlideLayout = getDefaultLayout,
   ): Promise<SlideData[]> => {
+    // When a source project is loaded, feed the AI the full structured data
+    // so the deck is summarised FROM the project, not generic filler.
+    let projectBlock = "";
+    if (sourceProject) {
+      const q = sourceProject.quotationItems || [];
+      const w = sourceProject.workflowTasks || [];
+      const quoteLines = q
+        .map((i) => `  - ${i.name}${i.description ? `（${i.description}）` : ""} × ${i.quantity}，單價 ${i.unitPrice}`)
+        .join("\n");
+      const taskLines = w
+        .map((t) => `  - ${t.title}${t.date ? `（${t.date}${t.time ? " " + t.time : ""}）` : ""}`)
+        .join("\n");
+      const total = q.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitPrice) || 0), 0);
+      projectBlock =
+        `\n【專案資料（請據此歸納，不要憑空捏造）】\n` +
+        `客戶：${sourceProject.clientName || "（未填）"}\n` +
+        `階段：${sourceProject.phase || "（未填）"}\n` +
+        `預算：${sourceProject.budget || "（未填）"}\n` +
+        `需求備註：${sourceProject.note || "（無）"}\n` +
+        (quoteLines ? `報價項目：\n${quoteLines}\n報價總額（估）：${total.toLocaleString()}\n` : "") +
+        (taskLines ? `施工/工作時程：\n${taskLines}\n` : "");
+    }
+
     const prompt =
       `你是室內設計公司的簡報顧問。請根據以下資訊，為一份設計提案簡報生成投影片大綱。\n\n` +
       `專案名稱：${projectTitle || "室內設計方案"}\n` +
       `設計師：${designerName || "設計師"}\n` +
       (briefDesc ? `說明：${briefDesc}\n` : "") +
+      projectBlock +
       `\n請輸出 JSON 格式的投影片陣列，每張投影片包含 title 和 body（繁體中文），格式：\n` +
       `[{"title":"封面","body":"..."},{"title":"設計概述","body":"..."},...]` +
       `\n規則：(1) 第一頁為封面（含專案名稱與設計師名稱）(2) 最後一頁為結語/聯繫方式 ` +
-      `(3) 中間安排 4-6 頁內容（設計理念、風格定位、空間規劃、材質配色、預算說明等）` +
+      (sourceProject
+        ? `(3) 中間頁面要涵蓋：設計理念、空間規劃（依需求備註逐空間說明）、材質配色，` +
+          `並且【若有報價項目就獨立一頁「投資預算」條列項目與總額】、【若有施工時程就獨立一頁「執行時程」條列階段】 `
+        : `(3) 中間安排 4-6 頁內容（設計理念、風格定位、空間規劃、材質配色、預算說明等）`) +
       `(4) 使用專業室內設計用語 (5) 只輸出 JSON 陣列，不要其他文字。`;
 
     try {
@@ -729,6 +850,38 @@ export const PresentationMaker: React.FC = () => {
 
   const renderStep1Left = () => (
     <div className="space-y-4">
+      {/* 從專案歸納 */}
+      <div className="bg-gradient-to-br from-brand-50 to-purple-50 border border-brand-100 rounded-lg p-3">
+        <label className="block text-xs font-semibold text-brand-700 mb-1.5 flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5" /> 從室內專案自動帶入內容
+        </label>
+        <div className="flex gap-2">
+          <select
+            value={sourceProject?.id || ""}
+            onChange={(e) => {
+              const id = e.target.value;
+              if (id) void loadProjectById(id);
+              else { setSourceProject(null); }
+            }}
+            disabled={loadingProject}
+            className="flex-1 text-sm border-gray-300 rounded-lg p-2 bg-white border"
+          >
+            <option value="">選擇專案（自動填入名稱、需求、報價、時程）</option>
+            {projectOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.clientName ? `（${p.clientName}）` : ""}
+              </option>
+            ))}
+          </select>
+          {loadingProject && <RefreshCw className="w-4 h-4 animate-spin text-brand-600 self-center" />}
+        </div>
+        {sourceProject && (
+          <p className="text-[10px] text-brand-600 mt-1.5">
+            ✓ 已帶入「{sourceProject.name}」的資料 · {sourceProject.quotationItems?.length || 0} 報價項 · {sourceProject.workflowTasks?.length || 0} 時程 · 按下方生成大綱即會據此歸納
+          </p>
+        )}
+      </div>
+
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">專案名稱</label>
         <input

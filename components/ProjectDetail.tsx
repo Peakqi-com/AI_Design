@@ -23,6 +23,7 @@ import {
   Plus,
   Wand2,
   FolderArchive,
+  Presentation,
 } from "lucide-react";
 
 interface ProjectDetailProps {
@@ -30,6 +31,7 @@ interface ProjectDetailProps {
   onBack: () => void;
   onGoToAI: () => void;
   onGoToQuotation?: () => void;
+  onGoToPresentation?: (projectId: string) => void;
   onProjectUpdated?: (project: Project) => void;
 }
 
@@ -264,6 +266,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   onBack,
   onGoToAI,
   onGoToQuotation,
+  onGoToPresentation,
   onProjectUpdated,
 }) => {
   const [draft, setDraft] = useState<Project>(normalizeDraftProject(project));
@@ -925,6 +928,9 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
           )}
           <Button onClick={onGoToAI} variant="outline" className="flex-1 lg:flex-none gap-2">
             <PenTool className="w-4 h-4" /> 進入 線稿轉渲染工坊
+          </Button>
+          <Button onClick={() => onGoToPresentation?.(project.id)} variant="outline" className="flex-1 lg:flex-none gap-2">
+            <Presentation className="w-4 h-4" /> 生成提案簡報
           </Button>
           <Button onClick={onGoToQuotation} variant="outline" className="flex-1 lg:flex-none gap-2">
             報價單系統
