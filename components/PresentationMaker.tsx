@@ -22,7 +22,7 @@ import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import { useCredits } from "@/lib/client/use-credits";
 import { SLIDE_THEMES, getTheme, buildGoogleFontsHref, resolveRichLayout } from "@/lib/presentation/themes";
 import { SlideCanvas, SLIDE_W, SLIDE_H, type CanvasSlide } from "@/components/presentation/SlideCanvas";
-import { rasterizeSlide, exportToPptx, exportToPdf } from "@/lib/presentation/export";
+import { rasterizeSlide, exportToPptx, exportToPdf, inlineStageImages, computeFontEmbedCSS } from "@/lib/presentation/export";
 
 /* ================================================================
    Types
@@ -755,18 +755,26 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   const handleRichExport = async (format: "pptx" | "pdf") => {
     if (slides.length === 0 || !exportStageRef.current) return;
     setIsExporting(true);
-    setExportProgress("準備字體與版面...");
+    setExportProgress("準備字體與圖片...");
     try {
       if (document.fonts?.ready) await document.fonts.ready;
-      await new Promise((r) => setTimeout(r, 400));
-      const nodes = Array.from(
-        exportStageRef.current.querySelectorAll<HTMLElement>("[data-export-slide]"),
-      );
+      await new Promise((r) => setTimeout(r, 300));
+
+      const stage = exportStageRef.current;
+      // 1) Inline all images to same-origin data URLs (avoids CORS hangs)
+      setExportProgress("載入圖片...");
+      await inlineStageImages(stage);
+
+      const nodes = Array.from(stage.querySelectorAll<HTMLElement>("[data-export-slide]"));
+      // 2) Compute font-embed CSS ONCE (huge speedup vs per-slide)
+      setExportProgress("內嵌字體...");
+      const fontCSS = nodes[0] ? await computeFontEmbedCSS(nodes[0]) : "";
+
+      // 3) Rasterize each slide
       const pngs: string[] = [];
       for (let i = 0; i < nodes.length; i++) {
         setExportProgress(`渲染第 ${i + 1} / ${nodes.length} 頁...`);
-        if (i === 0) await rasterizeSlide(nodes[i]).catch(() => "");
-        pngs.push(await rasterizeSlide(nodes[i]));
+        pngs.push(await rasterizeSlide(nodes[i], fontCSS));
       }
       const dateStr = new Date().toLocaleDateString("zh-TW").replace(/\//g, "");
       const fileName = `${projectTitle || "設計簡報"}_${dateStr}.${format}`;
