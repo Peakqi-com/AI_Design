@@ -13,6 +13,13 @@ import { MarketingCenter } from "./components/MarketingCenter";
 import { QuotationGenerator } from "./components/QuotationGenerator";
 import { VideoStudio } from "./components/VideoStudio";
 import { CRMSystem } from "./components/CRMSystem";
+import { MediaLibrary } from "./components/MediaLibrary";
+import { PresentationMaker } from "./components/PresentationMaker";
+import { AdminPanel } from "./components/AdminPanel";
+import { AIChatImage } from "./components/AIChatImage";
+import { VideoScriptWorkflow } from "./components/VideoScriptWorkflow";
+import { useCredits } from "./lib/client/use-credits";
+import { CreditsModalProvider } from "./lib/client/credits-modal-context";
 
 const DEMO_USER: User = {
   id: "u_demo",
@@ -20,7 +27,7 @@ const DEMO_USER: User = {
   email: "team@interiorpro.tw",
   avatar: "https://picsum.photos/200",
   plan: "free",
-  credits: 50,
+  credits: 30,
 };
 
 const toAppUser = (sessionUser: unknown): User | null => {
@@ -41,7 +48,7 @@ const toAppUser = (sessionUser: unknown): User | null => {
     email: user.email || "oauth-user@example.com",
     avatar: user.image || "https://picsum.photos/200",
     plan: user.plan || "free",
-    credits: typeof user.credits === "number" ? user.credits : 50,
+    credits: typeof user.credits === "number" ? user.credits : 30,
   };
 };
 
@@ -51,9 +58,16 @@ const App: React.FC = () => {
   const [dashboardView, setDashboardView] = useState<DashboardView>("overview");
   const [manualUser, setManualUser] = useState<User | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-
+  const credits = useCredits();
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
+
+  // Check admin: super admin email OR isAdmin flag from credits
+  const adminEmails = ["ai.allen.task@gmail.com"];
+  const isAdmin = credits.isAdmin
+    || adminEmails.includes((credits.userEmail || "").toLowerCase())
+    || adminEmails.includes((user?.email || "").toLowerCase())
+    || adminEmails.includes(((session?.user as { email?: string })?.email || "").toLowerCase());
 
   useEffect(() => {
     if (oauthUser && viewState !== "dashboard") {
@@ -120,6 +134,8 @@ const App: React.FC = () => {
         return <SubscriptionPage />;
       case "ai-studio":
         return <AIStudio />;
+      case "ai-chat":
+        return <AIChatImage />;
       case "projects":
         if (selectedProject) {
           return (
@@ -140,36 +156,58 @@ const App: React.FC = () => {
       case "video-studio":
         return <VideoStudio />;
       case "crm":
-        return <CRMSystem />;
+        return <CRMSystem onNavigateToProjects={() => setDashboardView("projects")} />;
+      case "media-library":
+        return <MediaLibrary />;
+      case "presentation":
+        return <PresentationMaker />;
+      case "video-script":
+        return <VideoScriptWorkflow />;
+      case "admin":
+        return <AdminPanel />;
       default:
         return <DashboardHome />;
     }
   };
 
   return (
-    <div className="antialiased text-slate-900 font-sans">
-      {viewState === "landing" && (
-        <LandingPage onGetStarted={() => setViewState('login')} />
-      )}
+    <CreditsModalProvider
+      isLoggedIn={!!user}
+      onUpgrade={() => {
+        setViewState("dashboard");
+        setDashboardView("subscription");
+      }}
+      onSignUp={() => setViewState("login")}
+    >
+      <div className="antialiased text-slate-900 font-sans">
+        {viewState === "landing" && (
+          <LandingPage onGetStarted={() => setViewState('login')} />
+        )}
 
-      {viewState === "login" && (
-        <LoginPage
-          onLogin={handleLogin}
-          onBack={() => setViewState("landing")}
-        />
-      )}
+        {viewState === "login" && (
+          <LoginPage
+            onLogin={handleLogin}
+            onBack={() => setViewState("landing")}
+          />
+        )}
 
-      {viewState === "dashboard" && user && (
-        <DashboardLayout
-          user={user}
-          currentView={dashboardView}
-          onChangeView={handleViewChange}
-          onLogout={handleLogout}
-        >
-          {renderDashboardContent()}
-        </DashboardLayout>
-      )}
-    </div>
+        {viewState === "dashboard" && user && (
+          <DashboardLayout
+            user={user}
+            currentView={dashboardView}
+            onChangeView={handleViewChange}
+            onLogout={handleLogout}
+            isAdmin={isAdmin}
+            liveCredits={credits.credits}
+            liveStorageUsed={credits.storageUsedBytes}
+            liveStorageQuota={credits.storageQuotaBytes}
+            userPlan={credits.plan}
+          >
+            {renderDashboardContent()}
+          </DashboardLayout>
+        )}
+      </div>
+    </CreditsModalProvider>
   );
 };
 

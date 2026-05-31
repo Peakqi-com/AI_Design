@@ -55,6 +55,7 @@ export interface CrmMessage {
 
 export interface CrmContact {
   id: string;
+  userId?: string;
   source: ContactSource;
   lineUserId?: string;
   displayName: string;
@@ -63,6 +64,11 @@ export interface CrmContact {
   status: ContactStatus;
   email?: string;
   phone?: string;
+  company?: string;
+  title?: string;
+  address?: string;
+  notes?: string;
+  cardImageUrl?: string;
   unread: number;
   lastMessageText?: string;
   lastMessageAt?: string;
@@ -72,6 +78,7 @@ export interface CrmContact {
 
 export interface CrmProject {
   id: string;
+  userId?: string;
   name: string;
   clientName: string;
   status: "draft" | "active" | "quoted" | "completed";
@@ -79,6 +86,8 @@ export interface CrmProject {
   budget: string;
   coverImageUrl: string;
   linkedContactId?: string;
+  linkedContactIds?: string[];
+  linkedAssetIds?: string[];
   note?: string;
   lastSyncedToCrmAt?: string;
   archivedAt?: string;

@@ -43,10 +43,15 @@ export interface SocialAssetMeta {
   sourceType?: string;
   durationSec?: number;
   prompt?: string;
+  generationPrompt?: string; // full prompt used for AI generation
   summary?: string;
   roomType?: string;
   dressName?: string;
   model?: string;
+  packageId?: string;
+  packageLabel?: string;
+  slotLabel?: string;
+  blobUrl?: string;
 }
 
 interface SocialAssetRecord {
@@ -57,6 +62,7 @@ interface SocialAssetRecord {
   mimeType: string;
   size: number;
   createdAt: string;
+  deletedAt?: string; // soft-delete timestamp; undefined = active
   meta: SocialAssetMeta;
   storage: SocialAssetStorage;
 }
@@ -74,6 +80,7 @@ export interface SocialAssetItem {
   mimeType: string;
   size: number;
   createdAt: string;
+  deletedAt?: string;
   url: string;
   meta: SocialAssetMeta;
 }
@@ -219,7 +226,9 @@ const toClientItem = (record: SocialAssetRecord): SocialAssetItem => ({
   mimeType: record.mimeType,
   size: record.size,
   createdAt: record.createdAt,
-  url: `/api/social/assets/${record.id}/file?userId=${encodeURIComponent(record.userId)}`,
+  deletedAt: record.deletedAt,
+  // Use blobUrl if available (large files uploaded via Vercel Blob)
+  url: record.meta?.blobUrl || `/api/social/assets/${record.id}/file?userId=${encodeURIComponent(record.userId)}`,
   meta: record.meta || {},
 });
 
@@ -343,6 +352,16 @@ async function saveStore(store: SocialAssetStore): Promise<void> {
 const makeAssetId = (): string => `asset_${crypto.randomUUID()}`;
 
 const removeAssetFileSafe = async (asset: SocialAssetRecord): Promise<void> => {
+  // Delete from Vercel Blob if blobUrl exists
+  if (asset.meta?.blobUrl) {
+    try {
+      const { del } = await import("@vercel/blob");
+      await del(asset.meta.blobUrl);
+    } catch {
+      // ignore blob cleanup failures
+    }
+  }
+
   if (asset.storage.kind === "redis_base64") {
     if (!redis) {
       return;
@@ -383,16 +402,36 @@ const persistAssetDataToFileOrInline = async (
   }
 };
 
+const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 export async function listSocialAssets(input: {
   userId: string;
   kind?: SocialAssetKind;
   limit?: number;
+  trash?: boolean; // true = list trash items only
 }): Promise<SocialAssetItem[]> {
   const userId = normalizeUserId(input.userId);
   const store = await getStore();
-  const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 24)));
+  const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 24)));
+  const now = Date.now();
+
+  // Auto-purge items that have been in trash > 30 days
+  const autoPurged: SocialAssetRecord[] = [];
+  store.items = store.items.filter((item) => {
+    if (item.deletedAt && now - new Date(item.deletedAt).getTime() > TRASH_TTL_MS) {
+      autoPurged.push(item);
+      return false;
+    }
+    return true;
+  });
+  if (autoPurged.length > 0) {
+    await saveStore(store);
+    await Promise.all(autoPurged.map((item) => removeAssetFileSafe(item)));
+  }
+
   const filtered = store.items
     .filter((item) => item.userId === userId)
+    .filter((item) => (input.trash ? Boolean(item.deletedAt) : !item.deletedAt))
     .filter((item) => (input.kind ? item.kind === input.kind : true))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, limit);
@@ -413,20 +452,40 @@ export async function saveSocialAsset(input: SaveSocialAssetInput): Promise<Soci
   const baseName = sanitizeName(ensureDateName(rawBaseName, dateTag));
   const displayName = `${baseName}${ext}`;
   const outputName = `${baseName}_${id}${ext}`;
-  const relativePath = path.join("social-assets", outputName);
-  let storage: SocialAssetStorage = { kind: "missing" };
 
-  if (canUseRedis()) {
-    try {
-      const redisKey = await persistRedisAssetData(id, input.buffer);
-      storage = { kind: "redis_base64", redisKey };
-    } catch (error) {
-      handleRedisFailure(error);
+  // Try Vercel Blob first (unified storage, no size limit)
+  let blobUrl: string | undefined;
+  try {
+    const { put } = await import("@vercel/blob");
+    const blobPath = `assets/${userId}/${outputName}`;
+    const blob = await put(blobPath, input.buffer, {
+      access: "public",
+      contentType: mimeType,
+      addRandomSuffix: false,
+    });
+    blobUrl = blob.url;
+  } catch {
+    // Vercel Blob not configured — fall back to Redis/file storage
+  }
+
+  let storage: SocialAssetStorage = { kind: "missing" };
+  if (!blobUrl) {
+    // Fallback: original Redis/file storage for when Blob is not available
+    const relativePath = path.join("social-assets", outputName);
+    if (canUseRedis()) {
+      try {
+        const redisKey = await persistRedisAssetData(id, input.buffer);
+        storage = { kind: "redis_base64", redisKey };
+      } catch (error) {
+        handleRedisFailure(error);
+        storage = await persistAssetDataToFileOrInline(relativePath, input.buffer);
+      }
+    } else {
       storage = await persistAssetDataToFileOrInline(relativePath, input.buffer);
     }
-  } else {
-    storage = await persistAssetDataToFileOrInline(relativePath, input.buffer);
   }
+
+  const meta = { ...(input.meta ?? {}), ...(blobUrl ? { blobUrl } : {}) };
 
   const record: SocialAssetRecord = {
     id,
@@ -436,8 +495,8 @@ export async function saveSocialAsset(input: SaveSocialAssetInput): Promise<Soci
     mimeType,
     size: input.buffer.length,
     createdAt,
-    meta: input.meta ?? {},
-    storage,
+    meta,
+    storage: blobUrl ? { kind: "missing" } : storage, // No binary in Redis when using Blob
   };
 
   const nextItems = [record, ...store.items].slice(0, MAX_ASSETS_TOTAL);
@@ -498,4 +557,54 @@ export async function readSocialAssetFile(input: {
   }
 
   return null;
+}
+
+export async function softDeleteSocialAsset(input: {
+  assetId: string;
+  userId: string;
+}): Promise<boolean> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const record = store.items.find((item) => item.id === input.assetId && item.userId === userId && !item.deletedAt);
+  if (!record) return false;
+  record.deletedAt = new Date().toISOString();
+  await saveStore(store);
+  return true;
+}
+
+export async function restoreSocialAsset(input: {
+  assetId: string;
+  userId: string;
+}): Promise<boolean> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const record = store.items.find((item) => item.id === input.assetId && item.userId === userId && item.deletedAt);
+  if (!record) return false;
+  delete record.deletedAt;
+  await saveStore(store);
+  return true;
+}
+
+export async function permanentDeleteSocialAsset(input: {
+  assetId: string;
+  userId: string;
+}): Promise<boolean> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const idx = store.items.findIndex((item) => item.id === input.assetId && item.userId === userId);
+  if (idx === -1) return false;
+  const [removed] = store.items.splice(idx, 1);
+  await saveStore(store);
+  await removeAssetFileSafe(removed);
+  return true;
+}
+
+export async function emptyTrash(input: { userId: string }): Promise<number> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const toDelete = store.items.filter((item) => item.userId === userId && item.deletedAt);
+  store.items = store.items.filter((item) => !(item.userId === userId && item.deletedAt));
+  await saveStore(store);
+  await Promise.all(toDelete.map((item) => removeAssetFileSafe(item)));
+  return toDelete.length;
 }

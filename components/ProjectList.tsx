@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Button } from "./Button";
+import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import {
   Plus,
   Search,
@@ -13,6 +15,7 @@ import {
   Image as ImageIcon,
   Trash2,
   FolderArchive,
+  CheckCircle,
 } from "lucide-react";
 import {
   Project,
@@ -118,6 +121,10 @@ const requestJson = async <T,>(input: RequestInfo, init?: RequestInit): Promise<
 };
 
 export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => {
+  const { data: session } = useSession();
+  const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
+  const userScopeId = resolveClientUserScopeId(sessionUser?.id || null, sessionUser?.email || null);
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -140,8 +147,11 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     budget: "待定",
     coverImageUrl: "",
     linkedContactId: "",
+    linkedContactIds: [] as string[],
+    linkedAssetIds: [] as string[],
     note: "",
   });
+  const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; url: string; meta?: { slotLabel?: string; style?: string } }>>([]);
 
   const loadProjects = useCallback(
     async (searchKey: string, showArchived: boolean, showFiled: boolean, showDeleted: boolean) => {
@@ -150,6 +160,9 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     setError(null);
     try {
       const params = new URLSearchParams();
+      if (userScopeId) {
+        params.set("userId", userScopeId);
+      }
       if (searchKey.trim()) {
         params.set("search", searchKey.trim());
       }
@@ -193,9 +206,18 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     }
   }, []);
 
+  const loadMediaAssets = useCallback(async () => {
+    try {
+      const res = await fetch("/api/social/assets?userId=guest_server&kind=image&limit=100");
+      const data = await res.json();
+      setMediaAssets((data.items || []).map((a: { id: string; url: string; meta?: Record<string, string> }) => ({ id: a.id, url: a.url, meta: a.meta })));
+    } catch { setMediaAssets([]); }
+  }, []);
+
   useEffect(() => {
     void loadContacts();
-  }, [loadContacts]);
+    void loadMediaAssets();
+  }, [loadContacts, loadMediaAssets]);
 
   useEffect(() => {
     const delay = didFirstProjectLoadRef.current ? 250 : 0;
@@ -260,13 +282,16 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: userScopeId,
           name,
           clientName,
           status: form.status,
           phase: form.phase,
           budget: form.budget,
           coverImageUrl: form.coverImageUrl,
-          linkedContactId: form.linkedContactId || undefined,
+          linkedContactId: form.linkedContactIds[0] || form.linkedContactId || undefined,
+          linkedContactIds: form.linkedContactIds,
+          linkedAssetIds: form.linkedAssetIds,
           note: form.note,
         }),
       });
@@ -281,6 +306,8 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         budget: "待定",
         coverImageUrl: "",
         linkedContactId: "",
+        linkedContactIds: [],
+        linkedAssetIds: [],
         note: "",
       });
       setSearch("");
@@ -500,23 +527,82 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-600">綁定 CRM 客戶（可選）</label>
-                  <select
-                    value={form.linkedContactId}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, linkedContactId: event.target.value }))
-                    }
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
-                  >
-                    <option value="">不綁定</option>
-                    {crmContacts.map((contact) => (
-                      <option key={contact.id} value={contact.id}>
-                        {contact.displayName}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedContactName && (
-                    <p className="mt-1 text-[11px] text-gray-500">已選擇：{selectedContactName}</p>
+                  <label className="mb-1 block text-xs text-gray-600">綁定客戶（可多選）</label>
+                  <div className="max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                    {crmContacts.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-gray-400">尚無客戶，請先至 CRM 建立</p>
+                    ) : (
+                      crmContacts.map((contact) => {
+                        const checked = form.linkedContactIds.includes(contact.id);
+                        return (
+                          <label key={contact.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  linkedContactIds: checked
+                                    ? prev.linkedContactIds.filter((cid) => cid !== contact.id)
+                                    : [...prev.linkedContactIds, contact.id],
+                                  clientName: prev.clientName || contact.displayName,
+                                }))
+                              }
+                              className="rounded border-gray-300 text-brand-600"
+                            />
+                            <span className="text-gray-700">{contact.displayName}</span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                  {form.linkedContactIds.length > 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      已選 {form.linkedContactIds.length} 位：{form.linkedContactIds.map((cid) => crmContacts.find((c) => c.id === cid)?.displayName).filter(Boolean).join("、")}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-gray-600">關聯設計圖（可多選）</label>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
+                    {mediaAssets.length === 0 ? (
+                      <p className="px-2 py-2 text-xs text-gray-400">尚無設計圖，請先至 AI 空間渲染生成</p>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {mediaAssets.slice(0, 24).map((asset) => {
+                          const checked = form.linkedAssetIds.includes(asset.id);
+                          return (
+                            <button
+                              key={asset.id}
+                              type="button"
+                              onClick={() =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  linkedAssetIds: checked
+                                    ? prev.linkedAssetIds.filter((aid) => aid !== asset.id)
+                                    : [...prev.linkedAssetIds, asset.id],
+                                  coverImageUrl: !prev.coverImageUrl && !checked ? asset.url : prev.coverImageUrl,
+                                }))
+                              }
+                              className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                                checked ? "border-brand-500 ring-1 ring-brand-300" : "border-transparent hover:border-gray-300"
+                              }`}
+                            >
+                              <img src={asset.url} alt="" className="w-full h-full object-cover" />
+                              {checked && (
+                                <div className="absolute top-0.5 right-0.5 w-4 h-4 bg-brand-600 rounded-full flex items-center justify-center">
+                                  <CheckCircle className="w-3 h-3 text-white" />
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {form.linkedAssetIds.length > 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500">已選 {form.linkedAssetIds.length} 張設計圖</p>
                   )}
                 </div>
               </div>

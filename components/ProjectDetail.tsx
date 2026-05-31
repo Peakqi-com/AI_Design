@@ -332,7 +332,8 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [onProjectUpdated, project.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   const linkedContact = useMemo(
     () => contacts.find((item) => item.id === draft.linkedContactId) || null,

@@ -791,6 +791,7 @@ export async function clearLineSettings(userScopeId?: string): Promise<void> {
 }
 
 export interface ListContactsOptions {
+  userId?: string;
   search?: string;
   tag?: string;
 }
@@ -800,9 +801,28 @@ export async function listContacts(options: ListContactsOptions = {}): Promise<C
   const store = await getStore();
   const searchKey = search?.trim().toLowerCase();
   const tagKey = tag?.trim();
+  const filterUserId = options.userId?.trim();
 
   return store.contacts
     .filter((contact) => {
+      // User scope: only show contacts owned by this user.
+      // The LINE OA is a single shared account stored under the global scope,
+      // so its contacts (created by the webhook) carry userId="__global__".
+      // Surface those to every authenticated user — otherwise received LINE
+      // messages exist in the store but are filtered out of everyone's view.
+      if (
+        filterUserId &&
+        contact.userId &&
+        contact.userId !== filterUserId &&
+        contact.userId !== GLOBAL_LINE_SETTINGS_SCOPE
+      ) {
+        return false;
+      }
+      // Hide legacy contacts without userId when a userId filter is active
+      if (filterUserId && !contact.userId) {
+        return false;
+      }
+
       const hitSearch = !searchKey
         ? true
         : [
@@ -833,7 +853,7 @@ export async function getContactById(contactId: string): Promise<CrmContact | nu
 
 export async function updateContact(
   contactId: string,
-  patch: Partial<Pick<CrmContact, "displayName" | "email" | "phone" | "status" | "avatarUrl">>,
+  patch: Partial<Pick<CrmContact, "displayName" | "email" | "phone" | "status" | "avatarUrl" | "company" | "title" | "address" | "notes" | "cardImageUrl">>,
 ): Promise<CrmContact | null> {
   return mutateStore((store) => {
     const index = store.contacts.findIndex((contact) => contact.id === contactId);
@@ -856,6 +876,7 @@ export interface UpsertLineContactInput {
   lineUserId: string;
   displayName: string;
   avatarUrl?: string | null;
+  userId?: string;
 }
 
 export async function upsertLineContact(input: UpsertLineContactInput): Promise<CrmContact> {
@@ -867,6 +888,8 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
       (contact) => contact.lineUserId === input.lineUserId,
     );
 
+    const scopeId = input.userId?.trim() || undefined;
+
     if (existingIndex >= 0) {
       const existing = store.contacts[existingIndex];
       const updated: CrmContact = {
@@ -874,6 +897,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
         displayName: normalizedName,
         avatarUrl: input.avatarUrl ?? existing.avatarUrl ?? null,
         source: "line",
+        userId: existing.userId ?? scopeId,
         updatedAt: now,
       };
       store.contacts[existingIndex] = updated;
@@ -884,6 +908,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
       id: createId("contact"),
       source: "line",
       lineUserId: input.lineUserId,
+      userId: scopeId,
       displayName: normalizedName,
       avatarUrl: input.avatarUrl ?? null,
       tags: [],
@@ -899,6 +924,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
 }
 
 export interface EnsureCrmContactInput {
+  userId?: string;
   source?: "line" | "manual";
   lineUserId?: string;
   displayName: string;
@@ -931,6 +957,7 @@ export async function ensureCrmContact(input: EnsureCrmContactInput): Promise<Cr
     if (contactIndex < 0) {
       const created: CrmContact = {
         id: createId("contact"),
+        userId: input.userId?.trim() || undefined,
         source: normalizedSource,
         lineUserId,
         displayName: normalizedName,
@@ -1087,6 +1114,7 @@ export async function createMessage(input: CreateMessageInput): Promise<CrmMessa
 }
 
 export interface ListProjectsOptions {
+  userId?: string;
   search?: string;
   includeArchived?: boolean;
   includeFiled?: boolean;
@@ -1108,9 +1136,18 @@ export async function listProjects(options: ListProjectsOptions = {}): Promise<C
   const includeArchived = Boolean(options.includeArchived);
   const includeFiled = Boolean(options.includeFiled);
   const includeDeleted = Boolean(options.includeDeleted);
+  const filterUserId = options.userId?.trim();
 
   return store.projects
     .filter((project) => {
+      // User scope: only show projects owned by this user
+      if (filterUserId && project.userId && project.userId !== filterUserId) {
+        return false;
+      }
+      // Hide legacy projects without userId when a userId filter is active
+      if (filterUserId && !project.userId) {
+        return false;
+      }
       if (!includeDeleted && project.deletedAt) {
         return false;
       }
@@ -1146,6 +1183,7 @@ export async function getProjectById(projectId: string): Promise<CrmProject | nu
 }
 
 export interface CreateProjectInput {
+  userId?: string;
   name: string;
   clientName: string;
   status: CrmProject["status"];
@@ -1175,6 +1213,7 @@ export async function createProject(input: CreateProjectInput): Promise<CrmProje
   const now = nowIso();
   const project: CrmProject = {
     id: createId("project"),
+    userId: input.userId?.trim() || undefined,
     name: input.name.trim(),
     clientName: input.clientName.trim(),
     status: input.status,

@@ -1,7 +1,7 @@
 import { LucideIcon } from 'lucide-react';
 
 export type ViewState = 'landing' | 'login' | 'dashboard';
-export type DashboardView = 'overview' | 'ai-studio' | 'video-studio' | 'projects' | 'quotation' | 'crm' | 'marketing' | 'subscription';
+export type DashboardView = 'overview' | 'ai-studio' | 'ai-chat' | 'video-studio' | 'projects' | 'quotation' | 'crm' | 'marketing' | 'subscription' | 'media-library' | 'presentation' | 'video-script' | 'admin';
 
 export interface User {
   id: string;
@@ -20,8 +20,9 @@ export interface PricingPlan {
   description: string;
   features: string[];
   recommended?: boolean;
-  type: 'subscription' | 'credits' | 'course';
+  type: 'subscription' | 'credits' | 'course' | 'addon';
   buttonText: string;
+  paymentUrl?: string;
 }
 
 export interface NavItem {
