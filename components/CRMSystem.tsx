@@ -671,18 +671,95 @@ ${transcript}
     contactDetails: ExtractedContactDetails;
   }
 
+  interface ExistingProject {
+    id: string;
+    name: string;
+    clientName: string;
+    phase: string;
+    budget: string;
+    status: string;
+    note?: string;
+    quotationItems?: Array<{ id: string; name: string; description?: string; quantity: number; unitPrice: number }>;
+    workflowTasks?: Array<{ id: string; title: string; detail?: string; date?: string; time?: string; done?: boolean }>;
+    updatedAt: string;
+  }
+
+  // Mode: "picker" = choose new vs update existing | "preview" = show editable extraction
+  const [extractStep, setExtractStep] = useState<"picker" | "preview">("picker");
+  const [extractMode, setExtractMode] = useState<"create" | "update">("create");
+  const [linkedProjectId, setLinkedProjectId] = useState<string | null>(null);
+  const [existingProjects, setExistingProjects] = useState<ExistingProject[]>([]);
+  const [existingProjectsLoading, setExistingProjectsLoading] = useState(false);
   const [showExtractModal, setShowExtractModal] = useState(false);
   const [extractLoading, setExtractLoading] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extracted, setExtracted] = useState<ExtractedProject | null>(null);
   const [creatingProject, setCreatingProject] = useState(false);
 
+  // Open the modal — start by fetching existing projects for this contact
+  const openExtractFlow = async () => {
+    if (!selected || chatMessages.length === 0) return;
+    setShowExtractModal(true);
+    setExtractStep("picker");
+    setExtracted(null);
+    setExtractError(null);
+    setExistingProjectsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (userScope) params.set("userId", userScope);
+      const res = await fetch(`/api/projects?${params.toString()}`, { headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const all: ExistingProject[] = (data.projects || []).map((p: Record<string, unknown>) => ({
+          id: String(p.id),
+          name: String(p.name || ""),
+          clientName: String(p.clientName || ""),
+          phase: String(p.phase || ""),
+          budget: String(p.budget || ""),
+          status: String(p.status || "draft"),
+          note: typeof p.note === "string" ? p.note : "",
+          quotationItems: Array.isArray(p.quotationItems) ? (p.quotationItems as ExistingProject["quotationItems"]) : [],
+          workflowTasks: Array.isArray(p.workflowTasks) ? (p.workflowTasks as ExistingProject["workflowTasks"]) : [],
+          updatedAt: String(p.updatedAt || ""),
+        }));
+        // Filter: this contact's linked projects + projects with matching clientName
+        const filtered = all.filter((p) => {
+          const linked = (p as unknown as { linkedContactId?: string }).linkedContactId === selected.id;
+          const nameMatch = p.clientName && (
+            p.clientName === selected.displayName ||
+            p.clientName.includes(selected.displayName) ||
+            selected.displayName.includes(p.clientName)
+          );
+          return linked || nameMatch;
+        });
+        setExistingProjects(filtered);
+        // Auto-suggest: if exactly one match, preselect update mode
+        if (filtered.length === 1) {
+          setExtractMode("update");
+          setLinkedProjectId(filtered[0].id);
+        } else {
+          setExtractMode("create");
+          setLinkedProjectId(null);
+        }
+      } else {
+        setExistingProjects([]);
+      }
+    } catch {
+      setExistingProjects([]);
+    } finally {
+      setExistingProjectsLoading(false);
+    }
+  };
+
   const runExtraction = async () => {
     if (!selected || chatMessages.length === 0) return;
-    const d = await credits.confirmAndDeduct("AI 對話建立專案", "ai-social-post");
+    const d = await credits.confirmAndDeduct(
+      extractMode === "update" ? "AI 更新專案" : "AI 對話建立專案",
+      "ai-social-post",
+    );
     if (!d.ok) return;
 
-    setShowExtractModal(true);
+    setExtractStep("preview");
     setExtractLoading(true);
     setExtractError(null);
     setExtracted(null);
@@ -705,7 +782,73 @@ ${transcript}
 - 公司：${selected.company || "(未填)"}
 - 地址：${selected.address || "(未填)"}`;
 
-      const prompt = `你是一位資深室內設計專案經理。下面是設計師與客戶在 LINE 上的對話。請從對話中提取資訊，建立一個室內設計專案的草稿，包含：基本資訊、報價項目、工作流程任務、客戶聯絡資訊。
+      const targetProject = extractMode === "update" && linkedProjectId
+        ? existingProjects.find((p) => p.id === linkedProjectId)
+        : null;
+
+      let prompt: string;
+      if (targetProject) {
+        // UPDATE MODE: send existing project snapshot, ask AI to return merged final state
+        const existingItems = (targetProject.quotationItems || [])
+          .map((i, idx) => `  ${idx + 1}. ${i.name} | ${i.description || "-"} | 數量 ${i.quantity} | 單價 ${i.unitPrice}`)
+          .join("\n") || "  （目前沒有報價項目）";
+        const existingTasks = (targetProject.workflowTasks || [])
+          .map((t, idx) => `  ${idx + 1}. ${t.title} | ${t.date || "未排"} ${t.time || ""} | ${t.done ? "✓已完成" : "進行中"}`)
+          .join("\n") || "  （目前沒有工作流程任務）";
+
+        prompt = `你是一位資深室內設計專案經理。客戶「${selected.displayName}」已有一個進行中的專案，我（設計師）和他在 LINE 上又聊了新內容。請根據新對話更新專案。
+
+【現有專案資料】
+專案名稱：${targetProject.name}
+階段：${targetProject.phase}
+預算：${targetProject.budget}
+備註：${targetProject.note || "(無)"}
+
+現有報價項目：
+${existingItems}
+
+現有工作流程任務：
+${existingTasks}
+
+${existingContact}
+
+【最新對話記錄】
+${transcript}
+
+請依照下列原則更新專案，並以 JSON 回覆「更新後的完整專案狀態」（不是只給新增的部分）：
+
+1. **報價項目**：
+   - 保留現有項目，除非對話明確表示取消（取消的不要放進結果）
+   - 如果對話提到新的工程項目，加入結果
+   - 如果對話提到已有項目的數量/單價變動，更新該項目
+   - 對話沒提到的舊項目原樣保留
+
+2. **工作流程任務**：
+   - 保留現有任務，除非對話明確表示取消
+   - 如果對話約定新時程（例如「下週三量尺」），加入新任務
+   - 如果對話提到舊任務的日期改變或已完成，更新該任務
+
+3. **基本資訊**：
+   - 階段：根據對話最新進展更新（例如從「需求訪談」進到「提案中」）
+   - 預算：客戶有提到新預算就更新
+   - 備註：在原備註後追加新進度（用 \\n 換行），不要刪掉舊內容
+
+4. **客戶聯絡資料**：對話中新提到的才填，否則空字串
+
+只輸出 JSON，不要其他文字。格式：
+{
+  "projectName": "專案名稱（通常保留原名）",
+  "clientName": "客戶姓名（${selected.displayName}）",
+  "phase": "更新後階段",
+  "budget": "預算",
+  "note": "更新後的完整備註",
+  "quotationItems": [{ "name": "...", "description": "...", "quantity": 數字, "unitPrice": 數字 }],
+  "workflowTasks": [{ "title": "...", "detail": "...", "date": "YYYY-MM-DD 或空", "time": "HH:mm 或空" }],
+  "contactDetails": { "phone": "", "email": "", "company": "", "address": "", "title": "" }
+}`;
+      } else {
+        // CREATE MODE: original prompt
+        prompt = `你是一位資深室內設計專案經理。下面是設計師與客戶在 LINE 上的對話。請從對話中提取資訊，建立一個室內設計專案的草稿，包含：基本資訊、報價項目、工作流程任務、客戶聯絡資訊。
 
 ${existingContact}
 
@@ -735,6 +878,7 @@ ${transcript}
     "title": "職稱（同上）"
   }
 }`;
+      }
 
       const res = await fetch("/api/ai/text", {
         method: "POST",
@@ -751,11 +895,11 @@ ${transcript}
       const parsed = JSON.parse(jsonStr) as ExtractedProject;
 
       // Sanitize defaults
-      parsed.projectName = parsed.projectName?.trim() || `${selected.displayName} 的專案`;
+      parsed.projectName = parsed.projectName?.trim() || targetProject?.name || `${selected.displayName} 的專案`;
       parsed.clientName = parsed.clientName?.trim() || selected.displayName;
-      parsed.phase = parsed.phase?.trim() || "需求訪談";
-      parsed.budget = parsed.budget?.trim() || "待定";
-      parsed.note = parsed.note?.trim() || "";
+      parsed.phase = parsed.phase?.trim() || targetProject?.phase || "需求訪談";
+      parsed.budget = parsed.budget?.trim() || targetProject?.budget || "待定";
+      parsed.note = parsed.note?.trim() || targetProject?.note || "";
       parsed.quotationItems = (parsed.quotationItems || []).map((it) => ({
         name: String(it.name || "").trim(),
         description: String(it.description || "").trim(),
@@ -798,49 +942,90 @@ ${transcript}
         }).catch(() => undefined);
       }
 
-      // 2) Create the project
+      const isUpdate = extractMode === "update" && linkedProjectId;
+      const targetProject = isUpdate ? existingProjects.find((p) => p.id === linkedProjectId) : null;
+
+      // 2) Build quotationItems — preserve IDs for items that match existing ones by name (allows downstream tracking)
+      const existingItemsByName = new Map(
+        (targetProject?.quotationItems || []).map((i) => [i.name.trim(), i.id]),
+      );
       const quotationItems = extracted.quotationItems.map((it) => ({
-        id: `qi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        id: existingItemsByName.get(it.name.trim()) || `qi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         name: it.name,
         description: it.description || "",
         quantity: it.quantity,
         unitPrice: it.unitPrice,
       }));
-      const workflowTasks = extracted.workflowTasks.map((t) => ({
-        id: `wt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        title: t.title,
-        detail: t.detail || "",
-        date: t.date || "",
-        time: t.time || "",
-        owner: "",
-        done: false,
-        isCustom: true,
-      }));
 
-      const res = await fetch("/api/projects", {
-        method: "POST",
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          userId: userScope,
-          name: extracted.projectName,
-          clientName: extracted.clientName,
-          status: "draft",
-          phase: extracted.phase,
-          budget: extracted.budget,
-          note: extracted.note || `從 LINE 對話自動建立 · 客戶：${selected.displayName}`,
-          linkedContactId: selected.id,
-          quotationItems,
-          workflowTasks,
-        }),
+      // 3) Build workflowTasks — preserve IDs and done-state for matching tasks
+      const existingTasksByTitle = new Map(
+        (targetProject?.workflowTasks || []).map((t) => [t.title.trim(), t]),
+      );
+      const workflowTasks = extracted.workflowTasks.map((t) => {
+        const existing = existingTasksByTitle.get(t.title.trim());
+        return {
+          id: existing?.id || `wt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          title: t.title,
+          detail: t.detail || existing?.detail || "",
+          date: t.date || existing?.date || "",
+          time: t.time || existing?.time || "",
+          owner: "",
+          done: existing?.done || false,
+          isCustom: true,
+        };
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error || "建立失敗");
+      if (isUpdate && targetProject) {
+        // PATCH existing project — append-merge note so manual edits aren't lost
+        const mergedNote = extracted.note.includes(targetProject.note || "")
+          ? extracted.note
+          : `${targetProject.note || ""}\n\n[${new Date().toLocaleString("zh-TW", { month: "numeric", day: "numeric" })} AI 更新]\n${extracted.note}`.trim();
+
+        const res = await fetch(`/api/projects/${targetProject.id}`, {
+          method: "PATCH",
+          headers: buildHeaders(),
+          body: JSON.stringify({
+            name: extracted.projectName,
+            phase: extracted.phase,
+            budget: extracted.budget,
+            note: mergedNote,
+            linkedContactId: selected.id,
+            quotationItems,
+            workflowTasks,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || "更新失敗");
+        }
+      } else {
+        // POST new project
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify({
+            userId: userScope,
+            name: extracted.projectName,
+            clientName: extracted.clientName,
+            status: "draft",
+            phase: extracted.phase,
+            budget: extracted.budget,
+            note: extracted.note || `從 LINE 對話自動建立 · 客戶：${selected.displayName}`,
+            linkedContactId: selected.id,
+            quotationItems,
+            workflowTasks,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || "建立失敗");
+        }
       }
 
       setShowExtractModal(false);
       setExtracted(null);
+      setExtractStep("picker");
+      setLinkedProjectId(null);
       // Navigate to projects page so user can see the result
       onNavigateToProjects?.();
     } catch (e) {
@@ -1349,13 +1534,13 @@ ${transcript}
                   {summaryLoading ? "整理中..." : summary ? (showSummary ? "收合摘要" : "展開摘要") : "AI 整理對話"}
                 </button>
                 <button
-                  onClick={runExtraction}
+                  onClick={openExtractFlow}
                   disabled={extractLoading || chatMessages.length === 0}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="AI 從對話建立室內設計專案"
+                  title="AI 從對話建立或更新室內設計專案"
                 >
                   {extractLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5" />}
-                  {extractLoading ? "分析中..." : "AI 建立專案"}
+                  {extractLoading ? "分析中..." : "AI 建立 / 更新專案"}
                 </button>
                 <button
                   onClick={() => setShowDetail(!showDetail)}
@@ -1678,13 +1863,21 @@ ${transcript}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-brand-50">
               <div className="flex items-center gap-2">
                 <FolderPlus className="w-5 h-5 text-purple-600" />
-                <h3 className="text-base font-bold text-gray-900">AI 從對話建立專案</h3>
+                <h3 className="text-base font-bold text-gray-900">
+                  {extractStep === "picker"
+                    ? "選擇處理方式"
+                    : extractMode === "update"
+                    ? "AI 更新專案預覽"
+                    : "AI 建立新專案預覽"}
+                </h3>
               </div>
               <button
                 onClick={() => {
                   setShowExtractModal(false);
                   setExtracted(null);
                   setExtractError(null);
+                  setExtractStep("picker");
+                  setLinkedProjectId(null);
                 }}
                 className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-white/60"
               >
@@ -1694,25 +1887,136 @@ ${transcript}
 
             {/* Modal body */}
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              {extractLoading && (
+              {/* ========== STEP 1: PICKER ========== */}
+              {extractStep === "picker" && (
+                <div className="space-y-4">
+                  {existingProjectsLoading ? (
+                    <div className="flex items-center justify-center py-8 text-gray-500">
+                      <RefreshCw className="w-5 h-5 animate-spin mr-2" /> 檢查現有專案...
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-600">
+                        客戶「<span className="font-semibold">{selected?.displayName}</span>」
+                        {existingProjects.length > 0
+                          ? `已有 ${existingProjects.length} 個相關專案。你想要：`
+                          : "目前沒有相關專案。"}
+                      </p>
+
+                      {/* Option: Create new */}
+                      <button
+                        onClick={() => { setExtractMode("create"); setLinkedProjectId(null); }}
+                        className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                          extractMode === "create"
+                            ? "border-purple-500 bg-purple-50"
+                            : "border-gray-200 hover:border-purple-300 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                            extractMode === "create" ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500"
+                          }`}>
+                            <Plus className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-gray-900">建立新專案</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              AI 會從整段對話建立全新的專案、報價項目和工作流程
+                            </p>
+                          </div>
+                          {extractMode === "create" && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
+                        </div>
+                      </button>
+
+                      {/* Existing projects list */}
+                      {existingProjects.length > 0 && (
+                        <>
+                          <div className="flex items-center gap-2 text-xs text-gray-400 px-1">
+                            <div className="flex-1 border-t border-gray-200" />
+                            或更新現有專案
+                            <div className="flex-1 border-t border-gray-200" />
+                          </div>
+
+                          {existingProjects.map((p) => {
+                            const isSelected = extractMode === "update" && linkedProjectId === p.id;
+                            return (
+                              <button
+                                key={p.id}
+                                onClick={() => { setExtractMode("update"); setLinkedProjectId(p.id); }}
+                                className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                                  isSelected
+                                    ? "border-purple-500 bg-purple-50"
+                                    : "border-gray-200 hover:border-purple-300 bg-white"
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isSelected ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500"
+                                  }`}>
+                                    <FileText className="w-5 h-5" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.phase}</span>
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.budget}</span>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                      {p.quotationItems?.length || 0} 個報價項目 · {p.workflowTasks?.length || 0} 個任務
+                                      {p.updatedAt && ` · 上次更新 ${new Date(p.updatedAt).toLocaleDateString("zh-TW")}`}
+                                    </p>
+                                    {p.note && (
+                                      <p className="text-xs text-gray-400 mt-1 line-clamp-2">{p.note}</p>
+                                    )}
+                                  </div>
+                                  {isSelected && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
+                                </div>
+                              </button>
+                            );
+                          })}
+
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-700">
+                            💡 <span className="font-medium">更新模式</span>會保留原專案內容，AI 只會：新增新提到的項目／更新有變動的數量、單價、日期／在備註後追加新進度。手動勾選過的「完成」任務也會保留。
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* ========== STEP 2: PREVIEW ========== */}
+              {extractStep === "preview" && extractLoading && (
                 <div className="flex flex-col items-center justify-center py-12 text-gray-500">
                   <RefreshCw className="w-8 h-8 animate-spin text-purple-600 mb-3" />
-                  <p className="text-sm font-medium">AI 正在分析整段對話...</p>
+                  <p className="text-sm font-medium">
+                    {extractMode === "update" ? "AI 正在比對現有專案與新對話..." : "AI 正在分析整段對話..."}
+                  </p>
                   <p className="text-xs text-gray-400 mt-1">提取專案資訊、報價項目和工作流程</p>
                 </div>
               )}
 
-              {extractError && !extractLoading && (
+              {extractStep === "preview" && extractError && !extractLoading && (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
                   <span className="text-sm text-red-700">提取失敗：{extractError}</span>
                   <button onClick={runExtraction} className="text-xs text-red-700 underline">重試</button>
                 </div>
               )}
 
-              {extracted && !extractLoading && (
+              {extractStep === "preview" && extracted && !extractLoading && (
                 <div className="space-y-5">
-                  <div className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    💡 以下是 AI 從對話推測的資訊。請檢視並修改後再按「建立專案」。建立後仍可在專案頁繼續編輯。
+                  <div className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                    <span>💡</span>
+                    <div>
+                      {extractMode === "update" ? (
+                        <>
+                          AI 已比對「<span className="font-semibold">{existingProjects.find((p) => p.id === linkedProjectId)?.name}</span>」與新對話，產生<span className="font-semibold text-purple-700">合併後</span>的完整狀態。
+                          按「更新專案」會覆蓋專案的報價項目和工作流程清單（備註會在原內容後追加）。
+                        </>
+                      ) : (
+                        <>以下是 AI 從對話推測的資訊。請檢視並修改後再按「建立專案」。建立後仍可在專案頁繼續編輯。</>
+                      )}
+                    </div>
                   </div>
 
                   {/* Basic info */}
@@ -1937,17 +2241,44 @@ ${transcript}
               )}
             </div>
 
-            {/* Modal footer */}
-            {extracted && !extractLoading && (
-              <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-gray-50">
-                <button
+            {/* Modal footer — picker step */}
+            {extractStep === "picker" && !existingProjectsLoading && (
+              <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <Button variant="outline" size="sm" onClick={() => { setShowExtractModal(false); setLinkedProjectId(null); }}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={runExtraction}
-                  className="text-xs text-gray-500 hover:text-brand-700 flex items-center gap-1"
+                  disabled={extractMode === "update" && !linkedProjectId}
+                  className="gap-1.5"
                 >
-                  <RefreshCw className="w-3 h-3" /> 重新分析
-                </button>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {extractMode === "update" ? "下一步：AI 比對更新" : "下一步：AI 開始分析"}
+                </Button>
+              </div>
+            )}
+
+            {/* Modal footer — preview step */}
+            {extractStep === "preview" && extracted && !extractLoading && (
+              <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setExtractStep("picker"); setExtracted(null); }}
+                    className="text-xs text-gray-500 hover:text-brand-700"
+                  >
+                    ← 重選
+                  </button>
+                  <button
+                    onClick={runExtraction}
+                    className="text-xs text-gray-500 hover:text-brand-700 flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" /> 重新分析
+                  </button>
+                </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { setShowExtractModal(false); setExtracted(null); }}>
+                  <Button variant="outline" size="sm" onClick={() => { setShowExtractModal(false); setExtracted(null); setExtractStep("picker"); }}>
                     取消
                   </Button>
                   <Button
@@ -1958,7 +2289,9 @@ ${transcript}
                     className="gap-1.5"
                   >
                     {creatingProject ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                    {creatingProject ? "建立中..." : "建立專案並前往"}
+                    {creatingProject
+                      ? (extractMode === "update" ? "更新中..." : "建立中...")
+                      : (extractMode === "update" ? "更新專案並前往" : "建立專案並前往")}
                   </Button>
                 </div>
               </div>
