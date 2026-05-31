@@ -156,7 +156,7 @@ const App: React.FC = () => {
       case "video-studio":
         return <VideoStudio />;
       case "crm":
-        return <CRMSystem />;
+        return <CRMSystem onNavigateToProjects={() => setDashboardView("projects")} />;
       case "media-library":
         return <MediaLibrary />;
       case "presentation":

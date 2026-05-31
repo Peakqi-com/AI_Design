@@ -3,12 +3,16 @@ import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
   AlertTriangle,
+  Calculator,
   Camera,
   Check,
   ClipboardCopy,
   Edit3,
   ExternalLink,
+  FileText,
+  FolderPlus,
   Link2,
+  ListChecks,
   Phone,
   Mail,
   MapPin,
@@ -94,7 +98,11 @@ interface LineSettingsData {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export const CRMSystem: React.FC = () => {
+interface CRMSystemProps {
+  onNavigateToProjects?: () => void;
+}
+
+export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) => {
   const { data: session } = useSession();
   const credits = useCredits();
   const sessionUser = session?.user as Record<string, unknown> | undefined;
@@ -632,6 +640,269 @@ ${transcript}
     }
   };
 
+  /* ---- AI: extract project + quotation + workflow from conversation ---- */
+  interface ExtractedQuotationItem {
+    name: string;
+    description?: string;
+    quantity: number;
+    unitPrice: number;
+  }
+  interface ExtractedWorkflowTask {
+    title: string;
+    detail?: string;
+    date?: string;
+    time?: string;
+  }
+  interface ExtractedContactDetails {
+    phone?: string;
+    email?: string;
+    company?: string;
+    address?: string;
+    title?: string;
+  }
+  interface ExtractedProject {
+    projectName: string;
+    clientName: string;
+    phase: string;
+    budget: string;
+    note: string;
+    quotationItems: ExtractedQuotationItem[];
+    workflowTasks: ExtractedWorkflowTask[];
+    contactDetails: ExtractedContactDetails;
+  }
+
+  const [showExtractModal, setShowExtractModal] = useState(false);
+  const [extractLoading, setExtractLoading] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [extracted, setExtracted] = useState<ExtractedProject | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
+
+  const runExtraction = async () => {
+    if (!selected || chatMessages.length === 0) return;
+    const d = await credits.confirmAndDeduct("AI 對話建立專案", "ai-social-post");
+    if (!d.ok) return;
+
+    setShowExtractModal(true);
+    setExtractLoading(true);
+    setExtractError(null);
+    setExtracted(null);
+    try {
+      const transcript = chatMessages
+        .slice(-80)
+        .map((m) => {
+          const who = m.direction === "outbound" ? "我方（設計師）" : `客戶（${selected.displayName}）`;
+          const time = new Date(m.timestamp).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const content = m.text || `[${m.messageType}]`;
+          return `[${time}] ${who}：${content}`;
+        })
+        .join("\n");
+
+      const existingContact = `
+現有客戶資料（不要覆蓋已有值）：
+- 姓名：${selected.displayName}
+- 電話：${selected.phone || "(未填)"}
+- Email：${selected.email || "(未填)"}
+- 公司：${selected.company || "(未填)"}
+- 地址：${selected.address || "(未填)"}`;
+
+      const prompt = `你是一位資深室內設計專案經理。下面是設計師與客戶在 LINE 上的對話。請從對話中提取資訊，建立一個室內設計專案的草稿，包含：基本資訊、報價項目、工作流程任務、客戶聯絡資訊。
+
+${existingContact}
+
+對話記錄：
+${transcript}
+
+請以 JSON 格式回覆，只輸出 JSON 不要其他文字。如果某些資訊對話中沒提到，數字欄位填 0、字串欄位填合理推測或空字串、陣列可以給空陣列。報價項目的單價如果客戶沒提就用 0 並在描述標註「待確認」。
+
+格式：
+{
+  "projectName": "簡短專案名稱（例如：王小姐三房兩廳裝修、北歐風新成屋）",
+  "clientName": "客戶姓名（預設用「${selected.displayName}」）",
+  "phase": "目前階段（需求訪談 / 提案中 / 報價中 / 簽約 / 施工中 / 完工 之一）",
+  "budget": "預算範圍（例如：80-100萬、待定）",
+  "note": "專案備註（30-100 字，概述客戶需求、風格偏好、特殊要求）",
+  "quotationItems": [
+    { "name": "項目名稱（例如：客廳系統櫃）", "description": "規格或說明（待確認的標註「待確認」）", "quantity": 數字, "unitPrice": 數字 }
+  ],
+  "workflowTasks": [
+    { "title": "任務名稱（例如：現場丈量、提案簡報、簽約）", "detail": "細節說明（可選）", "date": "YYYY-MM-DD 或空字串", "time": "HH:mm 或空字串" }
+  ],
+  "contactDetails": {
+    "phone": "電話（對話中提到才填，否則空字串）",
+    "email": "Email（同上）",
+    "company": "公司（同上）",
+    "address": "地址（同上）",
+    "title": "職稱（同上）"
+  }
+}`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "AI 提取失敗");
+      }
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || text;
+      const parsed = JSON.parse(jsonStr) as ExtractedProject;
+
+      // Sanitize defaults
+      parsed.projectName = parsed.projectName?.trim() || `${selected.displayName} 的專案`;
+      parsed.clientName = parsed.clientName?.trim() || selected.displayName;
+      parsed.phase = parsed.phase?.trim() || "需求訪談";
+      parsed.budget = parsed.budget?.trim() || "待定";
+      parsed.note = parsed.note?.trim() || "";
+      parsed.quotationItems = (parsed.quotationItems || []).map((it) => ({
+        name: String(it.name || "").trim(),
+        description: String(it.description || "").trim(),
+        quantity: Number(it.quantity) || 1,
+        unitPrice: Number(it.unitPrice) || 0,
+      })).filter((it) => it.name);
+      parsed.workflowTasks = (parsed.workflowTasks || []).map((t) => ({
+        title: String(t.title || "").trim(),
+        detail: String(t.detail || "").trim(),
+        date: String(t.date || "").trim(),
+        time: String(t.time || "").trim(),
+      })).filter((t) => t.title);
+      parsed.contactDetails = parsed.contactDetails || {};
+
+      setExtracted(parsed);
+    } catch (e) {
+      setExtractError(e instanceof Error ? e.message : "提取失敗，請重試");
+    } finally {
+      setExtractLoading(false);
+    }
+  };
+
+  const createProjectFromExtraction = async () => {
+    if (!extracted || !selected) return;
+    setCreatingProject(true);
+    try {
+      // 1) Update contact details if AI extracted new ones (non-empty + not already set)
+      const cd = extracted.contactDetails;
+      const contactPatch: Record<string, string> = {};
+      if (cd.phone && !selected.phone) contactPatch.phone = cd.phone;
+      if (cd.email && !selected.email) contactPatch.email = cd.email;
+      if (cd.company && !selected.company) contactPatch.company = cd.company;
+      if (cd.address && !selected.address) contactPatch.address = cd.address;
+      if (cd.title && !selected.title) contactPatch.title = cd.title;
+      if (Object.keys(contactPatch).length > 0) {
+        await fetch(`/api/crm/contacts/${selected.id}`, {
+          method: "PATCH",
+          headers: buildHeaders(),
+          body: JSON.stringify(contactPatch),
+        }).catch(() => undefined);
+      }
+
+      // 2) Create the project
+      const quotationItems = extracted.quotationItems.map((it) => ({
+        id: `qi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: it.name,
+        description: it.description || "",
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+      }));
+      const workflowTasks = extracted.workflowTasks.map((t) => ({
+        id: `wt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        title: t.title,
+        detail: t.detail || "",
+        date: t.date || "",
+        time: t.time || "",
+        owner: "",
+        done: false,
+        isCustom: true,
+      }));
+
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          userId: userScope,
+          name: extracted.projectName,
+          clientName: extracted.clientName,
+          status: "draft",
+          phase: extracted.phase,
+          budget: extracted.budget,
+          note: extracted.note || `從 LINE 對話自動建立 · 客戶：${selected.displayName}`,
+          linkedContactId: selected.id,
+          quotationItems,
+          workflowTasks,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "建立失敗");
+      }
+
+      setShowExtractModal(false);
+      setExtracted(null);
+      // Navigate to projects page so user can see the result
+      onNavigateToProjects?.();
+    } catch (e) {
+      alert(`建立專案失敗：${e instanceof Error ? e.message : "未知錯誤"}`);
+    } finally {
+      setCreatingProject(false);
+    }
+  };
+
+  // Editable updaters for the preview Modal
+  const updateExtractedField = <K extends keyof ExtractedProject>(key: K, value: ExtractedProject[K]) => {
+    setExtracted((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+  const updateQuotationItem = (idx: number, patch: Partial<ExtractedQuotationItem>) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      const items = [...prev.quotationItems];
+      items[idx] = { ...items[idx], ...patch };
+      return { ...prev, quotationItems: items };
+    });
+  };
+  const removeQuotationItem = (idx: number) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return { ...prev, quotationItems: prev.quotationItems.filter((_, i) => i !== idx) };
+    });
+  };
+  const addQuotationItem = () => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        quotationItems: [...prev.quotationItems, { name: "", description: "", quantity: 1, unitPrice: 0 }],
+      };
+    });
+  };
+  const updateWorkflowTask = (idx: number, patch: Partial<ExtractedWorkflowTask>) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      const tasks = [...prev.workflowTasks];
+      tasks[idx] = { ...tasks[idx], ...patch };
+      return { ...prev, workflowTasks: tasks };
+    });
+  };
+  const removeWorkflowTask = (idx: number) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return { ...prev, workflowTasks: prev.workflowTasks.filter((_, i) => i !== idx) };
+    });
+  };
+  const addWorkflowTask = () => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return { ...prev, workflowTasks: [...prev.workflowTasks, { title: "", detail: "", date: "", time: "" }] };
+    });
+  };
+
+  const quotationTotal = (extracted?.quotationItems || []).reduce(
+    (sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0),
+    0,
+  );
+
   /* ---- copy webhook URL ---- */
   const copyWebhookUrl = async () => {
     if (!lineData?.webhookUrl) return;
@@ -1078,6 +1349,15 @@ ${transcript}
                   {summaryLoading ? "整理中..." : summary ? (showSummary ? "收合摘要" : "展開摘要") : "AI 整理對話"}
                 </button>
                 <button
+                  onClick={runExtraction}
+                  disabled={extractLoading || chatMessages.length === 0}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="AI 從對話建立室內設計專案"
+                >
+                  {extractLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5" />}
+                  {extractLoading ? "分析中..." : "AI 建立專案"}
+                </button>
+                <button
                   onClick={() => setShowDetail(!showDetail)}
                   className={`p-2 rounded-lg transition-colors ${showDetail ? "bg-brand-50 text-brand-600" : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"}`}
                   title="客戶詳情"
@@ -1389,6 +1669,303 @@ ${transcript}
           </>
         )}
       </div>
+
+      {/* ========== AI 建立專案預覽 MODAL ========== */}
+      {showExtractModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-brand-50">
+              <div className="flex items-center gap-2">
+                <FolderPlus className="w-5 h-5 text-purple-600" />
+                <h3 className="text-base font-bold text-gray-900">AI 從對話建立專案</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowExtractModal(false);
+                  setExtracted(null);
+                  setExtractError(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-white/60"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {extractLoading && (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+                  <RefreshCw className="w-8 h-8 animate-spin text-purple-600 mb-3" />
+                  <p className="text-sm font-medium">AI 正在分析整段對話...</p>
+                  <p className="text-xs text-gray-400 mt-1">提取專案資訊、報價項目和工作流程</p>
+                </div>
+              )}
+
+              {extractError && !extractLoading && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+                  <span className="text-sm text-red-700">提取失敗：{extractError}</span>
+                  <button onClick={runExtraction} className="text-xs text-red-700 underline">重試</button>
+                </div>
+              )}
+
+              {extracted && !extractLoading && (
+                <div className="space-y-5">
+                  <div className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    💡 以下是 AI 從對話推測的資訊。請檢視並修改後再按「建立專案」。建立後仍可在專案頁繼續編輯。
+                  </div>
+
+                  {/* Basic info */}
+                  <section>
+                    <h4 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-brand-600" /> 專案基本資訊
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">專案名稱 *</label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.projectName}
+                          onChange={(e) => updateExtractedField("projectName", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">客戶名稱 *</label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.clientName}
+                          onChange={(e) => updateExtractedField("clientName", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">目前階段</label>
+                        <select
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.phase}
+                          onChange={(e) => updateExtractedField("phase", e.target.value)}
+                        >
+                          {["需求訪談", "提案中", "報價中", "簽約", "施工中", "完工"].map((p) => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">預算</label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          placeholder="例如：80-100萬"
+                          value={extracted.budget}
+                          onChange={(e) => updateExtractedField("budget", e.target.value)}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[11px] text-gray-500 block mb-1">專案備註</label>
+                        <textarea
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[60px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.note}
+                          onChange={(e) => updateExtractedField("note", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Quotation items */}
+                  <section>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                        <Calculator className="w-4 h-4 text-brand-600" />
+                        報價項目（{extracted.quotationItems.length}）
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">小計：</span>
+                        <span className="text-sm font-bold text-brand-700">NT$ {quotationTotal.toLocaleString()}</span>
+                        <button
+                          onClick={addQuotationItem}
+                          className="text-xs px-2 py-1 border border-brand-200 text-brand-700 rounded-lg hover:bg-brand-50 flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> 加項目
+                        </button>
+                      </div>
+                    </div>
+                    {extracted.quotationItems.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic py-4 text-center bg-gray-50 rounded-lg">對話中未提到具體報價項目，請手動新增</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {extracted.quotationItems.map((item, idx) => (
+                          <div key={idx} className="border border-gray-200 rounded-lg p-2.5 bg-gray-50/40">
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1 grid grid-cols-12 gap-2">
+                                <input
+                                  className="col-span-5 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="項目名稱"
+                                  value={item.name}
+                                  onChange={(e) => updateQuotationItem(idx, { name: e.target.value })}
+                                />
+                                <input
+                                  type="number"
+                                  className="col-span-2 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="數量"
+                                  value={item.quantity}
+                                  onChange={(e) => updateQuotationItem(idx, { quantity: Number(e.target.value) || 0 })}
+                                />
+                                <input
+                                  type="number"
+                                  className="col-span-5 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="單價"
+                                  value={item.unitPrice}
+                                  onChange={(e) => updateQuotationItem(idx, { unitPrice: Number(e.target.value) || 0 })}
+                                />
+                                <input
+                                  className="col-span-12 text-[11px] border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white text-gray-600"
+                                  placeholder="說明 / 規格（選填）"
+                                  value={item.description || ""}
+                                  onChange={(e) => updateQuotationItem(idx, { description: e.target.value })}
+                                />
+                              </div>
+                              <button
+                                onClick={() => removeQuotationItem(idx)}
+                                className="text-gray-300 hover:text-red-500 p-1 shrink-0"
+                                title="刪除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Workflow tasks */}
+                  <section>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                        <ListChecks className="w-4 h-4 text-brand-600" />
+                        工作流程任務（{extracted.workflowTasks.length}）
+                      </h4>
+                      <button
+                        onClick={addWorkflowTask}
+                        className="text-xs px-2 py-1 border border-brand-200 text-brand-700 rounded-lg hover:bg-brand-50 flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" /> 加任務
+                      </button>
+                    </div>
+                    {extracted.workflowTasks.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic py-4 text-center bg-gray-50 rounded-lg">對話中未提到具體任務</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {extracted.workflowTasks.map((task, idx) => (
+                          <div key={idx} className="border border-gray-200 rounded-lg p-2.5 bg-gray-50/40">
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1 grid grid-cols-12 gap-2">
+                                <input
+                                  className="col-span-6 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="任務名稱"
+                                  value={task.title}
+                                  onChange={(e) => updateWorkflowTask(idx, { title: e.target.value })}
+                                />
+                                <input
+                                  type="date"
+                                  className="col-span-4 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  value={task.date || ""}
+                                  onChange={(e) => updateWorkflowTask(idx, { date: e.target.value })}
+                                />
+                                <input
+                                  type="time"
+                                  className="col-span-2 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  value={task.time || ""}
+                                  onChange={(e) => updateWorkflowTask(idx, { time: e.target.value })}
+                                />
+                                {task.detail && (
+                                  <input
+                                    className="col-span-12 text-[11px] border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white text-gray-600"
+                                    placeholder="細節說明"
+                                    value={task.detail}
+                                    onChange={(e) => updateWorkflowTask(idx, { detail: e.target.value })}
+                                  />
+                                )}
+                              </div>
+                              <button
+                                onClick={() => removeWorkflowTask(idx)}
+                                className="text-gray-300 hover:text-red-500 p-1 shrink-0"
+                                title="刪除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Contact details patch (only show if AI extracted any) */}
+                  {(extracted.contactDetails.phone || extracted.contactDetails.email || extracted.contactDetails.company || extracted.contactDetails.address || extracted.contactDetails.title) && (
+                    <section>
+                      <h4 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
+                        <UserCircle className="w-4 h-4 text-brand-600" />
+                        客戶聯絡資料更新
+                      </h4>
+                      <p className="text-[11px] text-gray-500 mb-2">AI 從對話中發現的新資訊，建立專案時會更新到客戶資料（不覆蓋已有值）</p>
+                      <div className="grid grid-cols-2 gap-2 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        {(["phone", "email", "company", "title", "address"] as const).map((key) => {
+                          const labels = { phone: "電話", email: "Email", company: "公司", title: "職稱", address: "地址" };
+                          const existing = selected?.[key];
+                          const newVal = extracted.contactDetails[key];
+                          if (!newVal) return null;
+                          return (
+                            <div key={key}>
+                              <label className="text-[10px] text-gray-500 block">{labels[key]}</label>
+                              {existing ? (
+                                <p className="text-xs text-gray-400 line-through">{existing}（保留）</p>
+                              ) : (
+                                <input
+                                  className="w-full text-xs border border-gray-200 rounded px-2 py-1 bg-white"
+                                  value={newVal}
+                                  onChange={(e) =>
+                                    updateExtractedField("contactDetails", { ...extracted.contactDetails, [key]: e.target.value })
+                                  }
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal footer */}
+            {extracted && !extractLoading && (
+              <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <button
+                  onClick={runExtraction}
+                  className="text-xs text-gray-500 hover:text-brand-700 flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" /> 重新分析
+                </button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => { setShowExtractModal(false); setExtracted(null); }}>
+                    取消
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={createProjectFromExtraction}
+                    disabled={creatingProject || !extracted.projectName.trim() || !extracted.clientName.trim()}
+                    className="gap-1.5"
+                  >
+                    {creatingProject ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    {creatingProject ? "建立中..." : "建立專案並前往"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ========== ADD CLIENT MODAL ========== */}
       {showAddModal && (
