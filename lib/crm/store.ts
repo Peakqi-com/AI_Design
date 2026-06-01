@@ -885,7 +885,13 @@ export interface UpsertLineContactInput {
 export async function upsertLineContact(input: UpsertLineContactInput): Promise<CrmContact> {
   return mutateStore((store) => {
     const now = nowIso();
-    const normalizedName = input.displayName.trim() || `LINE ${input.lineUserId.slice(-6)}`;
+    const incomingName = input.displayName.trim();
+    // A "fallback" name is one we synthesized when the LINE profile fetch failed
+    // (e.g. "LINE 使用者 ab12cd" / "LINE 群組 …"). It must NEVER overwrite a real
+    // display name we captured earlier.
+    const isFallbackName = (n: string): boolean =>
+      !n || /^LINE (使用者|群組|聊天室) /.test(n);
+    const normalizedName = incomingName || `LINE 使用者 ${input.lineUserId.slice(-6)}`;
 
     const existingIndex = store.contacts.findIndex(
       (contact) => contact.lineUserId === input.lineUserId,
@@ -895,9 +901,16 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
 
     if (existingIndex >= 0) {
       const existing = store.contacts[existingIndex];
+      const existingNameIsReal = existing.displayName && !isFallbackName(existing.displayName);
+      // Keep the existing real name unless the incoming name is also real.
+      const nextName =
+        existingNameIsReal && isFallbackName(normalizedName)
+          ? existing.displayName
+          : normalizedName;
       const updated: CrmContact = {
         ...existing,
-        displayName: normalizedName,
+        // never clobber a good name/avatar with a fallback / null
+        displayName: nextName,
         avatarUrl: input.avatarUrl ?? existing.avatarUrl ?? null,
         source: "line",
         userId: existing.userId ?? scopeId,
