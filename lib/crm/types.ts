@@ -124,6 +124,7 @@ export interface ProjectQuotationItem {
   id: string;
   name: string;
   description?: string;
+  unit?: string;
   quantity: number;
   unitPrice: number;
 }

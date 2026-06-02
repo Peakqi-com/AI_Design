@@ -10,6 +10,23 @@
 
 import { PricingStandardItem } from "@/lib/crm/types";
 
+/** 常見計價單位（給報價單下拉選單用）。 */
+export const COMMON_UNITS = [
+  "式",
+  "坪",
+  "尺",
+  "才",
+  "台",
+  "間",
+  "車",
+  "平方米",
+  "米",
+  "組",
+  "個",
+  "樘",
+  "%",
+] as const;
+
 export const PRICING_CATEGORIES = [
   "拆除清運",
   "泥作",

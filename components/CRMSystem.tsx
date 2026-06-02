@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import { useCredits } from "@/lib/client/use-credits";
-import { buildPricingReferenceText } from "@/lib/crm/pricing-standards";
+import { buildPricingReferenceText, COMMON_UNITS } from "@/lib/crm/pricing-standards";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -741,6 +741,7 @@ ${transcript}
   interface ExtractedQuotationItem {
     name: string;
     description?: string;
+    unit?: string;
     quantity: number;
     unitPrice: number;
   }
@@ -776,7 +777,7 @@ ${transcript}
     budget: string;
     status: string;
     note?: string;
-    quotationItems?: Array<{ id: string; name: string; description?: string; quantity: number; unitPrice: number }>;
+    quotationItems?: Array<{ id: string; name: string; description?: string; unit?: string; quantity: number; unitPrice: number }>;
     workflowTasks?: Array<{ id: string; title: string; detail?: string; date?: string; time?: string; done?: boolean }>;
     updatedAt: string;
   }
@@ -905,7 +906,7 @@ ${transcript}
       if (targetProject) {
         // UPDATE MODE: send existing project snapshot, ask AI to return merged final state
         const existingItems = (targetProject.quotationItems || [])
-          .map((i, idx) => `  ${idx + 1}. ${i.name} | ${i.description || "-"} | 數量 ${i.quantity} | 單價 ${i.unitPrice}`)
+          .map((i, idx) => `  ${idx + 1}. ${i.name} | ${i.description || "-"} | ${i.quantity} ${i.unit || "式"} | 單價 ${i.unitPrice}`)
           .join("\n") || "  （目前沒有報價項目）";
         const existingTasks = (targetProject.workflowTasks || [])
           .map((t, idx) => `  ${idx + 1}. ${t.title} | ${t.date || "未排"} ${t.time || ""} | ${t.done ? "✓已完成" : "進行中"}`)
@@ -957,7 +958,7 @@ ${transcript}
   "phase": "更新後階段",
   "budget": "預算",
   "note": "更新後的完整備註",
-  "quotationItems": [{ "name": "...", "description": "...", "quantity": 數字, "unitPrice": 數字 }],
+  "quotationItems": [{ "name": "...", "description": "...", "unit": "對應標準表的單位（坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }],
   "workflowTasks": [{ "title": "...", "detail": "...", "date": "YYYY-MM-DD 或空", "time": "HH:mm 或空" }],
   "contactDetails": { "phone": "", "email": "", "company": "", "address": "", "title": "" }
 }`;
@@ -981,7 +982,7 @@ ${transcript}
   "budget": "預算範圍（例如：80-100萬、待定）",
   "note": "專案備註（30-100 字，概述客戶需求、風格偏好、特殊要求）",
   "quotationItems": [
-    { "name": "項目名稱（例如：客廳系統櫃）", "description": "規格或說明（待確認的標註「待確認」）", "quantity": 數字, "unitPrice": 數字 }
+    { "name": "項目名稱（例如：客廳系統櫃）", "description": "規格或說明（待確認的標註「待確認」）", "unit": "計價單位（對應標準表，如 坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }
   ],
   "workflowTasks": [
     { "title": "任務名稱（例如：現場丈量、提案簡報、簽約）", "detail": "細節說明（可選）", "date": "YYYY-MM-DD 或空字串", "time": "HH:mm 或空字串" }
@@ -1019,6 +1020,7 @@ ${transcript}
       parsed.quotationItems = (parsed.quotationItems || []).map((it) => ({
         name: String(it.name || "").trim(),
         description: String(it.description || "").trim(),
+        unit: String(it.unit || "").trim() || "式",
         quantity: Number(it.quantity) || 1,
         unitPrice: Number(it.unitPrice) || 0,
       })).filter((it) => it.name);
@@ -1069,6 +1071,7 @@ ${transcript}
         id: existingItemsByName.get(it.name.trim()) || `qi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         name: it.name,
         description: it.description || "",
+        unit: it.unit || "式",
         quantity: it.quantity,
         unitPrice: it.unitPrice,
       }));
@@ -1174,7 +1177,7 @@ ${transcript}
       if (!prev) return prev;
       return {
         ...prev,
-        quotationItems: [...prev.quotationItems, { name: "", description: "", quantity: 1, unitPrice: 0 }],
+        quotationItems: [...prev.quotationItems, { name: "", description: "", unit: "式", quantity: 1, unitPrice: 0 }],
       };
     });
   };
@@ -2364,9 +2367,21 @@ ${transcript}
                                   value={item.quantity}
                                   onChange={(e) => updateQuotationItem(idx, { quantity: Number(e.target.value) || 0 })}
                                 />
+                                <select
+                                  className="col-span-2 text-xs border border-gray-200 rounded px-1 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  value={item.unit || "式"}
+                                  onChange={(e) => updateQuotationItem(idx, { unit: e.target.value })}
+                                >
+                                  {COMMON_UNITS.map((u) => (
+                                    <option key={u} value={u}>{u}</option>
+                                  ))}
+                                  {item.unit && !COMMON_UNITS.includes(item.unit as typeof COMMON_UNITS[number]) && (
+                                    <option value={item.unit}>{item.unit}</option>
+                                  )}
+                                </select>
                                 <input
                                   type="number"
-                                  className="col-span-5 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  className="col-span-3 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
                                   placeholder="單價"
                                   value={item.unitPrice}
                                   onChange={(e) => updateQuotationItem(idx, { unitPrice: Number(e.target.value) || 0 })}

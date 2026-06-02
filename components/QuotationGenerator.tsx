@@ -3,6 +3,7 @@ import { useSession } from "next-auth/react";
 import { Button } from './Button';
 import { Printer, Download, Plus, Trash2, Sparkles, Calculator, FileText, MessageSquare, Bot, Paperclip, CheckCircle2, FileImage, RefreshCw } from 'lucide-react';
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
 
 interface QuoteItem {
   id: number;
@@ -36,6 +37,7 @@ interface ProjectDetailItem extends ProjectListItem {
     id: string;
     name: string;
     description?: string;
+    unit?: string;
     quantity: number;
     unitPrice: number;
   }>;
@@ -336,7 +338,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
           id: Number(item.id.replace(/\D+/g, "")) || idx + 1,
           category: "室內設計服務",
           name: item.name,
-          unit: "式",
+          unit: item.unit || "式",
           quantity: item.quantity,
           price: item.unitPrice,
           source: "manual" as const,
@@ -374,6 +376,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
         id: String(item.id),
         name: item.name,
         description: `${item.category}${item.source ? `（${item.source}）` : ""}`,
+        unit: item.unit || "式",
         quantity: item.quantity,
         unitPrice: item.price,
       })),
@@ -459,6 +462,10 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
 
   const removeItem = (id: number) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateItem = (id: number, patch: Partial<QuoteItem>) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
 
   const handlePrint = () => {
@@ -712,9 +719,36 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                                         <div className={`h-full ${item.confidence! > 90 ? 'bg-green-500' : 'bg-yellow-500'}`} style={{ width: `${item.confidence}%` }}></div>
                                     </div>
                                 </td>
-                                <td className="px-6 py-4 text-gray-500">{item.unit}</td>
-                                <td className="px-6 py-4 text-gray-900">{item.quantity}</td>
-                                <td className="px-6 py-4 text-gray-900">${item.price.toLocaleString()}</td>
+                                <td className="px-6 py-4">
+                                    <select
+                                      value={item.unit || "式"}
+                                      onChange={(e) => updateItem(item.id, { unit: e.target.value })}
+                                      className="text-sm border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    >
+                                      {COMMON_UNITS.map((u) => (
+                                        <option key={u} value={u}>{u}</option>
+                                      ))}
+                                      {item.unit && !COMMON_UNITS.includes(item.unit as typeof COMMON_UNITS[number]) && (
+                                        <option value={item.unit}>{item.unit}</option>
+                                      )}
+                                    </select>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <input
+                                      type="number"
+                                      value={item.quantity}
+                                      onChange={(e) => updateItem(item.id, { quantity: Number(e.target.value) || 0 })}
+                                      className="w-16 text-sm border border-gray-200 rounded px-2 py-1 text-gray-900 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    />
+                                </td>
+                                <td className="px-6 py-4">
+                                    <input
+                                      type="number"
+                                      value={item.price}
+                                      onChange={(e) => updateItem(item.id, { price: Number(e.target.value) || 0 })}
+                                      className="w-24 text-sm border border-gray-200 rounded px-2 py-1 text-gray-900 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    />
+                                </td>
                                 <td className="px-6 py-4 font-bold text-gray-900">${(item.quantity * item.price).toLocaleString()}</td>
                                 <td className="px-6 py-4">
                                     <button

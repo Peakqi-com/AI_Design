@@ -349,6 +349,7 @@ const normalizeQuotationItems = (items?: ProjectQuotationItem[]): ProjectQuotati
       id: item.id?.trim() || createId("quote"),
       name: item.name?.trim() || "未命名項目",
       description: item.description?.trim() || "",
+      unit: item.unit?.trim() || "式",
       quantity: Number.isFinite(item.quantity) ? Math.max(0, Number(item.quantity)) : 0,
       unitPrice: Number.isFinite(item.unitPrice) ? Math.max(0, Number(item.unitPrice)) : 0,
     }))
