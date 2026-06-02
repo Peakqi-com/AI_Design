@@ -162,8 +162,6 @@ const App: React.FC = () => {
         return <ProjectList onSelectProject={handleProjectSelect} />;
       case "marketing":
         return <MarketingCenter />;
-      case "quotation":
-        return <QuotationGenerator initialProjectId={selectedProject?.id} />;
       case "video-studio":
         return <VideoStudio />;
       case "crm":
@@ -202,7 +200,15 @@ const App: React.FC = () => {
           />
         )}
 
-        {viewState === "dashboard" && user && (
+        {/* 報價單系統：從專案進入時為全螢幕子頁（無左側選單） */}
+        {viewState === "dashboard" && user && dashboardView === "quotation" && (
+          <QuotationGenerator
+            initialProjectId={selectedProject?.id}
+            onBack={() => setDashboardView("projects")}
+          />
+        )}
+
+        {viewState === "dashboard" && user && dashboardView !== "quotation" && (
           <DashboardLayout
             user={user}
             currentView={dashboardView}

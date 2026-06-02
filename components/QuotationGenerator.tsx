@@ -18,6 +18,7 @@ interface QuoteItem {
 
 interface QuotationGeneratorProps {
   initialProjectId?: string;
+  onBack?: () => void;
 }
 
 interface ProjectListItem {
@@ -164,7 +165,7 @@ const buildQuoteItemsFromProject = (project: ProjectDetailItem): QuoteItem[] => 
   ];
 };
 
-export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialProjectId }) => {
+export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialProjectId, onBack }) => {
   const { data: session } = useSession();
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -509,9 +510,9 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
     setNotice("已匯出報價單檔案（JSON）。");
   };
 
-  return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
-      
+  const content = (
+    <div className={onBack ? "flex flex-col lg:flex-row gap-6" : "h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6"}>
+
       {/* Left Sidebar: AI Context & Source Data */}
       <div className="w-full lg:w-96 flex flex-col gap-4">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex-shrink-0">
@@ -806,4 +807,28 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
       </div>
     </div>
   );
+
+  // 子頁模式：全螢幕 + 返回列（從專案進入時）
+  if (onBack) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            返回專案管理
+          </button>
+          <span className="text-gray-300">|</span>
+          <h1 className="text-base font-bold text-gray-800 flex items-center gap-2">
+            <Calculator className="w-4 h-4 text-brand-600" /> AI 裝修報價
+          </h1>
+        </div>
+        <div className="p-4 md:p-8">{content}</div>
+      </div>
+    );
+  }
+
+  return content;
 };
