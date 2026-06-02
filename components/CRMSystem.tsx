@@ -185,6 +185,75 @@ export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) =>
   const [lineMsg, setLineMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
+  /* LINE 自動回覆設定 */
+  interface AutoReplyRuleUI { id: string; keywords: string[]; reply: string; enabled?: boolean }
+  const [welcomeEnabled, setWelcomeEnabled] = useState(false);
+  const [welcomeMessage, setWelcomeMessage] = useState("");
+  const [replyRules, setReplyRules] = useState<AutoReplyRuleUI[]>([]);
+  const [autoReplySaving, setAutoReplySaving] = useState(false);
+  const [autoReplyDirty, setAutoReplyDirty] = useState(false);
+  const [autoReplyMsg, setAutoReplyMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const autoReplyHeaders = (): Record<string, string> => ({
+    "Content-Type": "application/json",
+    ...(userScopeRef.current ? { "x-user-scope": userScopeRef.current } : {}),
+  });
+
+  const fetchAutoReply = useCallback(async () => {
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/auto-reply${params}`, { headers: autoReplyHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.config || {};
+        setWelcomeEnabled(Boolean(cfg.welcomeEnabled));
+        setWelcomeMessage(cfg.welcomeMessage || "");
+        setReplyRules((cfg.rules || []).map((r: AutoReplyRuleUI) => ({ ...r })));
+        setAutoReplyDirty(false);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const saveAutoReply = async () => {
+    setAutoReplySaving(true);
+    setAutoReplyMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const res = await fetch(`/api/crm/settings/auto-reply`, {
+        method: "PUT",
+        headers: autoReplyHeaders(),
+        body: JSON.stringify({ userId: scope, config: { welcomeEnabled, welcomeMessage, rules: replyRules } }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.config || {};
+        setReplyRules((cfg.rules || []).map((r: AutoReplyRuleUI) => ({ ...r })));
+        setAutoReplyDirty(false);
+        setAutoReplyMsg({ type: "ok", text: "已儲存。歡迎訊息與關鍵字自動回覆已生效" });
+      } else {
+        setAutoReplyMsg({ type: "err", text: "儲存失敗" });
+      }
+    } catch {
+      setAutoReplyMsg({ type: "err", text: "網路錯誤" });
+    } finally {
+      setAutoReplySaving(false);
+    }
+  };
+
+  const addReplyRule = () => {
+    setReplyRules((prev) => [...prev, { id: `new_${Date.now()}`, keywords: [], reply: "", enabled: true }]);
+    setAutoReplyDirty(true);
+  };
+  const updateReplyRule = (id: string, patch: Partial<AutoReplyRuleUI>) => {
+    setReplyRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setAutoReplyDirty(true);
+  };
+  const removeReplyRule = (id: string) => {
+    setReplyRules((prev) => prev.filter((r) => r.id !== id));
+    setAutoReplyDirty(true);
+  };
+
   const selected = contacts.find((c) => c.id === selectedId) ?? null;
   const hasFetched = useRef(false);
   const userScopeRef = useRef(userScope);
@@ -244,7 +313,7 @@ export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) =>
   }, [buildHeaders]);
 
   useEffect(() => {
-    if (activeTab === "line-settings" && userScope) fetchLineSettings();
+    if (activeTab === "line-settings" && userScope) { fetchLineSettings(); fetchAutoReply(); }
   }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- pricing standards ---- */
@@ -1806,6 +1875,87 @@ ${transcript}
               {lineMsg.text}
             </div>
           )}
+
+          {/* ===== 自動回覆設定 ===== */}
+          <div className="mt-8 border-t border-gray-200 pt-6">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">自動回覆設定</h3>
+                <p className="text-sm text-gray-500 mt-0.5">把 LINE OA 後台的歡迎訊息與關鍵字自動回覆搬到這裡統一管理。</p>
+              </div>
+              <Button variant="primary" size="sm" onClick={saveAutoReply} disabled={autoReplySaving || !autoReplyDirty} className="gap-1.5 shrink-0">
+                {autoReplySaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                {autoReplySaving ? "儲存中" : autoReplyDirty ? "儲存變更" : "已儲存"}
+              </Button>
+            </div>
+
+            {autoReplyMsg && (
+              <div className={`mb-3 p-2.5 rounded-lg text-sm ${autoReplyMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {autoReplyMsg.text}
+              </div>
+            )}
+
+            {/* 歡迎訊息 */}
+            <div className="border border-gray-200 rounded-xl p-4 mb-4">
+              <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={welcomeEnabled}
+                  onChange={(e) => { setWelcomeEnabled(e.target.checked); setAutoReplyDirty(true); }}
+                />
+                <span className="text-sm font-medium text-gray-800">加入好友時自動發送歡迎訊息</span>
+              </label>
+              <textarea
+                value={welcomeMessage}
+                onChange={(e) => { setWelcomeMessage(e.target.value); setAutoReplyDirty(true); }}
+                disabled={!welcomeEnabled}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 h-24 resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-50 disabled:text-gray-400"
+                placeholder="您好，感謝加入！我們是專業室內設計團隊，請告訴我們您的空間坪數與需求，將盡快為您服務 😊"
+              />
+            </div>
+
+            {/* 關鍵字自動回覆 */}
+            <div className="border border-gray-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium text-gray-800">關鍵字自動回覆</p>
+                <button onClick={addReplyRule} className="text-xs px-2 py-1 border border-brand-200 text-brand-700 rounded-lg hover:bg-brand-50 flex items-center gap-1">
+                  <Plus className="w-3 h-3" /> 新增規則
+                </button>
+              </div>
+              {replyRules.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-4">尚無關鍵字回覆規則。客戶訊息含關鍵字時自動回覆指定內容。</p>
+              ) : (
+                <div className="space-y-2">
+                  {replyRules.map((rule) => (
+                    <div key={rule.id} className="border border-gray-100 rounded-lg p-2.5 bg-gray-50/50 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          placeholder="關鍵字（逗號分隔，如：報價,價格,多少錢）"
+                          value={rule.keywords.join(", ")}
+                          onChange={(e) => updateReplyRule(rule.id, { keywords: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) })}
+                        />
+                        <label className="flex items-center gap-1 text-[11px] text-gray-500 shrink-0">
+                          <input type="checkbox" checked={rule.enabled !== false} onChange={(e) => updateReplyRule(rule.id, { enabled: e.target.checked })} />
+                          啟用
+                        </label>
+                        <button onClick={() => removeReplyRule(rule.id)} className="text-gray-300 hover:text-red-500 shrink-0">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <textarea
+                        className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 bg-white h-16 resize-none focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="自動回覆內容，例如：感謝詢問！請提供坪數與格局，我們會在 24 小時內提供初步報價 🙏"
+                        value={rule.reply}
+                        onChange={(e) => updateReplyRule(rule.id, { reply: e.target.value })}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-gray-400 mt-2">關鍵字比對客戶訊息（不分大小寫），符合第一條規則就自動回覆並記錄到對話。</p>
+            </div>
+          </div>
         </div>
       )}
 

@@ -202,6 +202,21 @@ export interface PricingStandardItem {
   note?: string;
 }
 
+/** 關鍵字自動回覆規則。 */
+export interface AutoReplyRule {
+  id: string;
+  keywords: string[];
+  reply: string;
+  enabled?: boolean;
+}
+
+/** LINE 自動回覆設定（歡迎訊息 + 關鍵字回覆）。 */
+export interface LineAutoReplyConfig {
+  welcomeEnabled?: boolean;
+  welcomeMessage?: string;
+  rules?: AutoReplyRule[];
+}
+
 /** 自訂標籤定義（顏色 + 自動套用關鍵字）。 */
 export interface TagDefinition {
   id: string;
@@ -223,4 +238,6 @@ export interface CrmStore {
   pricingByUser?: Record<string, PricingStandardItem[]>;
   /** Per-user custom tag definitions, keyed by user scope. */
   tagsByUser?: Record<string, TagDefinition[]>;
+  /** Per-user LINE auto-reply config, keyed by user scope. */
+  autoReplyByUser?: Record<string, LineAutoReplyConfig>;
 }

@@ -17,6 +17,7 @@ import {
   PresentationDraft,
   PricingStandardItem,
   TagDefinition,
+  LineAutoReplyConfig,
 } from "@/lib/crm/types";
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -125,6 +126,7 @@ const createDefaultStore = (): CrmStore => ({
   presentations: [],
   pricingByUser: {},
   tagsByUser: {},
+  autoReplyByUser: {},
 });
 
 const cloneStore = (store: CrmStore): CrmStore => structuredClone(store);
@@ -231,6 +233,8 @@ const normalizeStore = (raw: unknown): CrmStore => {
       maybe.pricingByUser && typeof maybe.pricingByUser === "object" ? maybe.pricingByUser : {},
     tagsByUser:
       maybe.tagsByUser && typeof maybe.tagsByUser === "object" ? maybe.tagsByUser : {},
+    autoReplyByUser:
+      maybe.autoReplyByUser && typeof maybe.autoReplyByUser === "object" ? maybe.autoReplyByUser : {},
   };
 };
 
@@ -1493,6 +1497,58 @@ export async function applyAutoTags(
     if (added.length > 0) contact.updatedAt = nowIso();
   });
   return added;
+}
+
+/* ================================================================
+   LINE 自動回覆設定（歡迎訊息 + 關鍵字回覆）
+   ================================================================ */
+
+export async function getAutoReplyConfig(userScopeId: string): Promise<LineAutoReplyConfig> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  const cfg = store.autoReplyByUser?.[key];
+  return cfg ? { ...cfg, rules: (cfg.rules || []).map((r) => ({ ...r })) } : { welcomeEnabled: false, welcomeMessage: "", rules: [] };
+}
+
+export async function saveAutoReplyConfig(
+  userScopeId: string,
+  config: LineAutoReplyConfig,
+): Promise<LineAutoReplyConfig> {
+  const key = pricingScopeKey(userScopeId);
+  const normalized: LineAutoReplyConfig = {
+    welcomeEnabled: Boolean(config.welcomeEnabled),
+    welcomeMessage: (config.welcomeMessage || "").trim(),
+    rules: (config.rules || [])
+      .filter((r) => r.reply?.trim() && Array.isArray(r.keywords) && r.keywords.length > 0)
+      .map((r) => ({
+        id: r.id || createId("reply"),
+        keywords: r.keywords.map((k) => String(k).trim()).filter(Boolean),
+        reply: r.reply.trim(),
+        enabled: r.enabled !== false,
+      })),
+  };
+  await mutateStore((store) => {
+    if (!store.autoReplyByUser) store.autoReplyByUser = {};
+    store.autoReplyByUser[key] = normalized;
+  });
+  return normalized;
+}
+
+/** 比對訊息找出第一個符合的自動回覆內容（無則回 null）。 */
+export async function matchAutoReply(userScopeId: string, text: string): Promise<string | null> {
+  if (!text?.trim()) return null;
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  const cfg = store.autoReplyByUser?.[key];
+  if (!cfg?.rules) return null;
+  const lower = text.toLowerCase();
+  for (const rule of cfg.rules) {
+    if (rule.enabled === false) continue;
+    if (rule.keywords.some((kw) => kw && lower.includes(kw.toLowerCase()))) {
+      return rule.reply;
+    }
+  }
+  return null;
 }
 
 export interface UpdateProjectInput {

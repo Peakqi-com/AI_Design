@@ -3,13 +3,16 @@ import { saveAttachment } from "@/lib/crm/attachments";
 import {
   downloadLineMessageContent,
   fetchLineProfile,
+  pushLineTextMessage,
   verifyLineSignature,
 } from "@/lib/crm/line";
 import {
   applyAutoTags,
   createMessage,
+  getAutoReplyConfig,
   getLineSettings,
   listLineSettingsByScope,
+  matchAutoReply,
   updateLineWebhookStats,
   upsertLineContact,
 } from "@/lib/crm/store";
@@ -137,6 +140,22 @@ async function processLineMessageEvent(
     });
     // 自動標籤：依使用者的關鍵字規則套用
     await applyAutoTags(userScopeId, contact.id, lineMessage.text ?? "").catch(() => undefined);
+    // 關鍵字自動回覆
+    const replyText = await matchAutoReply(userScopeId, lineMessage.text ?? "").catch(() => null);
+    if (replyText && userId) {
+      const ok = await pushLineTextMessage(userId, replyText, channelAccessToken).catch(() => false);
+      if (ok) {
+        await createMessage({
+          contactId: contact.id,
+          direction: "outbound",
+          senderType: "system",
+          source: "line",
+          messageType: "text",
+          text: replyText,
+          timestamp: toIso(event.timestamp),
+        }).catch(() => undefined);
+      }
+    }
     return;
   }
 
@@ -263,6 +282,11 @@ async function processEvent(
       avatarUrl: profile?.pictureUrl ?? null,
       userId: userScopeId,
     });
+    // 加入好友：推送歡迎訊息（若有設定）
+    const cfg = await getAutoReplyConfig(userScopeId).catch(() => null);
+    if (cfg?.welcomeEnabled && cfg.welcomeMessage?.trim()) {
+      await pushLineTextMessage(userId, cfg.welcomeMessage.trim(), channelAccessToken).catch(() => undefined);
+    }
     return;
   }
 
