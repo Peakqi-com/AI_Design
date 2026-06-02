@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import { useCredits } from "@/lib/client/use-credits";
+import { buildPricingReferenceText } from "@/lib/crm/pricing-standards";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -786,6 +787,12 @@ ${transcript}
         ? existingProjects.find((p) => p.id === linkedProjectId)
         : null;
 
+      // 標準報價表 — 讓 AI 在客戶沒明講價格時，依此填入參考單價
+      const pricingBlock =
+        `\n【公司標準報價表（客戶若沒明講單價，請優先對應此表填入 unitPrice，並在 description 標註「參考標準價」；對應不到才填 0 並標「待確認」）】\n` +
+        buildPricingReferenceText() +
+        `\n注意：工程管理費為工程總額的 8-10%，請以百分比在備註說明，不要當成固定單價項目。\n`;
+
       let prompt: string;
       if (targetProject) {
         // UPDATE MODE: send existing project snapshot, ask AI to return merged final state
@@ -811,7 +818,7 @@ ${existingItems}
 ${existingTasks}
 
 ${existingContact}
-
+${pricingBlock}
 【最新對話記錄】
 ${transcript}
 
@@ -819,9 +826,9 @@ ${transcript}
 
 1. **報價項目**：
    - 保留現有項目，除非對話明確表示取消（取消的不要放進結果）
-   - 如果對話提到新的工程項目，加入結果
-   - 如果對話提到已有項目的數量/單價變動，更新該項目
-   - 對話沒提到的舊項目原樣保留
+   - 如果對話提到新的工程項目，加入結果；單價優先對應上方標準報價表，標註「參考標準價」
+   - 如果對話提到已有項目的數量/單價變動，更新該項目（客戶明講的價格優先於標準價）
+   - 對話沒提到的舊項目原樣保留（不要改動其單價）
 
 2. **工作流程任務**：
    - 保留現有任務，除非對話明確表示取消
@@ -851,11 +858,12 @@ ${transcript}
         prompt = `你是一位資深室內設計專案經理。下面是設計師與客戶在 LINE 上的對話。請從對話中提取資訊，建立一個室內設計專案的草稿，包含：基本資訊、報價項目、工作流程任務、客戶聯絡資訊。
 
 ${existingContact}
-
+${pricingBlock}
 對話記錄：
 ${transcript}
 
-請以 JSON 格式回覆，只輸出 JSON 不要其他文字。如果某些資訊對話中沒提到，數字欄位填 0、字串欄位填合理推測或空字串、陣列可以給空陣列。報價項目的單價如果客戶沒提就用 0 並在描述標註「待確認」。
+請以 JSON 格式回覆，只輸出 JSON 不要其他文字。如果某些資訊對話中沒提到，數字欄位填 0、字串欄位填合理推測或空字串、陣列可以給空陣列。
+報價項目單價規則：(1) 客戶有明講價格 → 用客戶的價格。(2) 客戶沒講但對應得到上方標準報價表 → 填標準單價並在 description 標註「參考標準價」。(3) 都對應不到 → unitPrice 填 0 並標註「待確認」。
 
 格式：
 {
