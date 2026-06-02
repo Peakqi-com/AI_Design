@@ -11,6 +11,7 @@ import {
 } from "../types";
 import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
 import { GanttChart } from "./project/GanttChart";
+import { CalendarView } from "./project/CalendarView";
 import { exportElementToPng, exportElementToPdf } from "@/lib/project/export-element";
 import {
   ArrowLeft,
@@ -358,6 +359,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const isDeleted = Boolean(draft.deletedAt);
   const [workflowEditing, setWorkflowEditing] = useState(false);
   const [workflowFullscreen, setWorkflowFullscreen] = useState(false);
+  const [workflowViewMode, setWorkflowViewMode] = useState<"gantt" | "calendar">("gantt");
   const [exportingGantt, setExportingGantt] = useState(false);
   const ganttRef = useRef<HTMLDivElement>(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
@@ -1414,6 +1416,22 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             <span className="text-gray-300">|</span>
             <h1 className="text-base font-bold text-gray-800">工程安排 · {draft.name}</h1>
             <div className="ml-auto flex flex-wrap gap-2">
+              {!workflowEditing && (
+                <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                  <button
+                    onClick={() => setWorkflowViewMode("gantt")}
+                    className={`px-3 py-1.5 text-sm ${workflowViewMode === "gantt" ? "bg-brand-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    甘特圖
+                  </button>
+                  <button
+                    onClick={() => setWorkflowViewMode("calendar")}
+                    className={`px-3 py-1.5 text-sm border-l border-gray-200 ${workflowViewMode === "calendar" ? "bg-brand-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    日曆
+                  </button>
+                </div>
+              )}
               <Button size="sm" variant="outline" className="gap-1" onClick={() => void generateGanttSchedule()} disabled={generatingGantt}>
                 {generatingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                 {generatingGantt ? "排程中..." : "AI 依報價生成排程"}
@@ -1444,7 +1462,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             {notice && (
               <div className="mb-3 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2 text-sm text-brand-700">{notice}</div>
             )}
-            {!workflowEditing && (
+            {!workflowEditing && workflowViewMode === "gantt" && (
               <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
                 <div ref={ganttRef}>
                   <GanttChart
@@ -1453,6 +1471,14 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                     fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
                   />
                 </div>
+              </div>
+            )}
+            {!workflowEditing && workflowViewMode === "calendar" && (
+              <div ref={ganttRef}>
+                <CalendarView
+                  tasks={draft.workflowTasks || []}
+                  fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
+                />
               </div>
             )}
             {workflowEditing && (
