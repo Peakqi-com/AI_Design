@@ -398,6 +398,8 @@ const normalizeWorkflowTasks = (items?: ProjectWorkflowTask[]): ProjectWorkflowT
     .map((item) => ({
       id: item.id?.trim() || createId("task"),
       date: item.date?.trim() || "",
+      durationDays: Number.isFinite(item.durationDays) ? Math.max(1, Number(item.durationDays)) : 1,
+      stage: item.stage?.trim() || "",
       time: item.time?.trim() || "",
       title: item.title?.trim() || "未命名流程",
       detail: item.detail?.trim() || "",

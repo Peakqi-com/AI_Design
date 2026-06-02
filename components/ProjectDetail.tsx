@@ -10,6 +10,8 @@ import {
   ProjectWorkflowTask,
 } from "../types";
 import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
+import { GanttChart } from "./project/GanttChart";
+import { exportElementToPng, exportElementToPdf } from "@/lib/project/export-element";
 import {
   ArrowLeft,
   MessageSquare,
@@ -25,6 +27,9 @@ import {
   Wand2,
   FolderArchive,
   Presentation,
+  Download,
+  Pencil,
+  Eye,
 } from "lucide-react";
 
 interface ProjectDetailProps {
@@ -134,6 +139,8 @@ const WORKFLOW_TEMPLATES: Array<{ id: string; label: string; tasks: Omit<Project
 const createFlowTask = (task?: Partial<ProjectWorkflowTask>): ProjectWorkflowTask => ({
   id: `task_${crypto.randomUUID()}`,
   date: task?.date || "",
+  durationDays: Number.isFinite(task?.durationDays) ? Math.max(1, Number(task?.durationDays)) : 1,
+  stage: task?.stage || "",
   time: task?.time || "",
   title: task?.title || "新流程項目",
   detail: task?.detail || "",
@@ -347,9 +354,26 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const isArchived = Boolean(draft.archivedAt);
   const isFiled = Boolean(draft.filedAt);
   const isDeleted = Boolean(draft.deletedAt);
-  const [workflowTemplateId, setWorkflowTemplateId] = useState(WORKFLOW_TEMPLATES[0].id);
-  const [workflowView, setWorkflowView] = useState<"list" | "gantt" | "calendar">("list");
-  const [dispatchingReminder, setDispatchingReminder] = useState(false);
+  const [workflowEditing, setWorkflowEditing] = useState(false);
+  const [exportingGantt, setExportingGantt] = useState(false);
+  const ganttRef = useRef<HTMLDivElement>(null);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+
+  const exportGantt = async (format: "png" | "pdf") => {
+    if (!ganttRef.current) return;
+    setExportingGantt(true);
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((r) => setTimeout(r, 200));
+      const fileName = `${draft.name || "工程進度"}_甘特圖`;
+      if (format === "png") await exportElementToPng(ganttRef.current, fileName);
+      else await exportElementToPdf(ganttRef.current, fileName);
+    } catch {
+      setNotice("甘特圖匯出失敗，請重試");
+    } finally {
+      setExportingGantt(false);
+    }
+  };
 
   const quotationTotal = useMemo(
     () =>
@@ -504,16 +528,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     }));
   };
 
-  const applyWorkflowTemplate = () => {
-    const selected = WORKFLOW_TEMPLATES.find((item) => item.id === workflowTemplateId) || WORKFLOW_TEMPLATES[0];
-    const fallbackDate = draft.auspiciousPlan?.ceremonyDate || draft.date || "";
-    setDraft((prev) => ({
-      ...prev,
-      workflowTasks: selected.tasks.map((task) => createFlowTask({ ...task, date: fallbackDate })),
-    }));
-    setNotice(`已套用流程模板：${selected.label}`);
-  };
-
   const addWorkflowTask = () => {
     const fallbackDate = draft.auspiciousPlan?.ceremonyDate || draft.date || "";
     setDraft((prev) => ({
@@ -522,27 +536,66 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     }));
   };
 
-  const generateWorkflowByAi = () => {
-    const fallbackDate = draft.auspiciousPlan?.ceremonyDate || draft.date || "";
-    const base = (draft.workflowTasks || []).length
-      ? [...(draft.workflowTasks || [])]
-      : WORKFLOW_TEMPLATES[0].tasks.map((task) => createFlowTask({ ...task, date: fallbackDate }));
-    const hasSiteCheck = base.some((task) => /放樣|工序確認|site review/i.test(task.title));
-    if (!hasSiteCheck) {
-      base.unshift(
+  const [generatingGantt, setGeneratingGantt] = useState(false);
+
+  /**
+   * AI 依報價項目 + 整體施作需求，自動排出一份以「天」為單位的施工排程（甘特圖）。
+   * 每個報價工項對應一個施工階段，並補上整體必要工項（保護、放樣、清潔、驗收等）。
+   */
+  const generateGanttSchedule = async () => {
+    setGeneratingGantt(true);
+    setNotice(null);
+    try {
+      const items = (draft.quotationItems || []).map((i) => `${i.name}（${i.quantity}${i.unit || "式"}）`).join("、") || "（報價單尚無項目）";
+      const startDate =
+        draft.workflowTasks?.find((t) => t.date)?.date ||
+        new Date().toISOString().slice(0, 10);
+
+      const prompt =
+        `你是資深室內裝修工程的工務經理。請根據以下「報價項目」排出一份完整的施工排程（甘特圖），以天為單位。\n\n` +
+        `專案：${draft.name}（${draft.budget || "預算未定"}）\n` +
+        `報價項目：${items}\n` +
+        `預計開工日：${startDate}\n\n` +
+        `排程原則：\n` +
+        `1. 依正確的裝修施工順序排列（保護→拆除→水電配管→泥作/防水→木作→油漆→系統櫃/設備安裝→地板→廚衛設備→清潔→驗收）\n` +
+        `2. 每個報價項目都要有對應的施工工項；同時補上「整體施作」必要工項（如全室保護、放樣定位、垃圾清運、完工清潔、驗收交屋），即使報價單沒列\n` +
+        `3. 合理估算每個工項的工期天數（durationDays），可重疊的工項給接近的開始日\n` +
+        `4. 用 date 給每個工項的開始日期（從開工日往後排，YYYY-MM-DD）\n` +
+        `5. stage 填階段分類（保護/拆除/水電/泥作/防水/木作/油漆/系統櫃/地板/廚衛/空調/清潔/收尾 其中之一）\n\n` +
+        `只輸出 JSON 陣列，不要其他文字。格式：\n` +
+        `[{"title":"工項名稱","stage":"階段","date":"YYYY-MM-DD","durationDays":數字,"detail":"簡短說明","owner":"工班/負責人"}]`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      const data = (await res.json()) as { text?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "生成失敗");
+      const text = (data.text || "").trim();
+      const m = text.match(/\[[\s\S]*\]/);
+      const parsed: Array<Record<string, unknown>> = m ? JSON.parse(m[0]) : [];
+      if (parsed.length === 0) throw new Error("AI 未產生工項");
+
+      const tasks = parsed.map((p) =>
         createFlowTask({
-          date: fallbackDate,
-          time: "16:30",
-          title: "現場放樣與工序確認",
-          detail: "確認保護工程、動線與工班交接節點",
-          owner: "設計師",
+          title: String(p.title || "工項").trim(),
+          stage: String(p.stage || "").trim(),
+          date: String(p.date || startDate).trim(),
+          durationDays: Math.max(1, Number(p.durationDays) || 1),
+          detail: String(p.detail || "").trim(),
+          owner: String(p.owner || "").trim(),
           isCustom: false,
         }),
       );
+      setDraft((prev) => ({ ...prev, workflowTasks: tasks }));
+      setWorkflowEditing(false);
+      setNotice(`已依報價項目生成 ${tasks.length} 個施工工項的甘特圖，記得儲存專案。`);
+    } catch (err) {
+      setNotice(err instanceof Error ? `甘特圖生成失敗：${err.message}` : "甘特圖生成失敗");
+    } finally {
+      setGeneratingGantt(false);
     }
-    base.sort((a, b) => (a.time || "").localeCompare(b.time || ""));
-    setDraft((prev) => ({ ...prev, workflowTasks: base }));
-    setNotice("已完成 AI 流程優化（排序與關鍵節點補全）。");
   };
 
   const updateWorkflowTask = (
@@ -600,49 +653,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       ...prev,
       workflowTasks: (prev.workflowTasks || []).filter((task) => task.id !== taskId),
     }));
-  };
-
-  const generateAuspiciousPlan = () => {
-    const preferred = draft.auspiciousPlan?.preferredWindow || "afternoon";
-    const generated = buildAuspiciousPlan(draft, preferred);
-    setDraft((prev) => ({
-      ...prev,
-      auspiciousPlan: generated,
-    }));
-    setNotice("已產生 AI 工期節點建議，可再手動微調。");
-  };
-
-  const handleDispatchReminders = async (force: boolean) => {
-    setDispatchingReminder(true);
-    setError(null);
-    try {
-      const response = await requestJson<{
-        result: {
-          processed: number;
-          sent: number;
-          failed: number;
-          skipped: number;
-          nextWorkflowTasks: ProjectWorkflowTask[];
-        };
-      }>(`/api/projects/${draft.id}/reminders/dispatch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
-      });
-      if (response.result.processed > 0) {
-        setDraft((prev) => ({
-          ...prev,
-          workflowTasks: response.result.nextWorkflowTasks || prev.workflowTasks || [],
-        }));
-      }
-      setNotice(
-        `提醒處理完成：共 ${response.result.processed} 筆，已送出 ${response.result.sent}，失敗 ${response.result.failed}，略過 ${response.result.skipped}。`,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "派送提醒失敗");
-    } finally {
-      setDispatchingReminder(false);
-    }
   };
 
   const handleSave = async () => {
@@ -739,6 +749,53 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       setError(err instanceof Error ? err.message : "同步 CRM 註記失敗");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  /** 由下拉選單切換專案狀態：作用中 / 已封存 / 已建檔 / 刪除區。 */
+  const handleStatusChange = async (target: string) => {
+    const current = isDeleted ? "deleted" : isFiled ? "filed" : isArchived ? "archived" : "active";
+    if (target === current) return;
+    setError(null);
+
+    const callApi = async (path: string, method: "POST" | "DELETE") =>
+      requestJson<{ project: ProjectApiItem }>(`/api/projects/${draft.id}${path}`, { method });
+
+    try {
+      if (target === "deleted") {
+        const ok = window.confirm("確定要移到刪除區嗎？30 天內可還原，之後系統自動清除。");
+        if (!ok) return;
+        await requestJson<{ ok: boolean }>(`/api/projects/${draft.id}`, { method: "DELETE" });
+        const data = await requestJson<{ project: ProjectApiItem }>(`/api/projects/${draft.id}`);
+        const next = toProject(data.project);
+        setDraft(normalizeDraftProject(next));
+        onProjectUpdated?.(next);
+        setNotice("專案已移到刪除區，30 天後自動清除。");
+        return;
+      }
+
+      // From deleted → restore first
+      if (current === "deleted") {
+        await callApi(`/restore`, "POST");
+      }
+      // Clear states that aren't the target
+      if (isArchived && target !== "archived") await callApi(`/archive`, "DELETE");
+      if (isFiled && target !== "filed") await callApi(`/file`, "DELETE");
+
+      // Apply target
+      let next: ProjectApiItem | null = null;
+      if (target === "archived" && !isArchived) next = (await callApi(`/archive`, "POST")).project;
+      else if (target === "filed" && !isFiled) next = (await callApi(`/file`, "POST")).project;
+
+      // Re-fetch to get the final consolidated state
+      const data = await requestJson<{ project: ProjectApiItem }>(`/api/projects/${draft.id}`);
+      const resolved = toProject((next && data.project) || data.project);
+      setDraft(normalizeDraftProject(resolved));
+      onProjectUpdated?.(resolved);
+      const label = { active: "作用中", archived: "已封存", filed: "已建檔" }[target] || target;
+      setNotice(`專案狀態已更新為「${label}」`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新專案狀態失敗");
     }
   };
 
@@ -890,43 +947,18 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
           </div>
         </div>
         <div className="flex gap-3 w-full lg:w-auto">
-          {isDeleted ? (
-            <Button
-              variant="outline"
-              className="flex-1 lg:flex-none gap-2"
-              onClick={() => void handleRestoreFromTrash()}
-            >
-              <ArchiveRestore className="w-4 h-4" />
-              還原專案
-            </Button>
-          ) : (
-            <>
-          <Button
-            variant="outline"
-            className="flex-1 lg:flex-none gap-2"
-            onClick={() => void handleArchiveToggle()}
+          {/* 狀態下拉選單（取代封存/建檔/刪除三按鈕） */}
+          <select
+            value={isDeleted ? "deleted" : isFiled ? "filed" : isArchived ? "archived" : "active"}
+            onChange={(event) => void handleStatusChange(event.target.value)}
+            className="flex-1 lg:flex-none rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            title="專案狀態"
           >
-            {isArchived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
-            {isArchived ? "取消封存" : "封存專案"}
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1 lg:flex-none gap-2"
-            onClick={() => void handleFileToggle()}
-          >
-            <FolderArchive className="w-4 h-4" />
-            {isFiled ? "取消建檔" : "歸納建檔"}
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1 lg:flex-none gap-2 text-red-700 border-red-200 hover:bg-red-50"
-            onClick={() => void handleDeleteProject()}
-          >
-            <Trash2 className="w-4 h-4" />
-            移到刪除區
-          </Button>
-            </>
-          )}
+            <option value="active">作用中</option>
+            <option value="archived">已封存</option>
+            <option value="filed">已建檔</option>
+            <option value="deleted">移到刪除區</option>
+          </select>
           <Button onClick={onGoToAI} variant="outline" className="flex-1 lg:flex-none gap-2">
             <PenTool className="w-4 h-4" /> 進入 線稿轉渲染工坊
           </Button>
@@ -1302,369 +1334,117 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
+          {/* ===== 工程安排 / 甘特圖 ===== */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex flex-col gap-2">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                <h3 className="font-bold text-gray-900">工程流程安排（清單 / 甘特圖 / 日曆）</h3>
-                <div className="flex flex-wrap gap-2">
-                  <select
-                    value={workflowTemplateId}
-                    onChange={(event) => setWorkflowTemplateId(event.target.value)}
-                    className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm bg-white"
-                  >
-                    {WORKFLOW_TEMPLATES.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.label}
-                      </option>
-                    ))}
-                  </select>
-                  <Button size="sm" variant="outline" onClick={applyWorkflowTemplate}>
-                    套用模板
-                  </Button>
-                  <Button size="sm" variant="outline" className="gap-1" onClick={generateWorkflowByAi}>
-                    <Wand2 className="w-4 h-4" />
-                    AI 流程優化
-                  </Button>
-                  <Button size="sm" variant="outline" className="gap-1" onClick={addWorkflowTask}>
-                    <Plus className="w-4 h-4" />
-                    新增流程
-                  </Button>
-                </div>
+            <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-gray-900">工程安排（甘特圖）</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  依報價項目 + 整體施作需求自動排程，可編輯、可輸出
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant={workflowView === "list" ? "primary" : "outline"}
-                  onClick={() => setWorkflowView("list")}
-                >
-                  清單編輯
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => void generateGanttSchedule()} disabled={generatingGantt}>
+                  {generatingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                  {generatingGantt ? "排程中..." : "AI 依報價生成排程"}
                 </Button>
-                <Button
-                  size="sm"
-                  variant={workflowView === "gantt" ? "primary" : "outline"}
-                  onClick={() => setWorkflowView("gantt")}
-                >
-                  甘特圖
+                {!workflowEditing ? (
+                  <Button size="sm" variant="outline" className="gap-1" onClick={() => setWorkflowEditing(true)}>
+                    <Pencil className="w-4 h-4" /> 編輯
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="primary" className="gap-1" onClick={() => setWorkflowEditing(false)}>
+                    <Eye className="w-4 h-4" /> 完成編輯（看甘特圖）
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("png")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
+                  {exportingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PNG
                 </Button>
-                <Button
-                  size="sm"
-                  variant={workflowView === "calendar" ? "primary" : "outline"}
-                  onClick={() => setWorkflowView("calendar")}
-                >
-                  日曆視圖
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleDispatchReminders(false)}
-                  disabled={dispatchingReminder}
-                >
-                  {dispatchingReminder ? "派送中..." : "執行到期提醒"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleDispatchReminders(true)}
-                  disabled={dispatchingReminder}
-                >
-                  立即測試提醒
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("pdf")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
+                  <Download className="w-4 h-4" /> PDF
                 </Button>
               </div>
             </div>
 
-            {workflowView === "list" && (
+            {/* PREVIEW MODE: Gantt chart */}
+            {!workflowEditing && (
+              <div className="overflow-x-auto rounded-lg border border-gray-100 bg-white">
+                <div ref={ganttRef}>
+                  <GanttChart
+                    tasks={draft.workflowTasks || []}
+                    projectName={draft.name}
+                    fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* EDIT MODE: list editor */}
+            {workflowEditing && (
               <div className="space-y-2">
+                <div className="flex justify-end">
+                  <Button size="sm" variant="outline" className="gap-1" onClick={addWorkflowTask}>
+                    <Plus className="w-4 h-4" /> 新增工項
+                  </Button>
+                </div>
+                {(draft.workflowTasks || []).length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-8">
+                    尚無工項。按「AI 依報價生成排程」自動建立，或手動新增。
+                  </p>
+                )}
                 {(draft.workflowTasks || []).map((task) => (
-                  <div key={task.id} className="space-y-2 rounded-lg border border-gray-200 p-3">
-                    <div className="grid grid-cols-12 gap-2 items-center">
+                  <div key={task.id} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-gray-200 p-3">
+                    <input
+                      value={task.title}
+                      onChange={(event) => updateWorkflowTask(task.id, "title", event.target.value)}
+                      className="col-span-12 md:col-span-3 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      placeholder="工項名稱"
+                    />
+                    <input
+                      value={task.stage || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "stage", event.target.value)}
+                      className="col-span-4 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      placeholder="階段(如:木作)"
+                    />
+                    <input
+                      type="date"
+                      value={task.date || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "date", event.target.value)}
+                      className="col-span-5 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    />
+                    <div className="col-span-3 md:col-span-2 flex items-center gap-1">
                       <input
-                        type="date"
-                        value={task.date || ""}
-                        onChange={(event) => updateWorkflowTask(task.id, "date", event.target.value)}
-                        className="col-span-12 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                        type="number"
+                        min={1}
+                        value={task.durationDays || 1}
+                        onChange={(event) => updateWorkflowTask(task.id, "durationDays", Math.max(1, Number(event.target.value) || 1))}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
                       />
-                      <input
-                        type="time"
-                        value={task.time}
-                        onChange={(event) => updateWorkflowTask(task.id, "time", event.target.value)}
-                        className="col-span-6 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="時間"
-                      />
-                      <input
-                        value={task.title}
-                        onChange={(event) => updateWorkflowTask(task.id, "title", event.target.value)}
-                        className="col-span-6 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="流程名稱"
-                      />
-                      <input
-                        value={task.detail || ""}
-                        onChange={(event) => updateWorkflowTask(task.id, "detail", event.target.value)}
-                        className="col-span-12 md:col-span-3 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="流程細節"
-                      />
-                      <input
-                        value={task.owner || ""}
-                        onChange={(event) => updateWorkflowTask(task.id, "owner", event.target.value)}
-                        className="col-span-6 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="負責人"
-                      />
-                      <label className="col-span-4 md:col-span-1 inline-flex items-center justify-center gap-1 text-xs text-gray-600">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(task.done)}
-                          onChange={(event) => updateWorkflowTask(task.id, "done", event.target.checked)}
-                        />
-                        完成
-                      </label>
-                      <button
-                        onClick={() => removeWorkflowTask(task.id)}
-                        className="col-span-2 text-red-600 hover:text-red-800 justify-self-end"
-                        title="刪除流程"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <span className="text-xs text-gray-400">天</span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">提醒提前分鐘</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={task.reminderMinutesBefore || 0}
-                          onChange={(event) =>
-                            updateWorkflowTask(task.id, "reminderMinutesBefore", Math.max(0, Number(event.target.value) || 0))
-                          }
-                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">提醒模板</label>
-                        <select
-                          value={task.templateId || "default_timeline"}
-                          onChange={(event) => updateWorkflowTask(task.id, "templateId", event.target.value)}
-                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
-                        >
-                          {(draft.notificationTemplates || []).map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {template.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="text-xs text-gray-500 flex items-end">
-                        上次提醒：{task.lastReminderSentAt ? new Date(task.lastReminderSentAt).toLocaleString("zh-TW") : "尚未發送"}
-                      </div>
-                    </div>
+                    <input
+                      value={task.owner || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "owner", event.target.value)}
+                      className="col-span-8 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      placeholder="工班/負責人"
+                    />
+                    <button
+                      onClick={() => removeWorkflowTask(task.id)}
+                      className="col-span-4 md:col-span-1 text-red-600 hover:text-red-800 justify-self-end"
+                      title="刪除工項"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    <input
+                      value={task.detail || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "detail", event.target.value)}
+                      className="col-span-12 rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-600"
+                      placeholder="工項說明（選填）"
+                    />
                   </div>
                 ))}
               </div>
             )}
-
-            {workflowView === "gantt" && (
-              <div className="space-y-3">
-                <div className="text-xs text-gray-500">
-                  時間軸：{timelineBounds.start.toString().padStart(2, "0")}:00 ~{" "}
-                  {timelineBounds.end.toString().padStart(2, "0")}:59
-                </div>
-                {sortedWorkflowTasks.map((task) => {
-                  const [h, m] = (task.time || "00:00").split(":");
-                  const hour = Number(h || "0");
-                  const minute = Number(m || "0");
-                  const ratioBase = Math.max(1, timelineBounds.end - timelineBounds.start + 1);
-                  const hourFloat = hour + minute / 60;
-                  const left = Math.min(96, Math.max(0, ((hourFloat - timelineBounds.start) / ratioBase) * 100));
-                  const width = Math.max(4, 100 / ratioBase);
-                  return (
-                    <div key={task.id} className="rounded-lg border border-gray-200 p-3">
-                      <div className="flex items-center justify-between text-xs text-gray-500">
-                        <span>
-                          {(task.date || draft.auspiciousPlan?.ceremonyDate || "--")} {task.time || "--:--"}
-                        </span>
-                        <span>{task.owner || "未指定負責人"}</span>
-                      </div>
-                      <p className="mt-1 text-sm font-medium text-gray-800">{task.title}</p>
-                      <div className="mt-2 h-3 rounded bg-gray-100 relative overflow-hidden">
-                        <div
-                          className={`absolute top-0 h-full rounded ${task.done ? "bg-green-500" : "bg-brand-500"}`}
-                          style={{ left: `${left}%`, width: `${width}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {workflowView === "calendar" && (
-              <div className="space-y-3">
-                {workflowByDate.map(([date, tasks]) => (
-                  <div key={date} className="rounded-lg border border-gray-200 p-3">
-                    <h4 className="font-semibold text-sm text-gray-900">{date}</h4>
-                    <div className="mt-2 space-y-2">
-                      {tasks.map((task) => (
-                        <div key={task.id} className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-gray-800">
-                              {task.time || "--:--"} {task.title}
-                            </span>
-                            <span className="text-xs text-gray-500">{task.owner || "未指定"}</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mt-1">{task.detail || "無細節描述"}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">AI 工期節點建議</h3>
-              <Button size="sm" variant="outline" className="gap-1" onClick={generateAuspiciousPlan}>
-                <Wand2 className="w-4 h-4" />
-                AI 產生建議
-              </Button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">預計施工起日</label>
-                <input
-                  type="date"
-                  value={draft.auspiciousPlan?.ceremonyDate || ""}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      auspiciousPlan: {
-                        ...(prev.auspiciousPlan || {}),
-                        ceremonyDate: event.target.value,
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">偏好時段</label>
-                <select
-                  value={draft.auspiciousPlan?.preferredWindow || "afternoon"}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      auspiciousPlan: {
-                        ...(prev.auspiciousPlan || {}),
-                        preferredWindow: event.target.value as "morning" | "afternoon" | "evening",
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white"
-                >
-                  <option value="morning">上午</option>
-                  <option value="afternoon">下午</option>
-                  <option value="evening">晚間</option>
-                </select>
-              </div>
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs text-gray-500">建議開工時間</p>
-                <p className="mt-1 text-base font-semibold text-gray-800">
-                  {draft.auspiciousPlan?.recommendedStartTime || "--:--"}
-                </p>
-                <ul className="mt-2 list-disc pl-5 text-xs text-gray-600 space-y-1">
-                  {(draft.auspiciousPlan?.recommendations || []).map((item, idx) => (
-                    <li key={`${idx}_${item}`}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">流程提醒與罐頭訊息</h3>
-              <Button size="sm" variant="outline" onClick={addNotificationTemplate}>
-                <Plus className="w-4 h-4" />
-                新增模板
-              </Button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">提醒 Email（未填則使用 CRM 客戶 Email）</label>
-                <input
-                  type="email"
-                  value={draft.notificationEmail || ""}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, notificationEmail: event.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="example@domain.com"
-                />
-              </div>
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs text-gray-500 mb-2">
-                  可用變數：{"{projectName}"} {"{clientName}"} {"{taskTitle}"} {"{taskDateTime}"} {"{taskOwner}"} {"{taskDetail}"}
-                </p>
-                <div className="space-y-2">
-                  {(draft.notificationTemplates || []).map((template) => (
-                    <div key={template.id} className="rounded border border-gray-200 bg-white p-2 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={template.name}
-                          onChange={(event) =>
-                            updateNotificationTemplate(template.id, "name", event.target.value)
-                          }
-                          className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                          placeholder="模板名稱"
-                        />
-                        <button
-                          onClick={() => removeNotificationTemplate(template.id)}
-                          className="text-red-600 hover:text-red-800"
-                          title="刪除模板"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <textarea
-                        value={template.content}
-                        onChange={(event) =>
-                          updateNotificationTemplate(template.id, "content", event.target.value)
-                        }
-                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs h-20 resize-y"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-gray-500" /> 專案註記（可串接 CRM）
-            </h3>
-            <textarea
-              value={draft.note || ""}
-              onChange={(event) => setDraft((prev) => ({ ...prev, note: event.target.value }))}
-              className="w-full text-sm border-gray-200 rounded-lg bg-gray-50 p-3 h-36 focus:ring-brand-500 focus:border-brand-500 resize-none"
-              placeholder="輸入案件筆記，例如：希望主臥收納加強、公共區改用耐磨材質、並安排 3D 渲染提案..."
-            />
-            <div className="mt-3 flex flex-col gap-2">
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => void handleSyncNoteToCrm()}
-                disabled={syncing}
-              >
-                {syncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-                {syncing ? "同步中..." : "同步註記到 LINE CRM"}
-              </Button>
-              <p className="text-[11px] text-gray-500">
-                最後同步：{draft.lastSyncedToCrmAt ? new Date(draft.lastSyncedToCrmAt).toLocaleString("zh-TW") : "尚未同步"}
-              </p>
-              <p className="text-[11px] text-gray-500">
-                同步後會寫入 CRM 系統註記並加上案件標籤，不會發送給 LINE 客戶。
-              </p>
-            </div>
           </div>
         </div>
       </div>

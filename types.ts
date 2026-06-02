@@ -83,6 +83,8 @@ export interface ProjectQuotationItem {
 export interface ProjectWorkflowTask {
   id: string;
   date?: string;
+  durationDays?: number;
+  stage?: string;
   time: string;
   title: string;
   detail?: string;

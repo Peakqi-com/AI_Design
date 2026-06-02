@@ -132,6 +132,10 @@ export interface ProjectQuotationItem {
 export interface ProjectWorkflowTask {
   id: string;
   date?: string;
+  /** 工期天數（甘特圖用）；未填視為 1 天 */
+  durationDays?: number;
+  /** 階段分類（如 拆除/水電/泥作/木作/油漆/系統櫃/收尾），甘特圖分組與配色用 */
+  stage?: string;
   time: string;
   title: string;
   detail?: string;

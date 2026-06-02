@@ -750,6 +750,8 @@ ${transcript}
     detail?: string;
     date?: string;
     time?: string;
+    stage?: string;
+    durationDays?: number;
   }
   interface ExtractedContactDetails {
     phone?: string;
@@ -959,7 +961,7 @@ ${transcript}
   "budget": "預算",
   "note": "更新後的完整備註",
   "quotationItems": [{ "name": "...", "description": "...", "unit": "對應標準表的單位（坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }],
-  "workflowTasks": [{ "title": "...", "detail": "...", "date": "YYYY-MM-DD 或空", "time": "HH:mm 或空" }],
+  "workflowTasks": [{ "title": "施工工項", "stage": "階段(保護/拆除/水電/泥作/木作/油漆/系統櫃/地板/廚衛/清潔/收尾)", "detail": "...", "date": "YYYY-MM-DD 開始日", "durationDays": 工期天數, "time": "" }],
   "contactDetails": { "phone": "", "email": "", "company": "", "address": "", "title": "" }
 }`;
       } else {
@@ -985,7 +987,7 @@ ${transcript}
     { "name": "項目名稱（例如：客廳系統櫃）", "description": "規格或說明（待確認的標註「待確認」）", "unit": "計價單位（對應標準表，如 坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }
   ],
   "workflowTasks": [
-    { "title": "任務名稱（例如：現場丈量、提案簡報、簽約）", "detail": "細節說明（可選）", "date": "YYYY-MM-DD 或空字串", "time": "HH:mm 或空字串" }
+    { "title": "施工工項（依報價項目 + 整體施作需求，如：全室保護、拆除、水電配管、泥作、木作天花、系統櫃安裝、油漆、地板、清潔驗收）", "stage": "階段分類（保護/拆除/水電/泥作/防水/木作/系統櫃/油漆/地板/廚衛/空調/清潔/收尾）", "detail": "細節說明（可選）", "date": "YYYY-MM-DD 開始日（依施工順序往後排）", "durationDays": 工期天數, "time": "" }
   ],
   "contactDetails": {
     "phone": "電話（對話中提到才填，否則空字串）",
@@ -1027,7 +1029,9 @@ ${transcript}
       parsed.workflowTasks = (parsed.workflowTasks || []).map((t) => ({
         title: String(t.title || "").trim(),
         detail: String(t.detail || "").trim(),
+        stage: String(t.stage || "").trim(),
         date: String(t.date || "").trim(),
+        durationDays: Math.max(1, Number(t.durationDays) || 1),
         time: String(t.time || "").trim(),
       })).filter((t) => t.title);
       parsed.contactDetails = parsed.contactDetails || {};
@@ -1086,7 +1090,9 @@ ${transcript}
           id: existing?.id || `wt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           title: t.title,
           detail: t.detail || existing?.detail || "",
+          stage: t.stage || "",
           date: t.date || existing?.date || "",
+          durationDays: Math.max(1, Number(t.durationDays) || 1),
           time: t.time || existing?.time || "",
           owner: "",
           done: existing?.done || false,
