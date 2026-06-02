@@ -880,9 +880,21 @@ export async function updateContact(
     }
 
     const current = store.contacts[index];
+    // 只套用「有意義」的欄位：跳過 undefined / null / 空字串 / 字面 "undefined"|"null"，
+    // 避免某個 PATCH 沒帶到欄位時把既有姓名、頭像等資料覆蓋掉。
+    const cleanPatch: Partial<CrmContact> = {};
+    (Object.keys(patch) as Array<keyof typeof patch>).forEach((k) => {
+      const v = patch[k];
+      if (v === undefined || v === null) return;
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t || t === "undefined" || t === "null") return;
+      }
+      (cleanPatch as Record<string, unknown>)[k] = v;
+    });
     const next: CrmContact = {
       ...current,
-      ...patch,
+      ...cleanPatch,
       updatedAt: nowIso(),
     };
     store.contacts[index] = next;
@@ -900,12 +912,14 @@ export interface UpsertLineContactInput {
 export async function upsertLineContact(input: UpsertLineContactInput): Promise<CrmContact> {
   return mutateStore((store) => {
     const now = nowIso();
-    const incomingName = input.displayName.trim();
+    const rawName = (input.displayName || "").trim();
+    // 字面 "undefined"/"null" 視為無效名稱（曾因 String(undefined) 寫入造成姓名變 "undefined"）
+    const incomingName = rawName === "undefined" || rawName === "null" ? "" : rawName;
     // A "fallback" name is one we synthesized when the LINE profile fetch failed
     // (e.g. "LINE 使用者 ab12cd" / "LINE 群組 …"). It must NEVER overwrite a real
     // display name we captured earlier.
     const isFallbackName = (n: string): boolean =>
-      !n || /^LINE (使用者|群組|聊天室) /.test(n);
+      !n || n === "undefined" || n === "null" || /^LINE (使用者|群組|聊天室) /.test(n);
     const normalizedName = incomingName || `LINE 使用者 ${input.lineUserId.slice(-6)}`;
 
     const existingIndex = store.contacts.findIndex(
