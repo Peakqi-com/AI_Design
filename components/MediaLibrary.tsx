@@ -439,7 +439,7 @@ export const MediaLibrary: React.FC = () => {
               singleImages.length === 0 ? (
                 <EmptyState icon={<ImageIcon className="w-10 h-10 opacity-20" />} label="尚無單張生成紀錄" hint="至「AI 空間渲染」生成單張渲染圖後會顯示在這裡" />
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
                   {singleImages.map((item) => (
                     <ImageCard key={item.id} item={item} onPreview={setPreviewItem} onDownload={handleDownload} onDelete={handleDelete} />
                   ))}
