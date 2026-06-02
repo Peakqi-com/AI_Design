@@ -497,7 +497,16 @@ const requestJson = async <T,>(url: string, init: RequestInit): Promise<T> => {
   return payload as T;
 };
 
-export const AIStudio: React.FC = () => {
+interface AIStudioProps {
+  restore?: {
+    prompt?: string;
+    generationPrompt?: string;
+    roomType?: string;
+    imageUrl?: string;
+  };
+}
+
+export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
   const { data: session } = useSession();
   const credits = useCredits();
   const [insufficientCreditsMsg, setInsufficientCreditsMsg] = useState<string | null>(null);
@@ -517,6 +526,19 @@ export const AIStudio: React.FC = () => {
     useState<(typeof OUTPUT_QUALITY_OPTIONS)[number]["value"]>("detail");
   const [creativity, setCreativity] = useState(28);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+
+  /* 從媒體庫帶回生成設定（提示詞、空間類型） */
+  const restoreAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!restore || restoreAppliedRef.current) return;
+    restoreAppliedRef.current = true;
+    const text = restore.prompt || restore.generationPrompt || "";
+    if (text) setDesignerPrompt(text);
+    if (restore.roomType) setSelectedRoomType(restore.roomType);
+    setRestoreNotice("已帶入原生成設定，請上傳線稿/空間圖後重新生成");
+    setTimeout(() => setRestoreNotice(null), 7000);
+  }, [restore]);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationStatusText, setGenerationStatusText] = useState("AI 渲染中...");
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
@@ -1477,6 +1499,11 @@ export const AIStudio: React.FC = () => {
           </h3>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {restoreNotice && (
+            <div className="rounded-lg bg-brand-50 border border-brand-100 px-3 py-2 text-xs text-brand-700">
+              ✨ {restoreNotice}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">線稿 / 空間原圖（必傳）</label>
             {!uploadedImage ? (

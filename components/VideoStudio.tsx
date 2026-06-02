@@ -579,7 +579,18 @@ const writeVideoHistoryCache = (userId: string, items: GeneratedVideoItem[]): vo
   window.localStorage.setItem(videoHistoryStorageKey(userId), JSON.stringify(persistable));
 };
 
-export const VideoStudio: React.FC = () => {
+interface VideoStudioProps {
+  restore?: {
+    prompt?: string;
+    generationPrompt?: string;
+    style?: string;
+    aspectRatio?: string;
+    mode?: string;
+    durationSec?: number;
+  };
+}
+
+export const VideoStudio: React.FC<VideoStudioProps> = ({ restore }) => {
   const { data: session } = useSession();
   const credits = useCredits();
 
@@ -590,6 +601,25 @@ export const VideoStudio: React.FC = () => {
   const [sourceFrameMode, setSourceFrameMode] = useState<SourceFrameMode>("fill");
   const [durationSec, setDurationSec] = useState(6);
   const [customPrompt, setCustomPrompt] = useState("");
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+
+  /* 從媒體庫帶回生成設定 */
+  const restoreAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!restore || restoreAppliedRef.current) return;
+    restoreAppliedRef.current = true;
+    const text = restore.prompt || restore.generationPrompt || "";
+    if (text) setCustomPrompt(text);
+    const validStyles: Style[] = ["japanese", "industrial", "modern", "luxury"];
+    if (restore.style && validStyles.includes(restore.style as Style)) setSelectedStyle(restore.style as Style);
+    const validRatios: AspectRatio[] = ["9:16", "1:1", "4:3", "16:9", "4:5"];
+    if (restore.aspectRatio && validRatios.includes(restore.aspectRatio as AspectRatio)) setAspectRatio(restore.aspectRatio as AspectRatio);
+    const validModes: Mode[] = ["image-to-video", "text-to-video", "first-last-frame"];
+    if (restore.mode && validModes.includes(restore.mode as Mode)) setMode(restore.mode as Mode);
+    if (restore.durationSec && Number.isFinite(restore.durationSec)) setDurationSec(Number(restore.durationSec));
+    setRestoreNotice("已帶入原生成設定，可修改後重新生成");
+    setTimeout(() => setRestoreNotice(null), 6000);
+  }, [restore]);
   const usePanoramaExpand = false;
   const [useVideoModel, setUseVideoModel] = useState(true);
   const [videoModel, setVideoModel] = useState("xai/grok-imagine-video");
@@ -1814,6 +1844,11 @@ export const VideoStudio: React.FC = () => {
           </div>
 
           <div className="flex-1 p-4 space-y-6 overflow-y-auto">
+          {restoreNotice && (
+            <div className="rounded-lg bg-brand-50 border border-brand-100 px-3 py-2 text-xs text-brand-700">
+              ✨ {restoreNotice}
+            </div>
+          )}
           {/* 生成模式 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">生成模式</label>

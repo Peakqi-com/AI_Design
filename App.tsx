@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
-import { ViewState, DashboardView, User, Project } from "./types";
+import { ViewState, DashboardView, User, Project, GenerationRestore } from "./types";
 import { LandingPage } from "./components/LandingPage";
 import { LoginPage } from "./components/LoginPage";
 import { DashboardLayout } from "./components/DashboardLayout";
@@ -59,7 +59,14 @@ const App: React.FC = () => {
   const [manualUser, setManualUser] = useState<User | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [presentationProjectId, setPresentationProjectId] = useState<string | undefined>(undefined);
+  const [genRestore, setGenRestore] = useState<GenerationRestore | undefined>(undefined);
   const credits = useCredits();
+
+  /** 從媒體庫帶回生成設定到對應生成器。 */
+  const handleRestoreGeneration = (target: DashboardView, payload: GenerationRestore) => {
+    setGenRestore(payload);
+    setDashboardView(target);
+  };
   const oauthUser = useMemo(() => toAppUser(session?.user), [session?.user]);
   const user = oauthUser ?? manualUser;
 
@@ -134,6 +141,10 @@ const App: React.FC = () => {
       if (view === "presentation") {
           setPresentationProjectId(undefined);
       }
+      // 從側欄主動切換到生成器 = 全新狀態，清掉媒體庫帶回的設定
+      if (view === "ai-studio" || view === "ai-chat" || view === "video-studio") {
+          setGenRestore(undefined);
+      }
   };
 
   const renderDashboardContent = () => {
@@ -143,9 +154,9 @@ const App: React.FC = () => {
       case "subscription":
         return <SubscriptionPage />;
       case "ai-studio":
-        return <AIStudio />;
+        return <AIStudio restore={genRestore} />;
       case "ai-chat":
-        return <AIChatImage />;
+        return <AIChatImage restore={genRestore} />;
       case "projects":
         if (selectedProject) {
           return (
@@ -163,11 +174,11 @@ const App: React.FC = () => {
       case "marketing":
         return <MarketingCenter />;
       case "video-studio":
-        return <VideoStudio />;
+        return <VideoStudio restore={genRestore} />;
       case "crm":
         return <CRMSystem onNavigateToProjects={() => setDashboardView("projects")} />;
       case "media-library":
-        return <MediaLibrary />;
+        return <MediaLibrary onRestoreGeneration={handleRestoreGeneration} />;
       case "presentation":
         return <PresentationMaker initialProjectId={presentationProjectId} />;
       case "video-script":

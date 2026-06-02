@@ -32,7 +32,17 @@ const toDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-export const AIChatImage: React.FC = () => {
+interface AIChatImageProps {
+  restore?: {
+    prompt?: string;
+    generationPrompt?: string;
+    style?: string;
+    aspectRatio?: string;
+    imageUrl?: string;
+  };
+}
+
+export const AIChatImage: React.FC<AIChatImageProps> = ({ restore }) => {
   const { data: session } = useSession();
   const credits = useCredits();
   const [userScopeId, setUserScopeId] = useState("guest_server");
@@ -51,6 +61,19 @@ export const AIChatImage: React.FC = () => {
   const [selectedType, setSelectedType] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("");
   const [selectedRatio, setSelectedRatio] = useState("1:1");
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+
+  /* 從媒體庫帶回生成設定（提示詞、比例） */
+  const restoreAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!restore || restoreAppliedRef.current) return;
+    restoreAppliedRef.current = true;
+    const text = restore.prompt || restore.generationPrompt || "";
+    if (text) setInput(text);
+    if (restore.aspectRatio) setSelectedRatio(restore.aspectRatio);
+    setRestoreNotice("已帶入原生成設定，可修改後重新生成");
+    setTimeout(() => setRestoreNotice(null), 6000);
+  }, [restore]);
 
   const RATIO_OPTIONS = [
     { id: "1:1", label: "1:1", hint: "正方形" },
@@ -260,6 +283,12 @@ export const AIChatImage: React.FC = () => {
           剩餘 <span className="font-bold text-brand-600">{formatCredits(credits.credits)}</span> 點
         </div>
       </div>
+
+      {restoreNotice && (
+        <div className="mx-4 mt-3 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2 text-xs text-brand-700">
+          ✨ {restoreNotice}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">

@@ -3,6 +3,20 @@ import { LucideIcon } from 'lucide-react';
 export type ViewState = 'landing' | 'login' | 'dashboard';
 export type DashboardView = 'overview' | 'ai-studio' | 'ai-chat' | 'video-studio' | 'projects' | 'quotation' | 'crm' | 'marketing' | 'subscription' | 'media-library' | 'presentation' | 'video-script' | 'admin';
 
+/** 從媒體庫「帶回生成介面」時，重新填入生成器的設定。 */
+export interface GenerationRestore {
+  prompt?: string;
+  generationPrompt?: string;
+  style?: string;
+  roomType?: string;
+  aspectRatio?: string;
+  mode?: string;
+  model?: string;
+  sourceType?: string;
+  durationSec?: number;
+  imageUrl?: string;
+}
+
 export interface User {
   id: string;
   name: string;

@@ -5,6 +5,7 @@ import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 
 interface AssetMeta {
   origin?: string;
+  mode?: string;
   summary?: string;
   style?: string;
   roomType?: string;
@@ -39,7 +40,27 @@ interface AssetPackage {
 
 type Tab = "single" | "packages" | "videos" | "trash";
 
-export const MediaLibrary: React.FC = () => {
+interface GenerationRestorePayload {
+  prompt?: string;
+  generationPrompt?: string;
+  style?: string;
+  roomType?: string;
+  aspectRatio?: string;
+  mode?: string;
+  model?: string;
+  sourceType?: string;
+  durationSec?: number;
+  imageUrl?: string;
+}
+
+interface MediaLibraryProps {
+  onRestoreGeneration?: (
+    target: "ai-studio" | "ai-chat" | "video-studio",
+    payload: GenerationRestorePayload,
+  ) => void;
+}
+
+export const MediaLibrary: React.FC<MediaLibraryProps> = ({ onRestoreGeneration }) => {
   const { data: session } = useSession();
   const [userScopeId, setUserScopeId] = useState("guest_server");
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -72,6 +93,34 @@ export const MediaLibrary: React.FC = () => {
   useEffect(() => {
     void loadProjectOptions();
   }, [loadProjectOptions]);
+
+  /** 帶回生成介面：依 origin 判斷要去哪個生成器，並把 meta 設定傳過去。 */
+  const restoreToGenerator = (asset: MediaAsset) => {
+    if (!onRestoreGeneration) return;
+    const meta = asset.meta || {};
+    const payload: GenerationRestorePayload = {
+      prompt: meta.prompt,
+      generationPrompt: meta.generationPrompt,
+      style: meta.style,
+      roomType: meta.roomType,
+      aspectRatio: meta.aspectRatio,
+      model: meta.model,
+      durationSec: meta.durationSec,
+      imageUrl: asset.url,
+    };
+    // 判斷目標生成器
+    let target: "ai-studio" | "ai-chat" | "video-studio";
+    if (asset.kind === "video" || meta.origin === "video-studio") {
+      target = "video-studio";
+      payload.mode = meta.mode;
+    } else if (meta.style === "AI 對話生圖") {
+      target = "ai-chat";
+    } else {
+      target = "ai-studio";
+    }
+    setPreviewItem(null);
+    onRestoreGeneration(target, payload);
+  };
 
   const linkAssetToProject = useCallback(async (assetId: string, projectId: string) => {
     setLinkingAssetId(assetId);
@@ -581,6 +630,15 @@ export const MediaLibrary: React.FC = () => {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {onRestoreGeneration && (previewItem.meta?.prompt || previewItem.meta?.generationPrompt) && (
+                  <button
+                    onClick={() => restoreToGenerator(previewItem)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"
+                    title="帶回生成介面，修改後重新生成"
+                  >
+                    <RotateCcw className="w-4 h-4" /> 帶回生成介面
+                  </button>
+                )}
                 <button
                   onClick={() => handleDownload(previewItem.url, previewItem.kind === "video" ? `video-${previewItem.id}.mp4` : `render-${previewItem.id}.png`)}
                   className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors"
