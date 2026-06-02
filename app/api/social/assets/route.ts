@@ -7,6 +7,7 @@ import {
   restoreSocialAsset,
   permanentDeleteSocialAsset,
   emptyTrash,
+  updateAssetProject,
   SocialAssetKind,
   SocialAssetMeta,
 } from "@/lib/social/media-library";
@@ -172,11 +173,29 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "assetId is required." }, { status: 400 });
   }
 
+  const action = url.searchParams.get("action")?.trim() || "";
+
   try {
+    // 連結/取消連結到專案
+    if (action === "link-project") {
+      let body: { projectId?: string; projectName?: string } = {};
+      try {
+        body = (await request.json()) as { projectId?: string; projectName?: string };
+      } catch { /* allow empty body = unlink */ }
+      const item = await updateAssetProject({
+        assetId,
+        userId,
+        projectId: body.projectId?.trim() || undefined,
+        projectName: body.projectName?.trim() || undefined,
+      });
+      if (!item) return NextResponse.json({ error: "Asset not found." }, { status: 404 });
+      return NextResponse.json({ item });
+    }
+
     const ok = await restoreSocialAsset({ assetId, userId });
     return NextResponse.json({ success: ok });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Restore failed.";
+    const message = error instanceof Error ? error.message : "Update failed.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

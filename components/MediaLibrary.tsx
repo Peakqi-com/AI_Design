@@ -17,6 +17,8 @@ interface AssetMeta {
   aspectRatio?: string;
   durationSec?: number;
   blobUrl?: string;
+  projectId?: string;
+  projectName?: string;
 }
 
 interface MediaAsset {
@@ -51,6 +53,48 @@ export const MediaLibrary: React.FC = () => {
   const videoUploadRef = useRef<HTMLInputElement>(null);
   const [trashItems, setTrashItems] = useState<MediaAsset[]>([]);
   const [isTrashLoading, setIsTrashLoading] = useState(false);
+
+  /* 專案資料夾：依專案過濾 + 連結資產到專案 */
+  const [projectOptions, setProjectOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [projectFilter, setProjectFilter] = useState<string>("all"); // all | none | <projectId>
+  const [linkingAssetId, setLinkingAssetId] = useState<string | null>(null);
+
+  const loadProjectOptions = useCallback(async () => {
+    if (!userScopeId) return;
+    try {
+      const res = await fetch(`/api/projects?userId=${encodeURIComponent(userScopeId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setProjectOptions((data.projects || []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })));
+    } catch { /* ignore */ }
+  }, [userScopeId]);
+
+  useEffect(() => {
+    void loadProjectOptions();
+  }, [loadProjectOptions]);
+
+  const linkAssetToProject = useCallback(async (assetId: string, projectId: string) => {
+    setLinkingAssetId(assetId);
+    try {
+      const proj = projectOptions.find((p) => p.id === projectId);
+      const res = await fetch(
+        `/api/social/assets?userId=${encodeURIComponent(userScopeId)}&assetId=${encodeURIComponent(assetId)}&action=link-project`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: projectId || undefined, projectName: proj?.name }),
+        },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const updated = data.item as MediaAsset;
+        setAssets((prev) => prev.map((a) => (a.id === assetId ? { ...a, meta: { ...a.meta, ...updated.meta } } : a)));
+        setPreviewItem((prev) => (prev && prev.id === assetId ? { ...prev, meta: { ...prev.meta, ...updated.meta } } : prev));
+      }
+    } catch { /* ignore */ } finally {
+      setLinkingAssetId(null);
+    }
+  }, [userScopeId, projectOptions]);
 
   useEffect(() => {
     const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
@@ -232,14 +276,21 @@ export const MediaLibrary: React.FC = () => {
     if (activeTab === "trash") void loadTrash();
   }, [activeTab, loadTrash]);
 
+  // 依專案過濾
+  const matchProject = (a: MediaAsset): boolean => {
+    if (projectFilter === "all") return true;
+    if (projectFilter === "none") return !a.meta?.projectId;
+    return a.meta?.projectId === projectFilter;
+  };
+
   // 分類素材
   const singleImages = assets.filter(
-    (a) => a.kind === "image" && !a.meta?.packageId
+    (a) => a.kind === "image" && !a.meta?.packageId && matchProject(a)
   );
   const packagedImages = assets.filter(
-    (a) => a.kind === "image" && Boolean(a.meta?.packageId)
+    (a) => a.kind === "image" && Boolean(a.meta?.packageId) && matchProject(a)
   );
-  const videos = assets.filter((a) => a.kind === "video");
+  const videos = assets.filter((a) => a.kind === "video" && matchProject(a));
 
   // 依 packageId 分組
   const packageMap = packagedImages.reduce<Record<string, AssetPackage>>((acc, item) => {
@@ -355,6 +406,24 @@ export const MediaLibrary: React.FC = () => {
           <Trash2 className="w-3.5 h-3.5" />
           垃圾桶{trashItems.length > 0 ? `（${trashItems.length}）` : ""}
         </button>
+
+        {/* 專案資料夾過濾 */}
+        {activeTab !== "trash" && (
+          <div className="ml-auto flex items-center gap-2">
+            <FolderOpen className="w-4 h-4 text-gray-400" />
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
+              <option value="all">全部專案</option>
+              <option value="none">未分類（未連結專案）</option>
+              {projectOptions.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* 內容區 */}
@@ -542,6 +611,23 @@ export const MediaLibrary: React.FC = () => {
                   className="max-h-[65vh] max-w-full object-contain rounded-lg"
                 />
               )}
+            </div>
+            {/* 連結到專案 */}
+            <div className="px-4 py-3 border-t border-gray-100 bg-white flex items-center gap-2">
+              <FolderOpen className="w-4 h-4 text-gray-400 shrink-0" />
+              <span className="text-xs text-gray-500 shrink-0">連結專案：</span>
+              <select
+                value={previewItem.meta?.projectId || ""}
+                onChange={(e) => void linkAssetToProject(previewItem.id, e.target.value)}
+                disabled={linkingAssetId === previewItem.id}
+                className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                <option value="">未連結（未分類）</option>
+                {projectOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {linkingAssetId === previewItem.id && <RefreshCw className="w-4 h-4 animate-spin text-brand-600" />}
             </div>
             {(previewItem.meta?.summary || previewItem.meta?.prompt || previewItem.meta?.generationPrompt) && (
               <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 max-h-36 overflow-y-auto space-y-2">

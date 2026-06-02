@@ -52,6 +52,8 @@ export interface SocialAssetMeta {
   packageLabel?: string;
   slotLabel?: string;
   blobUrl?: string;
+  projectId?: string; // 連結到的專案 id
+  projectName?: string; // 連結專案名稱（顯示用快取）
 }
 
 interface SocialAssetRecord {
@@ -583,6 +585,26 @@ export async function restoreSocialAsset(input: {
   delete record.deletedAt;
   await saveStore(store);
   return true;
+}
+
+/** 連結/取消連結資產到專案（更新 meta.projectId / projectName）。 */
+export async function updateAssetProject(input: {
+  assetId: string;
+  userId: string;
+  projectId?: string;
+  projectName?: string;
+}): Promise<SocialAssetItem | null> {
+  const userId = normalizeUserId(input.userId);
+  const store = await getStore();
+  const record = store.items.find((item) => item.id === input.assetId && item.userId === userId);
+  if (!record) return null;
+  record.meta = {
+    ...(record.meta || {}),
+    projectId: input.projectId || undefined,
+    projectName: input.projectId ? input.projectName || undefined : undefined,
+  };
+  await saveStore(store);
+  return toClientItem(record);
 }
 
 export async function permanentDeleteSocialAsset(input: {
