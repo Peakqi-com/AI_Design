@@ -1139,130 +1139,26 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
+          {/* ===== 報價總覽（詳細編輯在 AI 報價系統） ===== */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
-                <h3 className="font-bold text-gray-900">報價單管理（可由獨立報價系統回存草稿）</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  可在報價單系統維護草稿與內容，儲存後回寫至本專案。
+                <h3 className="font-bold text-gray-900">報價總覽</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  目前 {(draft.quotationItems || []).length} 個項目。詳細項目、單價與刪減請到 AI 報價系統調整（數字即時同步）。
                 </p>
               </div>
-              <Button size="sm" variant="outline" className="gap-1" onClick={addQuotationItem}>
-                <Plus className="w-4 h-4" />
-                新增項目
+              <Button variant="primary" className="gap-2" onClick={onGoToQuotation}>
+                <Calculator className="w-4 h-4" /> 開啟報價單系統
               </Button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-              <input
-                value={draft.quotationMeta?.quoteNo || ""}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: { ...(prev.quotationMeta || {}), quoteNo: event.target.value },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                placeholder="報價單號"
-              />
-              <input
-                type="date"
-                value={draft.quotationMeta?.validUntil || ""}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: { ...(prev.quotationMeta || {}), validUntil: event.target.value },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-              />
-              <select
-                value={draft.quotationMeta?.status || "draft"}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: {
-                      ...(prev.quotationMeta || {}),
-                      status: event.target.value as "draft" | "sent" | "accepted",
-                    },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
-              >
-                <option value="draft">草稿</option>
-                <option value="sent">已送出</option>
-                <option value="accepted">已接受</option>
-              </select>
-              <input
-                value={draft.quotationMeta?.note || ""}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: { ...(prev.quotationMeta || {}), note: event.target.value },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                placeholder="草稿註記"
-              />
+            <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-4">
+              <span className="text-sm text-gray-500">報價總計</span>
+              <span className="text-2xl font-bold text-brand-700">NT$ {quotationTotal.toLocaleString("zh-TW")}</span>
             </div>
-            <div className="space-y-3">
-              {(draft.quotationItems || []).map((item) => (
-                <div key={item.id} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-gray-200 p-3">
-                  <input
-                    value={item.name}
-                    onChange={(event) => handleQuotationChange(item.id, "name", event.target.value)}
-                    className="col-span-12 md:col-span-4 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="項目名稱"
-                  />
-                  <input
-                    value={item.description || ""}
-                    onChange={(event) => handleQuotationChange(item.id, "description", event.target.value)}
-                    className="col-span-12 md:col-span-3 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="說明"
-                  />
-                  <input
-                    type="number"
-                    value={item.quantity}
-                    min={0}
-                    onChange={(event) => handleQuotationChange(item.id, "quantity", event.target.value)}
-                    className="col-span-3 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="數量"
-                  />
-                  <select
-                    value={item.unit || "式"}
-                    onChange={(event) => handleQuotationChange(item.id, "unit", event.target.value)}
-                    className="col-span-3 md:col-span-1 rounded border border-gray-300 px-1 py-1.5 text-sm bg-white"
-                  >
-                    {COMMON_UNITS.map((u) => (
-                      <option key={u} value={u}>{u}</option>
-                    ))}
-                    {item.unit && !COMMON_UNITS.includes(item.unit as typeof COMMON_UNITS[number]) && (
-                      <option value={item.unit}>{item.unit}</option>
-                    )}
-                  </select>
-                  <input
-                    type="number"
-                    value={item.unitPrice}
-                    min={0}
-                    onChange={(event) => handleQuotationChange(item.id, "unitPrice", event.target.value)}
-                    className="col-span-3 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="單價"
-                  />
-                  <div className="col-span-2 md:col-span-1 text-sm text-right text-gray-700">
-                    {(item.quantity * item.unitPrice).toLocaleString("zh-TW")}
-                  </div>
-                  <button
-                    onClick={() => removeQuotationItem(item.id)}
-                    className="col-span-1 text-red-600 hover:text-red-800 justify-self-end"
-                    title="刪除項目"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-              <div className="flex justify-end border-t border-gray-100 pt-3">
-                <p className="text-sm font-semibold text-gray-900">總計：NT$ {quotationTotal.toLocaleString("zh-TW")}</p>
-              </div>
-            </div>
+            {draft.quotationMeta?.quoteNo && (
+              <p className="text-[11px] text-gray-400 mt-1 text-right">報價單號 {draft.quotationMeta.quoteNo}</p>
+            )}
           </div>
 
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
