@@ -352,10 +352,11 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         `你是資深室內設計專案經理。以下是一段會議紀錄／需求描述，請從中歸納出一個室內設計專案。\n\n` +
         `客戶：${client}\n\n` +
         `【公司標準報價表（客戶沒明講單價時對應此表填 unitPrice 並標「參考標準價」，對應不到填 0 標「待確認」）】\n${pricingText}\n` +
-        `工程管理費為工程總額 8-10%，以百分比寫在備註，不要當固定單價。\n\n` +
+        `工程管理費為工程總額 8-10%，以百分比寫在備註，不要當固定單價。\n` +
+        `所有單價(unitPrice)必須是整數（新台幣元），不要小數、不要千分位逗號。\n\n` +
         `會議紀錄：\n${notes}\n\n` +
         `只輸出 JSON，不要其他文字。格式：\n` +
-        `{"projectName":"專案名稱","clientName":"客戶","phase":"需求訪談/提案中/報價中/簽約/施工中/完工","budget":"預算","note":"需求重點摘要","quotationItems":[{"name":"工項","description":"說明","unit":"坪/尺/式/台/間/車/平方米/%","quantity":數字,"unitPrice":數字}],"workflowTasks":[{"title":"施工工項","stage":"階段","date":"YYYY-MM-DD","durationDays":數字,"detail":"","time":""}]}`;
+        `{"projectName":"專案名稱","clientName":"客戶","phase":"需求訪談/提案中/報價中/簽約/施工中/完工","budget":"預算","note":"需求重點摘要","quotationItems":[{"name":"工項","description":"說明","unit":"坪/尺/式/台/間/車/平方米/%","quantity":數字,"unitPrice":整數}],"workflowTasks":[{"title":"施工工項","stage":"階段","startOffsetDays":從開工日起算第幾天的整數,"durationDays":數字,"detail":""}]}`;
 
       const res = await fetch("/api/ai/text", {
         method: "POST",
@@ -374,13 +375,16 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         description: String(it.description || "").trim(),
         unit: String(it.unit || "式").trim(),
         quantity: Number(it.quantity) || 1,
-        unitPrice: Number(it.unitPrice) || 0,
+        unitPrice: Math.round(Number(it.unitPrice) || 0),
       })).filter((it: { name: string }) => it.name);
+      const wfStartMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00").getTime();
       const workflowTasks = (parsed.workflowTasks || []).map((t: Record<string, unknown>, i: number) => ({
         id: `wt_${Date.now()}_${i}`,
         title: String(t.title || "").trim(),
         stage: String(t.stage || "").trim(),
-        date: String(t.date || "").trim(),
+        date: t.startOffsetDays !== undefined && t.startOffsetDays !== null
+          ? new Date(wfStartMs + Math.max(0, Number(t.startOffsetDays) || 0) * 86400000).toISOString().slice(0, 10)
+          : String(t.date || "").trim(),
         durationDays: Math.max(1, Number(t.durationDays) || 1),
         detail: String(t.detail || "").trim(),
         time: "",

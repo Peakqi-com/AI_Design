@@ -33,6 +33,7 @@ import {
   Eye,
   Calculator,
   ChevronDown,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface ProjectDetailProps {
@@ -289,6 +290,32 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
+
+  /* 媒體庫選圖（給空間渲染紀錄用） */
+  const [mediaPickerTarget, setMediaPickerTarget] = useState<
+    { recordId: string; field: "referenceImageUrl" | "generatedImageUrl" } | null
+  >(null);
+  const [pickerAssets, setPickerAssets] = useState<Array<{ id: string; url: string; meta?: { slotLabel?: string; style?: string; projectId?: string } }>>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+
+  const openMediaPicker = async (recordId: string, field: "referenceImageUrl" | "generatedImageUrl") => {
+    setMediaPickerTarget({ recordId, field });
+    setPickerLoading(true);
+    try {
+      const res = await fetch(`/api/social/assets?limit=200&kind=image`);
+      if (res.ok) {
+        const data = await res.json();
+        const items = (data.items || []).map((a: { id: string; url: string; meta?: { blobUrl?: string; slotLabel?: string; style?: string; projectId?: string } }) => ({
+          id: a.id,
+          url: a.meta?.blobUrl || a.url,
+          meta: a.meta,
+        }));
+        setPickerAssets(items);
+      }
+    } catch { /* ignore */ } finally {
+      setPickerLoading(false);
+    }
+  };
 
   useEffect(() => {
     setDraft(normalizeDraftProject(project));
@@ -552,23 +579,25 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     setNotice(null);
     try {
       const items = (draft.quotationItems || []).map((i) => `${i.name}（${i.quantity}${i.unit || "式"}）`).join("、") || "（報價單尚無項目）";
-      const startDate =
-        draft.workflowTasks?.find((t) => t.date)?.date ||
-        new Date().toISOString().slice(0, 10);
+      // 開工日：用既有工項最早日期，否則用今天（真實日期，避免 AI 亂猜）
+      const existingStart = (draft.workflowTasks || [])
+        .map((t) => t.date)
+        .filter(Boolean)
+        .sort()[0];
+      const startDate = existingStart || new Date().toISOString().slice(0, 10);
 
       const prompt =
-        `你是資深室內裝修工程的工務經理。請根據以下「報價項目」排出一份完整的施工排程（甘特圖），以天為單位。\n\n` +
+        `你是資深室內裝修工程的工務經理。請根據以下「報價項目」排出一份完整的施工排程，以天為單位。\n\n` +
         `專案：${draft.name}（${draft.budget || "預算未定"}）\n` +
-        `報價項目：${items}\n` +
-        `預計開工日：${startDate}\n\n` +
+        `報價項目：${items}\n\n` +
         `排程原則：\n` +
         `1. 依正確的裝修施工順序排列（保護→拆除→水電配管→泥作/防水→木作→油漆→系統櫃/設備安裝→地板→廚衛設備→清潔→驗收）\n` +
         `2. 每個報價項目都要有對應的施工工項；同時補上「整體施作」必要工項（如全室保護、放樣定位、垃圾清運、完工清潔、驗收交屋），即使報價單沒列\n` +
-        `3. 合理估算每個工項的工期天數（durationDays），可重疊的工項給接近的開始日\n` +
-        `4. 用 date 給每個工項的開始日期（從開工日往後排，YYYY-MM-DD）\n` +
+        `3. 合理估算每個工項的工期天數（durationDays，整數）\n` +
+        `4. 用 startOffsetDays 表示「該工項從開工日起算第幾天開始」（開工日為第 0 天的整數，不要給絕對日期）。前置工項先做、可重疊的給相近的 offset\n` +
         `5. stage 填階段分類（保護/拆除/水電/泥作/防水/木作/油漆/系統櫃/地板/廚衛/空調/清潔/收尾 其中之一）\n\n` +
         `只輸出 JSON 陣列，不要其他文字。格式：\n` +
-        `[{"title":"工項名稱","stage":"階段","date":"YYYY-MM-DD","durationDays":數字,"detail":"簡短說明","owner":"工班/負責人"}]`;
+        `[{"title":"工項名稱","stage":"階段","startOffsetDays":數字,"durationDays":數字,"detail":"簡短說明","owner":"工班/負責人"}]`;
 
       const res = await fetch("/api/ai/text", {
         method: "POST",
@@ -582,11 +611,14 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       const parsed: Array<Record<string, unknown>> = m ? JSON.parse(m[0]) : [];
       if (parsed.length === 0) throw new Error("AI 未產生工項");
 
+      const startMs = new Date(startDate + "T00:00:00").getTime();
+      const toDate = (offset: number) => new Date(startMs + Math.max(0, offset) * 86400000).toISOString().slice(0, 10);
+
       const tasks = parsed.map((p) =>
         createFlowTask({
           title: String(p.title || "工項").trim(),
           stage: String(p.stage || "").trim(),
-          date: String(p.date || startDate).trim(),
+          date: toDate(Number(p.startOffsetDays) || 0),
           durationDays: Math.max(1, Number(p.durationDays) || 1),
           detail: String(p.detail || "").trim(),
           owner: String(p.owner || "").trim(),
@@ -1227,22 +1259,32 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                     placeholder="渲染重點（材質、燈光、動線）"
                   />
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <input
-                      value={record.referenceImageUrl || ""}
-                      onChange={(event) =>
-                        updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
-                      }
-                      className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="參考圖片 URL"
-                    />
-                    <input
-                      value={record.generatedImageUrl || ""}
-                      onChange={(event) =>
-                        updateDressSelectionRecord(record.id, "generatedImageUrl", event.target.value)
-                      }
-                      className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="生成結果圖片 URL"
-                    />
+                    <div className="flex gap-1">
+                      <input
+                        value={record.referenceImageUrl || ""}
+                        onChange={(event) =>
+                          updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
+                        }
+                        className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                        placeholder="參考圖片 URL"
+                      />
+                      <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "referenceImageUrl")}>
+                        <ImageIcon className="w-4 h-4" /> 媒體庫
+                      </Button>
+                    </div>
+                    <div className="flex gap-1">
+                      <input
+                        value={record.generatedImageUrl || ""}
+                        onChange={(event) =>
+                          updateDressSelectionRecord(record.id, "generatedImageUrl", event.target.value)
+                        }
+                        className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                        placeholder="生成結果圖片 URL"
+                      />
+                      <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "generatedImageUrl")}>
+                        <ImageIcon className="w-4 h-4" /> 媒體庫
+                      </Button>
+                    </div>
                   </div>
                   <textarea
                     value={record.note || ""}
@@ -1297,6 +1339,53 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ===== 媒體庫選圖 Modal（給空間渲染紀錄） ===== */}
+      {mediaPickerTarget && (
+        <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4" onClick={() => setMediaPickerTarget(null)}>
+          <div className="w-full max-w-3xl max-h-[85vh] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-brand-600" /> 從媒體庫選擇圖片
+              </h3>
+              <button onClick={() => setMediaPickerTarget(null)} className="text-gray-400 hover:text-gray-600">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {pickerLoading ? (
+                <div className="flex items-center justify-center h-40 text-gray-400">
+                  <RefreshCw className="w-6 h-6 animate-spin" />
+                </div>
+              ) : pickerAssets.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-12">媒體庫尚無圖片</p>
+              ) : (
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                  {pickerAssets.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => {
+                        if (mediaPickerTarget) {
+                          updateDressSelectionRecord(mediaPickerTarget.recordId, mediaPickerTarget.field, a.url);
+                        }
+                        setMediaPickerTarget(null);
+                      }}
+                      className="group rounded-lg overflow-hidden border-2 border-gray-200 hover:border-brand-400 transition-colors"
+                    >
+                      <div className="aspect-[4/3] bg-gray-100">
+                        <img src={a.url} alt="" className="w-full h-full object-cover" />
+                      </div>
+                      <p className="text-[10px] text-gray-500 truncate px-1.5 py-1">
+                        {a.meta?.slotLabel || a.meta?.style || "素材"}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===== 工程安排全螢幕子頁 ===== */}
       {workflowFullscreen && (

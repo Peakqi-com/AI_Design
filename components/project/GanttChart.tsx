@@ -87,12 +87,12 @@ export const GanttChart: React.FC<GanttChartProps> = ({
   const totalDays = Math.max(1, dayDiff(minStart, maxEnd) + 1);
 
   // Layout constants
-  const labelW = 200;
-  const rowH = 38;
+  const labelW = 220;
+  const rowH = 46;
   const headerH = 56;
   const dayW = exportMode
-    ? Math.max(26, Math.min(60, (GANTT_W - labelW - 40) / totalDays))
-    : Math.max(22, Math.min(56, 920 / totalDays));
+    ? Math.max(30, Math.min(64, (GANTT_W - labelW - 40) / totalDays))
+    : Math.max(28, Math.min(60, 980 / totalDays));
   const chartW = labelW + totalDays * dayW + 24;
   const chartH = headerH + rows.length * rowH + 24;
 
@@ -115,12 +115,29 @@ export const GanttChart: React.FC<GanttChartProps> = ({
     >
       {/* Title */}
       <div style={{ paddingLeft: 8, marginBottom: 10 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "#1f2937" }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: "#1f2937" }}>
           {projectName || "工程進度甘特圖"}
         </div>
         <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>
           {fmtMD(minStart)} – {fmtMD(maxEnd)}　共 {totalDays} 天 · {rows.length} 個工項
         </div>
+        {/* 階段圖例 */}
+        {(() => {
+          const usedStages = Array.from(
+            new Set(rows.map((r) => r.task.stage).filter(Boolean) as string[]),
+          ).slice(0, 12);
+          if (usedStages.length === 0) return null;
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
+              {usedStages.map((s) => (
+                <div key={s} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, background: colorForStage(s), display: "inline-block" }} />
+                  <span style={{ fontSize: 12, color: "#6b7280" }}>{s}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{ position: "relative", width: labelW + totalDays * dayW, height: chartH }}>

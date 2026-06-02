@@ -752,6 +752,7 @@ ${transcript}
     time?: string;
     stage?: string;
     durationDays?: number;
+    startOffsetDays?: number;
   }
   interface ExtractedContactDetails {
     phone?: string;
@@ -902,7 +903,8 @@ ${transcript}
       const pricingBlock =
         `\n【公司標準報價表（客戶若沒明講單價，請優先對應此表填入 unitPrice，並在 description 標註「參考標準價」；對應不到才填 0 並標「待確認」）】\n` +
         buildPricingReferenceText(pricingItems) +
-        `\n注意：工程管理費為工程總額的 8-10%，請以百分比在備註說明，不要當成固定單價項目。\n`;
+        `\n注意：工程管理費為工程總額的 8-10%，請以百分比在備註說明，不要當成固定單價項目。` +
+        `\n所有單價(unitPrice)必須是整數（新台幣元），不要小數、不要千分位逗號。\n`;
 
       let prompt: string;
       if (targetProject) {
@@ -987,8 +989,9 @@ ${transcript}
     { "name": "項目名稱（例如：客廳系統櫃）", "description": "規格或說明（待確認的標註「待確認」）", "unit": "計價單位（對應標準表，如 坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }
   ],
   "workflowTasks": [
-    { "title": "施工工項（依報價項目 + 整體施作需求，如：全室保護、拆除、水電配管、泥作、木作天花、系統櫃安裝、油漆、地板、清潔驗收）", "stage": "階段分類（保護/拆除/水電/泥作/防水/木作/系統櫃/油漆/地板/廚衛/空調/清潔/收尾）", "detail": "細節說明（可選）", "date": "YYYY-MM-DD 開始日（依施工順序往後排）", "durationDays": 工期天數, "time": "" }
+    { "title": "施工工項（依報價項目 + 整體施作需求，如：全室保護、拆除、水電配管、泥作、木作天花、系統櫃安裝、油漆、地板、清潔驗收）", "stage": "階段分類（保護/拆除/水電/泥作/防水/木作/系統櫃/油漆/地板/廚衛/空調/清潔/收尾）", "detail": "細節說明（可選）", "startOffsetDays": 從開工日起算第幾天開始的整數, "durationDays": 工期天數, "time": "" }
   ],
+  // 注意：workflowTasks 請勿輸出絕對日期，只用 startOffsetDays（開工=0）；實際日期由系統換算
   "contactDetails": {
     "phone": "電話（對話中提到才填，否則空字串）",
     "email": "Email（同上）",
@@ -1024,13 +1027,17 @@ ${transcript}
         description: String(it.description || "").trim(),
         unit: String(it.unit || "").trim() || "式",
         quantity: Number(it.quantity) || 1,
-        unitPrice: Number(it.unitPrice) || 0,
+        unitPrice: Math.round(Number(it.unitPrice) || 0),
       })).filter((it) => it.name);
+      // 工期日期：用 startOffsetDays 從今天起算真實日期（避免 AI 亂猜絕對日期）
+      const wfStartMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00").getTime();
       parsed.workflowTasks = (parsed.workflowTasks || []).map((t) => ({
         title: String(t.title || "").trim(),
         detail: String(t.detail || "").trim(),
         stage: String(t.stage || "").trim(),
-        date: String(t.date || "").trim(),
+        date: t.startOffsetDays !== undefined && t.startOffsetDays !== null
+          ? new Date(wfStartMs + Math.max(0, Number(t.startOffsetDays) || 0) * 86400000).toISOString().slice(0, 10)
+          : String(t.date || "").trim(),
         durationDays: Math.max(1, Number(t.durationDays) || 1),
         time: String(t.time || "").trim(),
       })).filter((t) => t.title);

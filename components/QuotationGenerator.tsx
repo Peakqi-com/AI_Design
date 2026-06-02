@@ -379,7 +379,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
         description: `${item.category}${item.source ? `（${item.source}）` : ""}`,
         unit: item.unit || "式",
         quantity: item.quantity,
-        unitPrice: item.price,
+        unitPrice: Math.round(item.price),
       })),
     [items],
   );
@@ -782,15 +782,15 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                 <div className="w-64 space-y-2">
                     <div className="flex justify-between text-gray-600 text-sm">
                         <span>小計 Subtotal</span>
-                        <span>${calculateTotal().toLocaleString()}</span>
+                        <span>${Math.round(calculateTotal()).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between text-gray-600 text-sm">
                         <span>稅金 Tax (5%)</span>
-                        <span>${(calculateTotal() * 0.05).toLocaleString()}</span>
+                        <span>${Math.round(calculateTotal() * 0.05).toLocaleString()}</span>
                     </div>
                     <div className="border-t border-gray-300 my-2 pt-2 flex justify-between text-2xl font-bold text-brand-600">
                         <span>總計 Total</span>
-                        <span>${(calculateTotal() * 1.05).toLocaleString()}</span>
+                        <span>${Math.round(calculateTotal() * 1.05).toLocaleString()}</span>
                     </div>
                 </div>
                 <div>
