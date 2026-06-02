@@ -317,6 +317,30 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     }
   };
 
+  /* 本專案連結的媒體庫圖片（儀表板預覽用） */
+  const [projectAssets, setProjectAssets] = useState<Array<{ id: string; url: string; label?: string }>>([]);
+  const [previewAsset, setPreviewAsset] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/social/assets?limit=200&kind=image`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const linked = (data.items || [])
+          .filter((a: { meta?: { projectId?: string } }) => a.meta?.projectId === project.id)
+          .map((a: { id: string; url: string; meta?: { blobUrl?: string; slotLabel?: string; style?: string } }) => ({
+            id: a.id,
+            url: a.meta?.blobUrl || a.url,
+            label: a.meta?.slotLabel || a.meta?.style,
+          }));
+        if (!cancelled) setProjectAssets(linked);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [project.id]);
+
   useEffect(() => {
     setDraft(normalizeDraftProject(project));
     setError(null);
@@ -1206,6 +1230,36 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
+          {/* 本專案媒體庫圖片 */}
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><ImageIcon className="w-4 h-4 text-brand-600" /> 專案圖庫</h3>
+                <p className="text-xs text-gray-500 mt-0.5">已連結到本專案的媒體庫圖片（共 {projectAssets.length} 張）。在媒體庫可將更多圖連結到此專案。</p>
+              </div>
+            </div>
+            {projectAssets.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg">
+                尚無連結圖片。到「媒體庫」開啟圖片預覽 → 選擇「連結專案」即可加入本專案。
+              </p>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {projectAssets.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => setPreviewAsset(a.url)}
+                    className="group rounded-lg overflow-hidden border border-gray-200 hover:border-brand-400 transition-colors"
+                  >
+                    <div className="aspect-square bg-gray-100">
+                      <img src={a.url} alt={a.label || ""} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                    </div>
+                    {a.label && <p className="text-[10px] text-gray-500 truncate px-1 py-0.5">{a.label}</p>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -1272,31 +1326,51 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                     placeholder="渲染重點（材質、燈光、動線）"
                   />
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <div className="flex gap-1">
-                      <input
-                        value={record.referenceImageUrl || ""}
-                        onChange={(event) =>
-                          updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
-                        }
-                        className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="參考圖片 URL"
-                      />
-                      <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "referenceImageUrl")}>
-                        <ImageIcon className="w-4 h-4" /> 媒體庫
-                      </Button>
+                    <div className="space-y-1.5">
+                      <div className="flex gap-1">
+                        <input
+                          value={record.referenceImageUrl || ""}
+                          onChange={(event) =>
+                            updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
+                          }
+                          className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                          placeholder="參考圖片 URL"
+                        />
+                        <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "referenceImageUrl")}>
+                          <ImageIcon className="w-4 h-4" /> 媒體庫
+                        </Button>
+                      </div>
+                      {record.referenceImageUrl && (
+                        <img
+                          src={record.referenceImageUrl}
+                          alt="參考圖"
+                          className="w-full h-28 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90"
+                          onClick={() => setPreviewAsset(record.referenceImageUrl || null)}
+                        />
+                      )}
                     </div>
-                    <div className="flex gap-1">
-                      <input
-                        value={record.generatedImageUrl || ""}
-                        onChange={(event) =>
-                          updateDressSelectionRecord(record.id, "generatedImageUrl", event.target.value)
-                        }
-                        className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="生成結果圖片 URL"
-                      />
-                      <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "generatedImageUrl")}>
-                        <ImageIcon className="w-4 h-4" /> 媒體庫
-                      </Button>
+                    <div className="space-y-1.5">
+                      <div className="flex gap-1">
+                        <input
+                          value={record.generatedImageUrl || ""}
+                          onChange={(event) =>
+                            updateDressSelectionRecord(record.id, "generatedImageUrl", event.target.value)
+                          }
+                          className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                          placeholder="生成結果圖片 URL"
+                        />
+                        <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "generatedImageUrl")}>
+                          <ImageIcon className="w-4 h-4" /> 媒體庫
+                        </Button>
+                      </div>
+                      {record.generatedImageUrl && (
+                        <img
+                          src={record.generatedImageUrl}
+                          alt="成果圖"
+                          className="w-full h-28 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90"
+                          onClick={() => setPreviewAsset(record.generatedImageUrl || null)}
+                        />
+                      )}
                     </div>
                   </div>
                   <textarea
@@ -1325,6 +1399,16 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
 
         </div>
       </div>
+
+      {/* ===== 圖片預覽 Lightbox ===== */}
+      {previewAsset && (
+        <div className="fixed inset-0 z-[85] bg-black/80 flex items-center justify-center p-6" onClick={() => setPreviewAsset(null)}>
+          <img src={previewAsset} alt="預覽" className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+          <button onClick={() => setPreviewAsset(null)} className="absolute top-4 right-4 text-white/80 hover:text-white">
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+        </div>
+      )}
 
       {/* ===== 媒體庫選圖 Modal（給空間渲染紀錄） ===== */}
       {mediaPickerTarget && (
