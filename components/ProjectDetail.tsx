@@ -31,6 +31,7 @@ import {
   Pencil,
   Eye,
   Calculator,
+  ChevronDown,
 } from "lucide-react";
 
 interface ProjectDetailProps {
@@ -961,18 +962,48 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             <option value="filed">已建檔</option>
             <option value="deleted">移到刪除區</option>
           </select>
-          <Button onClick={onGoToAI} variant="outline" className="flex-1 lg:flex-none gap-2">
-            <PenTool className="w-4 h-4" /> 進入 線稿轉渲染工坊
-          </Button>
-          <Button onClick={() => onGoToPresentation?.(project.id)} variant="outline" className="flex-1 lg:flex-none gap-2">
-            <Presentation className="w-4 h-4" /> 生成提案簡報
-          </Button>
-          <Button onClick={onGoToQuotation} variant="outline" className="flex-1 lg:flex-none gap-2">
-            <Calculator className="w-4 h-4" /> 報價單系統
-          </Button>
-          <Button onClick={() => { setWorkflowFullscreen(true); setWorkflowEditing(false); }} variant="outline" className="flex-1 lg:flex-none gap-2">
-            <Wand2 className="w-4 h-4" /> 工程安排
-          </Button>
+          {/* 專案工具下拉選單（收納渲染/簡報/報價/工程安排，避免按鈕爆版） */}
+          <div className="relative flex-1 lg:flex-none">
+            <Button
+              variant="outline"
+              className="w-full lg:w-auto gap-2"
+              onClick={() => setStatusMenuOpen((v) => !v)}
+            >
+              <Wand2 className="w-4 h-4" /> 專案工具
+              <ChevronDown className={`w-4 h-4 transition-transform ${statusMenuOpen ? "rotate-180" : ""}`} />
+            </Button>
+            {statusMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setStatusMenuOpen(false)} />
+                <div className="absolute right-0 mt-1 w-56 z-40 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); onGoToAI(); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <PenTool className="w-4 h-4 text-brand-600" /> 線稿轉渲染工坊
+                  </button>
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); onGoToPresentation?.(project.id); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Presentation className="w-4 h-4 text-brand-600" /> 生成提案簡報
+                  </button>
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); onGoToQuotation?.(); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Calculator className="w-4 h-4 text-brand-600" /> 報價單系統
+                  </button>
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); setWorkflowFullscreen(true); setWorkflowEditing(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Wand2 className="w-4 h-4 text-brand-600" /> 工程安排 / 甘特圖
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <Button onClick={() => void handleSave()} disabled={saving || isDeleted} className="flex-1 lg:flex-none gap-2">
             {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? "儲存中..." : "儲存專案"}
