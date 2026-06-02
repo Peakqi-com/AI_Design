@@ -16,7 +16,11 @@ import {
   Trash2,
   FolderArchive,
   CheckCircle,
+  Sparkles,
+  FileText,
+  RefreshCw,
 } from "lucide-react";
+import { buildPricingReferenceText } from "@/lib/crm/pricing-standards";
 import {
   Project,
   ProjectAuspiciousPlan,
@@ -134,6 +138,10 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [meetingNotes, setMeetingNotes] = useState("");
+  const [meetingClientName, setMeetingClientName] = useState("");
+  const [meetingGenerating, setMeetingGenerating] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [crmContacts, setCrmContacts] = useState<CrmContactLite[]>([]);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -319,6 +327,96 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     }
   };
 
+  /** 從會議紀錄 / 自由文字用 AI 建立專案（非 LINE 來源） */
+  const handleCreateFromMeeting = async () => {
+    if (meetingGenerating) return;
+    const notes = meetingNotes.trim();
+    if (!notes) {
+      setError("請貼上會議紀錄或需求描述");
+      return;
+    }
+    setMeetingGenerating(true);
+    setError(null);
+    try {
+      let pricingText = "（尚未設定標準報價表）";
+      try {
+        const pr = await fetch(`/api/crm/settings/pricing?userId=${encodeURIComponent(userScopeId)}`);
+        if (pr.ok) {
+          const pd = await pr.json();
+          pricingText = buildPricingReferenceText(pd.items || []);
+        }
+      } catch { /* ignore */ }
+
+      const client = meetingClientName.trim() || "（待確認）";
+      const prompt =
+        `你是資深室內設計專案經理。以下是一段會議紀錄／需求描述，請從中歸納出一個室內設計專案。\n\n` +
+        `客戶：${client}\n\n` +
+        `【公司標準報價表（客戶沒明講單價時對應此表填 unitPrice 並標「參考標準價」，對應不到填 0 標「待確認」）】\n${pricingText}\n` +
+        `工程管理費為工程總額 8-10%，以百分比寫在備註，不要當固定單價。\n\n` +
+        `會議紀錄：\n${notes}\n\n` +
+        `只輸出 JSON，不要其他文字。格式：\n` +
+        `{"projectName":"專案名稱","clientName":"客戶","phase":"需求訪談/提案中/報價中/簽約/施工中/完工","budget":"預算","note":"需求重點摘要","quotationItems":[{"name":"工項","description":"說明","unit":"坪/尺/式/台/間/車/平方米/%","quantity":數字,"unitPrice":數字}],"workflowTasks":[{"title":"施工工項","stage":"階段","date":"YYYY-MM-DD","durationDays":數字,"detail":"","time":""}]}`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      const data = (await res.json()) as { text?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "AI 生成失敗");
+      const text = (data.text || "").trim();
+      const m = text.match(/\{[\s\S]*\}/);
+      const parsed = m ? JSON.parse(m[0]) : {};
+
+      const quotationItems = (parsed.quotationItems || []).map((it: Record<string, unknown>, i: number) => ({
+        id: `qi_${Date.now()}_${i}`,
+        name: String(it.name || "").trim(),
+        description: String(it.description || "").trim(),
+        unit: String(it.unit || "式").trim(),
+        quantity: Number(it.quantity) || 1,
+        unitPrice: Number(it.unitPrice) || 0,
+      })).filter((it: { name: string }) => it.name);
+      const workflowTasks = (parsed.workflowTasks || []).map((t: Record<string, unknown>, i: number) => ({
+        id: `wt_${Date.now()}_${i}`,
+        title: String(t.title || "").trim(),
+        stage: String(t.stage || "").trim(),
+        date: String(t.date || "").trim(),
+        durationDays: Math.max(1, Number(t.durationDays) || 1),
+        detail: String(t.detail || "").trim(),
+        time: "",
+        owner: "",
+        done: false,
+        isCustom: false,
+      })).filter((t: { title: string }) => t.title);
+
+      const created = await requestJson<{ project: ProjectApiItem }>("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: userScopeId,
+          name: String(parsed.projectName || "").trim() || `${client} 的專案`,
+          clientName: String(parsed.clientName || client).trim() || client,
+          status: "draft",
+          phase: String(parsed.phase || "需求訪談").trim(),
+          budget: String(parsed.budget || "待定").trim(),
+          note: `${String(parsed.note || "").trim()}\n\n[會議紀錄原文]\n${notes}`.trim(),
+          quotationItems,
+          workflowTasks,
+        }),
+      });
+      const mapped = mapProject(created.project);
+      setProjects((prev) => [mapped, ...prev]);
+      setShowMeetingModal(false);
+      setMeetingNotes("");
+      setMeetingClientName("");
+      void loadProjects("", includeArchived, includeFiled, includeDeleted);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "從會議紀錄建立專案失敗");
+    } finally {
+      setMeetingGenerating(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -346,11 +444,60 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
             <Trash2 className="w-4 h-4" />
             {includeDeleted ? "隱藏刪除區" : "顯示刪除區"}
           </Button>
+          <Button variant="outline" className="gap-1" onClick={() => setShowMeetingModal(true)}>
+            <FileText className="w-4 h-4" /> 從會議紀錄建立
+          </Button>
           <Button className="gap-1" onClick={() => setShowCreate(true)}>
             <Plus className="w-4 h-4" /> 新增室內設計專案
           </Button>
         </div>
       </div>
+
+      {/* 從會議紀錄 AI 建立專案 */}
+      {showMeetingModal && (
+        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xl rounded-xl border border-gray-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-brand-600" /> 從會議紀錄 AI 建立專案
+              </h3>
+              <button onClick={() => setShowMeetingModal(false)} className="text-gray-500 hover:text-gray-900">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1 block text-xs text-gray-600">客戶名稱（可選）</label>
+                <input
+                  value={meetingClientName}
+                  onChange={(e) => setMeetingClientName(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  placeholder="例如：王先生"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-600">會議紀錄 / 需求描述</label>
+                <textarea
+                  value={meetingNotes}
+                  onChange={(e) => setMeetingNotes(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm h-48 resize-none"
+                  placeholder="貼上會議紀錄、現場勘查筆記或客戶需求描述，例如：30坪老屋翻新，3房2廳，現代北歐風，預算100萬，要全室保護、拆除、客廳系統櫃、全室木地板、主臥大冷氣..."
+                />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  AI 會歸納出專案名稱、需求摘要、報價項目（對應標準報價表自動帶價）與施工工項。
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-100">
+              <Button variant="outline" onClick={() => setShowMeetingModal(false)}>取消</Button>
+              <Button onClick={() => void handleCreateFromMeeting()} disabled={meetingGenerating} className="gap-2">
+                {meetingGenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {meetingGenerating ? "AI 生成中..." : "AI 建立專案"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
