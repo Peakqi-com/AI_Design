@@ -254,6 +254,38 @@ export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) =>
     setAutoReplyDirty(true);
   };
 
+  /* 依標籤群發 */
+  const [broadcastTag, setBroadcastTag] = useState("");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastMsg, setBroadcastMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const sendBroadcast = async () => {
+    const msg = broadcastMessage.trim();
+    if (!msg) { setBroadcastMsg({ type: "err", text: "請輸入群發訊息內容" }); return; }
+    if (!confirm(broadcastTag ? `確定要群發給標籤「${broadcastTag}」的所有 LINE 客戶嗎？` : "確定要群發給所有 LINE 客戶嗎？")) return;
+    setBroadcasting(true);
+    setBroadcastMsg(null);
+    try {
+      const res = await fetch(`/api/crm/broadcast`, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ userId: userScopeRef.current, tag: broadcastTag, message: msg }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setBroadcastMsg({ type: "ok", text: `已送出 ${data.sent || 0} 則（失敗 ${data.failed || 0}，共 ${data.total || 0} 位）` });
+        setBroadcastMessage("");
+      } else {
+        setBroadcastMsg({ type: "err", text: data.error || "群發失敗" });
+      }
+    } catch {
+      setBroadcastMsg({ type: "err", text: "網路錯誤" });
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
   const selected = contacts.find((c) => c.id === selectedId) ?? null;
   const hasFetched = useRef(false);
   const userScopeRef = useRef(userScope);
@@ -313,7 +345,7 @@ export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) =>
   }, [buildHeaders]);
 
   useEffect(() => {
-    if (activeTab === "line-settings" && userScope) { fetchLineSettings(); fetchAutoReply(); }
+    if (activeTab === "line-settings" && userScope) { fetchLineSettings(); fetchAutoReply(); fetchTagDefs(); }
   }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- pricing standards ---- */
@@ -1954,6 +1986,48 @@ ${transcript}
                 </div>
               )}
               <p className="text-[11px] text-gray-400 mt-2">關鍵字比對客戶訊息（不分大小寫），符合第一條規則就自動回覆並記錄到對話。</p>
+            </div>
+          </div>
+
+          {/* ===== 依標籤群發 ===== */}
+          <div className="mt-8 border-t border-gray-200 pt-6">
+            <h3 className="text-base font-semibold text-gray-900">群發訊息</h3>
+            <p className="text-sm text-gray-500 mt-0.5 mb-3">依標籤對 LINE 客戶群發訊息（選「全部」則發給所有 LINE 客戶）。</p>
+
+            {broadcastMsg && (
+              <div className={`mb-3 p-2.5 rounded-lg text-sm ${broadcastMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {broadcastMsg.text}
+              </div>
+            )}
+
+            <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">對象標籤</label>
+                <select
+                  value={broadcastTag}
+                  onChange={(e) => setBroadcastTag(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">全部 LINE 客戶</option>
+                  {tagDefs.map((t) => (<option key={t.id} value={t.name}>{t.name}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">群發內容</label>
+                <textarea
+                  value={broadcastMessage}
+                  onChange={(e) => setBroadcastMessage(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="輸入要群發的訊息，例如：本月新成屋專案優惠開跑，回覆「諮詢」即可預約免費丈量 🏠"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button variant="primary" onClick={sendBroadcast} disabled={broadcasting || !broadcastMessage.trim()} className="gap-2">
+                  {broadcasting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+                  {broadcasting ? "群發中..." : "確認群發"}
+                </Button>
+              </div>
+              <p className="text-[11px] text-gray-400">群發會逐一推播並記錄到每位客戶的對話。請留意 LINE 官方帳號的推播訊息額度。</p>
             </div>
           </div>
         </div>
