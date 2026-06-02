@@ -30,6 +30,7 @@ import {
   Download,
   Pencil,
   Eye,
+  Calculator,
 } from "lucide-react";
 
 interface ProjectDetailProps {
@@ -355,6 +356,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const isFiled = Boolean(draft.filedAt);
   const isDeleted = Boolean(draft.deletedAt);
   const [workflowEditing, setWorkflowEditing] = useState(false);
+  const [workflowFullscreen, setWorkflowFullscreen] = useState(false);
   const [exportingGantt, setExportingGantt] = useState(false);
   const ganttRef = useRef<HTMLDivElement>(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
@@ -966,7 +968,10 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             <Presentation className="w-4 h-4" /> 生成提案簡報
           </Button>
           <Button onClick={onGoToQuotation} variant="outline" className="flex-1 lg:flex-none gap-2">
-            報價單系統
+            <Calculator className="w-4 h-4" /> 報價單系統
+          </Button>
+          <Button onClick={() => { setWorkflowFullscreen(true); setWorkflowEditing(false); }} variant="outline" className="flex-1 lg:flex-none gap-2">
+            <Wand2 className="w-4 h-4" /> 工程安排
           </Button>
           <Button onClick={() => void handleSave()} disabled={saving || isDeleted} className="flex-1 lg:flex-none gap-2">
             {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -1334,41 +1339,82 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
-          {/* ===== 工程安排 / 甘特圖 ===== */}
+          {/* ===== 工程安排 / 甘特圖 啟動卡 ===== */}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <h3 className="font-bold text-gray-900">工程安排（甘特圖）</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  依報價項目 + 整體施作需求自動排程，可編輯、可輸出
+                  依報價項目 + 整體施作需求自動排程，全螢幕編輯與輸出。目前 {(draft.workflowTasks || []).length} 個工項。
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => void generateGanttSchedule()} disabled={generatingGantt}>
-                  {generatingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                  {generatingGantt ? "排程中..." : "AI 依報價生成排程"}
-                </Button>
-                {!workflowEditing ? (
-                  <Button size="sm" variant="outline" className="gap-1" onClick={() => setWorkflowEditing(true)}>
-                    <Pencil className="w-4 h-4" /> 編輯
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="primary" className="gap-1" onClick={() => setWorkflowEditing(false)}>
-                    <Eye className="w-4 h-4" /> 完成編輯（看甘特圖）
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("png")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
-                  {exportingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PNG
-                </Button>
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("pdf")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
-                  <Download className="w-4 h-4" /> PDF
-                </Button>
-              </div>
+              <Button
+                variant="primary"
+                className="gap-2"
+                onClick={() => { setWorkflowFullscreen(true); setWorkflowEditing(false); }}
+              >
+                <Calculator className="w-4 h-4" /> 開啟工程安排
+              </Button>
             </div>
+            {(draft.workflowTasks || []).length > 0 && (
+              <div className="mt-4 overflow-x-auto rounded-lg border border-gray-100 bg-white max-h-64 overflow-y-hidden">
+                <GanttChart
+                  tasks={draft.workflowTasks || []}
+                  projectName={draft.name}
+                  fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
-            {/* PREVIEW MODE: Gantt chart */}
+      {/* ===== 工程安排全螢幕子頁 ===== */}
+      {workflowFullscreen && (
+        <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
+          {/* 返回列 */}
+          <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
+            <button
+              onClick={() => setWorkflowFullscreen(false)}
+              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium"
+            >
+              <ArrowLeft className="w-5 h-5" /> 返回專案管理
+            </button>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-base font-bold text-gray-800">工程安排 · {draft.name}</h1>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => void generateGanttSchedule()} disabled={generatingGantt}>
+                {generatingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                {generatingGantt ? "排程中..." : "AI 依報價生成排程"}
+              </Button>
+              {!workflowEditing ? (
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => setWorkflowEditing(true)}>
+                  <Pencil className="w-4 h-4" /> 編輯
+                </Button>
+              ) : (
+                <Button size="sm" variant="primary" className="gap-1" onClick={() => setWorkflowEditing(false)}>
+                  <Eye className="w-4 h-4" /> 完成編輯（看甘特圖）
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("png")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
+                {exportingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PNG
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("pdf")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
+                <Download className="w-4 h-4" /> PDF
+              </Button>
+              <Button size="sm" onClick={() => void handleSave()} disabled={saving} className="gap-1">
+                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} 儲存
+              </Button>
+            </div>
+          </div>
+
+          {/* 內容 */}
+          <div className="flex-1 overflow-auto p-4 md:p-8">
+            {notice && (
+              <div className="mb-3 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2 text-sm text-brand-700">{notice}</div>
+            )}
             {!workflowEditing && (
-              <div className="overflow-x-auto rounded-lg border border-gray-100 bg-white">
+              <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
                 <div ref={ganttRef}>
                   <GanttChart
                     tasks={draft.workflowTasks || []}
@@ -1378,11 +1424,10 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                 </div>
               </div>
             )}
-
-            {/* EDIT MODE: list editor */}
             {workflowEditing && (
-              <div className="space-y-2">
-                <div className="flex justify-end">
+              <div className="space-y-2 max-w-5xl">
+                <div className="flex justify-between items-center">
+                  <p className="text-sm text-gray-500">為每個工項設定階段、開始日與工期天數，甘特圖會自動排列。</p>
                   <Button size="sm" variant="outline" className="gap-1" onClick={addWorkflowTask}>
                     <Plus className="w-4 h-4" /> 新增工項
                   </Button>
@@ -1393,7 +1438,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                   </p>
                 )}
                 {(draft.workflowTasks || []).map((task) => (
-                  <div key={task.id} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-gray-200 p-3">
+                  <div key={task.id} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-gray-200 bg-white p-3">
                     <input
                       value={task.title}
                       onChange={(event) => updateWorkflowTask(task.id, "title", event.target.value)}
@@ -1447,7 +1492,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
