@@ -562,6 +562,15 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
   const [annotatedPreview, setAnnotatedPreview] = useState<string | null>(null);
   const [editingSlot, setEditingSlot] = useState<{ slotKey: string; imageDataUrl: string; label: string } | null>(null);
 
+  /* Q7：AI 空間設計清單（平面圖 → 各空間設計項目） */
+  interface RoomDesignPlan {
+    room: string;
+    purpose: string;
+    items: string[];
+  }
+  const [designPlan, setDesignPlan] = useState<RoomDesignPlan[] | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1093,6 +1102,48 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
     }
   };
 
+  // Q7：AI 依平面圖列出各空間設計項目
+  const handleGenerateDesignPlan = async () => {
+    if (!uploadedImage || isPlanning) return;
+    const deduction = await credits.confirmAndDeduct("AI 空間設計清單", "ai-render-analyze");
+    if (!deduction.ok) {
+      if (!deduction.cancelled) setInsufficientCreditsMsg(deduction.error || "點數不足");
+      return;
+    }
+    setIsPlanning(true);
+    setErrorMessage(null);
+    try {
+      const prompt =
+        "你是資深室內設計師。請看這張住宅平面圖，辨識每個空間（如玄關、客廳、餐廳、廚房、主臥、次臥、衛浴、書房、陽台等），" +
+        "並為每個空間說明它的用途，以及建議的設計／裝修項目（例如客廳：電視主牆、收納櫃、間接照明）。" +
+        "只輸出 JSON 陣列，不要其他文字。格式：" +
+        '[{"room":"空間名","purpose":"用途說明(20字內)","items":["設計項目1","設計項目2"]}]';
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageDataUrl: uploadedImage, prompt, temperature: 0.4, jsonMode: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "分析失敗");
+      const text = (data.text || "").trim();
+      const m = text.match(/\[[\s\S]*\]/);
+      const parsed: RoomDesignPlan[] = m ? JSON.parse(m[0]) : [];
+      const cleaned = parsed
+        .map((p) => ({
+          room: String(p.room || "").trim(),
+          purpose: String(p.purpose || "").trim(),
+          items: Array.isArray(p.items) ? p.items.map((i) => String(i).trim()).filter(Boolean) : [],
+        }))
+        .filter((p) => p.room);
+      if (cleaned.length === 0) throw new Error("AI 未能辨識空間，請換清晰的平面圖");
+      setDesignPlan(cleaned);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "空間設計清單生成失敗");
+    } finally {
+      setIsPlanning(false);
+    }
+  };
+
   // 第二步：確認標示圖後進入逐步生成模式
   const handleStartSteps = useCallback(() => {
     if (!labeledFloorPlan) return;
@@ -1534,6 +1585,46 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
             <Button variant="outline" size="sm" className="mt-2 w-full" onClick={loadSampleImage}>
               使用範例線稿
             </Button>
+          </div>
+
+          {/* Q7：AI 空間設計清單 */}
+          <div className={!uploadedImage ? "opacity-50 pointer-events-none" : ""}>
+            <button
+              onClick={() => void handleGenerateDesignPlan()}
+              disabled={isPlanning || !uploadedImage}
+              className="w-full py-2.5 rounded-lg text-sm font-medium bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {isPlanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {isPlanning ? "分析空間中..." : "AI 空間設計清單（看平面圖列項目）"}
+            </button>
+            {designPlan && (
+              <div className="mt-2 space-y-2 max-h-72 overflow-y-auto">
+                {designPlan.map((room, i) => (
+                  <div key={i} className="rounded-lg border border-purple-100 bg-purple-50/50 p-2.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-sm font-semibold text-gray-800">{room.room}</p>
+                      <button
+                        onClick={() => { setSelectedRoomType(room.room); setDesignerPrompt([designerPrompt.trim(), `${room.room}：${room.items.join("、")}`].filter(Boolean).join("\n")); }}
+                        className="text-[10px] text-purple-600 hover:text-purple-800 shrink-0"
+                        title="帶入此空間到生成設定"
+                      >
+                        帶入生成 →
+                      </button>
+                    </div>
+                    {room.purpose && <p className="text-[11px] text-gray-500 mt-0.5">{room.purpose}</p>}
+                    {room.items.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {room.items.map((it, k) => (
+                          <span key={k} className="text-[10px] bg-white border border-purple-200 text-purple-700 px-1.5 py-0.5 rounded">
+                            {it}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className={!uploadedImage ? "opacity-50 pointer-events-none" : ""}>
