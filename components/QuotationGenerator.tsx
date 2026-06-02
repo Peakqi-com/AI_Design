@@ -461,6 +461,47 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
     setHasGenerated(true);
   };
 
+  /* #4：套用標準工項模板（整套帶入報價標準表的工項） */
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const applyStandardTemplate = async () => {
+    setApplyingTemplate(true);
+    try {
+      const res = await fetch(`/api/crm/settings/pricing?userId=${encodeURIComponent(lineScopeId)}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      const standards: Array<{ name: string; unit: string; unitPrice: number; category: string }> = data.items || [];
+      if (standards.length === 0) {
+        setError("報價標準表尚無工項，請先到 線上訊息管理 → 報價標準 設定。");
+        return;
+      }
+      const existingNames = new Set(items.map((i) => i.name.trim()));
+      let nextId = items.length + 1;
+      const newItems: QuoteItem[] = standards
+        .filter((s) => s.name && !existingNames.has(s.name.trim()) && s.unitPrice > 0)
+        .map((s) => ({
+          id: nextId++,
+          category: s.category || "標準工項",
+          name: s.name,
+          unit: s.unit || "式",
+          quantity: 1,
+          price: Math.round(s.unitPrice),
+          source: "manual" as const,
+          confidence: 100,
+        }));
+      if (newItems.length === 0) {
+        setError("標準工項都已在清單中。");
+        return;
+      }
+      setItems((prev) => [...prev, ...newItems]);
+      setHasGenerated(true);
+      setError(null);
+    } catch {
+      setError("套用工項模板失敗，請重試。");
+    } finally {
+      setApplyingTemplate(false);
+    }
+  };
+
   const removeItem = (id: number) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
@@ -763,12 +804,22 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                         ))}
                         <tr>
                             <td colSpan={7} className="px-6 py-4">
-                                <button
-                                  className="flex items-center gap-1 text-brand-600 hover:text-brand-700 font-medium text-sm transition-colors"
-                                  onClick={addManualItem}
-                                >
-                                    <Plus className="w-4 h-4" /> 手動新增項目
-                                </button>
+                                <div className="flex items-center gap-4">
+                                  <button
+                                    className="flex items-center gap-1 text-brand-600 hover:text-brand-700 font-medium text-sm transition-colors"
+                                    onClick={addManualItem}
+                                  >
+                                      <Plus className="w-4 h-4" /> 手動新增項目
+                                  </button>
+                                  <button
+                                    className="flex items-center gap-1 text-purple-600 hover:text-purple-700 font-medium text-sm transition-colors disabled:opacity-50"
+                                    onClick={() => void applyStandardTemplate()}
+                                    disabled={applyingTemplate}
+                                  >
+                                      {applyingTemplate ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                                      套用標準工項模板（整套帶入）
+                                  </button>
+                                </div>
                             </td>
                         </tr>
                     </tbody>
