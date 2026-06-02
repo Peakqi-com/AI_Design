@@ -504,9 +504,11 @@ interface AIStudioProps {
     roomType?: string;
     imageUrl?: string;
   };
+  /** 從專案內進入時預選關聯專案，生成的圖自動歸到此專案 */
+  initialProjectId?: string;
 }
 
-export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
+export const AIStudio: React.FC<AIStudioProps> = ({ restore, initialProjectId }) => {
   const { data: session } = useSession();
   const credits = useCredits();
   const [insufficientCreditsMsg, setInsufficientCreditsMsg] = useState<string | null>(null);
@@ -664,6 +666,11 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
     void loadProjects();
   }, [loadProjects]);
 
+  /* 從專案內進入：預選關聯專案 */
+  useEffect(() => {
+    if (initialProjectId) setSelectedProjectId(initialProjectId);
+  }, [initialProjectId]);
+
   const saveResultToServer = useCallback(
     async (input: {
       imageDataUrl: string;
@@ -689,6 +696,12 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
           model: input.modelTag,
           prompt: designerPrompt.trim(),
           generationPrompt: input.generationPrompt || "",
+          ...(selectedProjectId
+            ? {
+                projectId: selectedProjectId,
+                projectName: projects.find((p) => p.id === selectedProjectId)?.name,
+              }
+            : {}),
           ...(input.packageId
             ? {
                 packageId: input.packageId,
@@ -707,7 +720,7 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore }) => {
       }
       return payload.item;
     },
-    [designerPrompt, selectedFunction.name, selectedRoomType, userScopeId],
+    [designerPrompt, selectedFunction.name, selectedRoomType, userScopeId, selectedProjectId, projects],
   );
 
   const appendRenderRecordToProject = useCallback(

@@ -13,6 +13,8 @@ import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
 import { GanttChart } from "./project/GanttChart";
 import { CalendarView } from "./project/CalendarView";
 import { exportElementToPng, exportElementToPdf } from "@/lib/project/export-element";
+import { AIStudio } from "./AIStudio";
+import { PresentationMaker } from "./PresentationMaker";
 import {
   ArrowLeft,
   MessageSquare,
@@ -410,6 +412,8 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const isDeleted = Boolean(draft.deletedAt);
   const [workflowEditing, setWorkflowEditing] = useState(false);
   const [workflowFullscreen, setWorkflowFullscreen] = useState(false);
+  const [renderFullscreen, setRenderFullscreen] = useState(false);
+  const [presentationFullscreen, setPresentationFullscreen] = useState(false);
   const [workflowViewMode, setWorkflowViewMode] = useState<"gantt" | "calendar">("gantt");
   const [exportingGantt, setExportingGantt] = useState(false);
   const ganttRef = useRef<HTMLDivElement>(null);
@@ -1035,13 +1039,13 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                 <div className="fixed inset-0 z-30" onClick={() => setStatusMenuOpen(false)} />
                 <div className="absolute right-0 mt-1 w-56 z-40 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
                   <button
-                    onClick={() => { setStatusMenuOpen(false); onGoToAI(); }}
+                    onClick={() => { setStatusMenuOpen(false); setRenderFullscreen(true); }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                   >
                     <PenTool className="w-4 h-4 text-brand-600" /> 線稿轉渲染工坊
                   </button>
                   <button
-                    onClick={() => { setStatusMenuOpen(false); onGoToPresentation?.(project.id); }}
+                    onClick={() => { setStatusMenuOpen(false); setPresentationFullscreen(true); }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                   >
                     <Presentation className="w-4 h-4 text-brand-600" /> 生成提案簡報
@@ -1453,6 +1457,39 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 線稿轉渲染全螢幕子頁（專案內） ===== */}
+      {renderFullscreen && (
+        <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
+          <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
+            <button onClick={() => setRenderFullscreen(false)} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium">
+              <ArrowLeft className="w-5 h-5" /> 返回專案管理
+            </button>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-base font-bold text-gray-800">線稿轉渲染 · {draft.name}</h1>
+            <span className="ml-2 text-[11px] text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full">生成的圖會自動歸到本專案</span>
+          </div>
+          <div className="flex-1 overflow-auto p-4 md:p-6">
+            <AIStudio initialProjectId={project.id} />
+          </div>
+        </div>
+      )}
+
+      {/* ===== 生成提案簡報全螢幕子頁（專案內） ===== */}
+      {presentationFullscreen && (
+        <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
+          <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
+            <button onClick={() => setPresentationFullscreen(false)} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium">
+              <ArrowLeft className="w-5 h-5" /> 返回專案管理
+            </button>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-base font-bold text-gray-800">生成提案簡報 · {draft.name}</h1>
+          </div>
+          <div className="flex-1 overflow-auto p-4 md:p-6">
+            <PresentationMaker initialProjectId={project.id} />
           </div>
         </div>
       )}
