@@ -2038,6 +2038,18 @@ ${transcript}
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ---------- LEFT PANEL: Client List ---------- */}
       <div className="w-80 shrink-0 border-r border-gray-200 flex flex-col min-w-0">
+        {/* 訊息來源頻道（預留 FB / IG） */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-100 bg-gray-50/60">
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> LINE
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-400" title="即將支援">
+            Facebook · 即將推出
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-400" title="即將支援">
+            Instagram · 即將推出
+          </span>
+        </div>
         {/* search */}
         <div className="p-3 border-b border-gray-100">
           <div className="relative">

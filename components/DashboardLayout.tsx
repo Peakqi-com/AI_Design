@@ -56,7 +56,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     { id: 'presentation', label: '簡報製作', icon: Presentation },
     { id: 'video-script', label: '行銷影片腳本', icon: Clapperboard },
     { id: 'marketing', label: '社群發文中心', icon: Share2 },
-    { id: 'crm', label: '客戶關係 CRM', icon: MessageCircle },
+    { id: 'crm', label: '線上訊息管理', icon: MessageCircle },
     { id: 'projects', label: '室內專案管理', icon: FileText },
     { id: 'subscription', label: '訂閱與點數', icon: CreditCard },
     ...(isAdmin ? [{ id: 'admin' as DashboardView, label: '管理員後台', icon: Shield }] : []),
