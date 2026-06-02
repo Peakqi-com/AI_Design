@@ -1060,12 +1060,12 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="space-y-6 lg:col-span-2">
+      <div className="space-y-6">
+        <div className="space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h3 className="font-bold text-gray-900 mb-4">室內設計專案基本資料</h3>
             {loading && <p className="mb-3 text-xs text-gray-500">同步最新專案資料中...</p>}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-sm">
               <div>
                 <label className="mb-1 block text-xs text-gray-600">室內設計專案名稱</label>
                 <input
@@ -1171,26 +1171,39 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
-          {/* ===== 報價總覽（詳細編輯在 AI 報價系統） ===== */}
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <h3 className="font-bold text-gray-900">報價總覽</h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  目前 {(draft.quotationItems || []).length} 個項目。詳細項目、單價與刪減請到 AI 報價系統調整（數字即時同步）。
-                </p>
+          {/* ===== 報價總覽 + 工程安排（並排摘要卡） ===== */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 報價總覽 */}
+            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-gray-900 flex items-center gap-2"><Calculator className="w-4 h-4 text-brand-600" /> 報價總覽</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{(draft.quotationItems || []).length} 個項目 · 詳細編輯與刪減在報價系統（即時同步）</p>
+                </div>
               </div>
-              <Button variant="primary" className="gap-2" onClick={onGoToQuotation}>
+              <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-4 flex-1">
+                <span className="text-sm text-gray-500">報價總計</span>
+                <span className="text-2xl font-bold text-brand-700">NT$ {quotationTotal.toLocaleString("zh-TW")}</span>
+              </div>
+              <Button variant="primary" className="gap-2 mt-4 w-full" onClick={onGoToQuotation}>
                 <Calculator className="w-4 h-4" /> 開啟報價單系統
               </Button>
             </div>
-            <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-4">
-              <span className="text-sm text-gray-500">報價總計</span>
-              <span className="text-2xl font-bold text-brand-700">NT$ {quotationTotal.toLocaleString("zh-TW")}</span>
+
+            {/* 工程安排 */}
+            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><Wand2 className="w-4 h-4 text-brand-600" /> 工程安排（甘特圖）</h3>
+                <p className="text-xs text-gray-500 mt-0.5">依報價自動排程，全螢幕編輯與輸出</p>
+              </div>
+              <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-4 flex-1">
+                <span className="text-sm text-gray-500">施工工項</span>
+                <span className="text-2xl font-bold text-gray-800">{(draft.workflowTasks || []).length} <span className="text-sm font-normal text-gray-400">項</span></span>
+              </div>
+              <Button variant="primary" className="gap-2 mt-4 w-full" onClick={() => { setWorkflowFullscreen(true); setWorkflowEditing(false); }}>
+                <Wand2 className="w-4 h-4" /> 開啟工程安排
+              </Button>
             </div>
-            {draft.quotationMeta?.quoteNo && (
-              <p className="text-[11px] text-gray-400 mt-1 text-right">報價單號 {draft.quotationMeta.quoteNo}</p>
-            )}
           </div>
 
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
@@ -1310,33 +1323,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
-          {/* ===== 工程安排 / 甘特圖 啟動卡 ===== */}
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <h3 className="font-bold text-gray-900">工程安排（甘特圖）</h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  依報價項目 + 整體施作需求自動排程，全螢幕編輯與輸出。目前 {(draft.workflowTasks || []).length} 個工項。
-                </p>
-              </div>
-              <Button
-                variant="primary"
-                className="gap-2"
-                onClick={() => { setWorkflowFullscreen(true); setWorkflowEditing(false); }}
-              >
-                <Calculator className="w-4 h-4" /> 開啟工程安排
-              </Button>
-            </div>
-            {(draft.workflowTasks || []).length > 0 && (
-              <div className="mt-4 overflow-x-auto rounded-lg border border-gray-100 bg-white max-h-64 overflow-y-hidden">
-                <GanttChart
-                  tasks={draft.workflowTasks || []}
-                  projectName={draft.name}
-                  fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
-                />
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
