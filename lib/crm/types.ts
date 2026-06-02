@@ -187,6 +187,16 @@ export interface PresentationDraft {
   updatedAt: string;
 }
 
+export interface PricingStandardItem {
+  id: string;
+  name: string;
+  unit: string;
+  unitPrice: number;
+  category: string;
+  aliases?: string[];
+  note?: string;
+}
+
 export interface CrmStore {
   version: number;
   lineSettings: LineIntegrationSettings | null;
@@ -195,4 +205,6 @@ export interface CrmStore {
   messages: CrmMessage[];
   projects: CrmProject[];
   presentations?: PresentationDraft[];
+  /** Per-user standard pricing tables, keyed by user scope. */
+  pricingByUser?: Record<string, PricingStandardItem[]>;
 }

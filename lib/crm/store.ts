@@ -15,6 +15,7 @@ import {
   CrmStore,
   LineIntegrationSettings,
   PresentationDraft,
+  PricingStandardItem,
 } from "@/lib/crm/types";
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -121,6 +122,7 @@ const createDefaultStore = (): CrmStore => ({
   messages: [],
   projects: [],
   presentations: [],
+  pricingByUser: {},
 });
 
 const cloneStore = (store: CrmStore): CrmStore => structuredClone(store);
@@ -223,6 +225,8 @@ const normalizeStore = (raw: unknown): CrmStore => {
     messages: Array.isArray(maybe.messages) ? maybe.messages : [],
     projects: normalizedProjects,
     presentations: Array.isArray(maybe.presentations) ? maybe.presentations : [],
+    pricingByUser:
+      maybe.pricingByUser && typeof maybe.pricingByUser === "object" ? maybe.pricingByUser : {},
   };
 };
 
@@ -1351,6 +1355,74 @@ export async function deletePresentation(id: string): Promise<boolean> {
     store.presentations = store.presentations.filter((p) => p.id !== id);
     return store.presentations.length !== before;
   });
+}
+
+/* ================================================================
+   Standard pricing table (per-user, editable)
+   ================================================================ */
+
+const pricingScopeKey = (userScopeId?: string): string =>
+  normalizeLineScope(userScopeId) || GLOBAL_LINE_SETTINGS_SCOPE;
+
+/**
+ * Get a user's pricing table. If they have none yet, seed it from the default
+ * and persist, so first-time users immediately have the standard table.
+ */
+export async function getPricingStandards(
+  userScopeId: string,
+  seed: Omit<PricingStandardItem, "id">[],
+): Promise<PricingStandardItem[]> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  const existing = store.pricingByUser?.[key];
+  if (existing && existing.length > 0) {
+    return existing.map((p) => ({ ...p }));
+  }
+  // seed
+  const seeded: PricingStandardItem[] = seed.map((s) => ({
+    ...s,
+    id: createId("price"),
+  }));
+  await mutateStore((s) => {
+    if (!s.pricingByUser) s.pricingByUser = {};
+    if (!s.pricingByUser[key] || s.pricingByUser[key].length === 0) {
+      s.pricingByUser[key] = seeded;
+    }
+  });
+  return seeded;
+}
+
+/** Read a user's pricing table without seeding (used by AI prompt build). */
+export async function peekPricingStandards(userScopeId: string): Promise<PricingStandardItem[]> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  return (store.pricingByUser?.[key] ?? []).map((p) => ({ ...p }));
+}
+
+/** Replace a user's entire pricing table. */
+export async function savePricingStandards(
+  userScopeId: string,
+  items: PricingStandardItem[],
+): Promise<PricingStandardItem[]> {
+  const key = pricingScopeKey(userScopeId);
+  const normalized = items
+    .filter((it) => it.name?.trim())
+    .map((it) => ({
+      id: it.id || createId("price"),
+      name: it.name.trim(),
+      unit: (it.unit || "").trim() || "式",
+      unitPrice: Number(it.unitPrice) || 0,
+      category: (it.category || "其他").trim(),
+      aliases: Array.isArray(it.aliases)
+        ? it.aliases.map((a) => String(a).trim()).filter(Boolean)
+        : undefined,
+      note: it.note?.trim() || undefined,
+    }));
+  await mutateStore((store) => {
+    if (!store.pricingByUser) store.pricingByUser = {};
+    store.pricingByUser[key] = normalized;
+  });
+  return normalized;
 }
 
 export interface UpdateProjectInput {

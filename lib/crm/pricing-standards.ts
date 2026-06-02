@@ -1,31 +1,29 @@
 /**
  * 標準報價表 — 室內裝修工程的參考單價。
  *
- * 用途：當 AI 從 LINE 對話歸納報價項目時，若客戶沒明講價格，會比對這份標準表，
- * 自動填入參考單價（並在說明標註「參考標準價」），而不是留 0 或亂猜。
+ * 這份是「預設種子」：使用者第一次開啟報價表管理時，會以此初始化到自己的
+ * 帳號（存 Redis）。之後使用者可在介面自行增修，AI 歸納報價時讀的是使用者
+ * 帳號裡的那份，不是這個檔案。
  *
- * 維護：直接在 STANDARD_PRICING 陣列增修。aliases 是給 AI 對應口語/變體名稱用的，
- * 例如客戶說「打牆」就對到「拆除」。價格為新台幣，採每單位單價。
- *
- * 資料來源：使用者提供之公司標準價（2026）；可再補充其他同業報價。
+ * 資料來源：使用者提供之公司標準價（2026）。
  */
 
-export interface PricingStandard {
-  /** 標準工項名稱 */
-  name: string;
-  /** 計價單位 */
-  unit: string;
-  /** 參考單價（新台幣）；百分比類工項用 0 並在 note 說明 */
-  unitPrice: number;
-  /** 分類，方便 UI 分組 */
-  category: "拆除清運" | "泥作" | "木作" | "輕鋼架" | "水電空調" | "地坪" | "保護" | "設計管理" | "其他";
-  /** 口語/別名，給 AI 比對用 */
-  aliases?: string[];
-  /** 額外說明（區間、百分比、備註） */
-  note?: string;
-}
+import { PricingStandardItem } from "@/lib/crm/types";
 
-export const STANDARD_PRICING: PricingStandard[] = [
+export const PRICING_CATEGORIES = [
+  "拆除清運",
+  "泥作",
+  "木作",
+  "輕鋼架",
+  "水電空調",
+  "地坪",
+  "保護",
+  "設計管理",
+  "其他",
+] as const;
+
+/** 預設種子（不含 id；seed 時補上）。 */
+export const DEFAULT_PRICING_SEED: Omit<PricingStandardItem, "id">[] = [
   { name: "保護工程", unit: "坪", unitPrice: 1200, category: "保護", aliases: ["保護", "地板保護", "全室保護"] },
   { name: "拆除工程", unit: "式", unitPrice: 70000, category: "拆除清運", aliases: ["拆除", "打除", "打牆", "敲除"] },
   { name: "系統櫃", unit: "尺", unitPrice: 8000, category: "木作", aliases: ["系統櫃體", "系統傢俱", "系統家具", "系統衣櫃"] },
@@ -47,10 +45,12 @@ export const STANDARD_PRICING: PricingStandard[] = [
 ];
 
 /** 產生給 AI prompt 用的標準報價表文字（精簡、條列）。 */
-export const buildPricingReferenceText = (): string => {
-  const lines = STANDARD_PRICING.map((p) => {
-    const price = p.unitPrice > 0 ? `NT$ ${p.unitPrice.toLocaleString()} / ${p.unit}` : p.note || "-";
-    return `- ${p.name}（${price}）`;
-  });
-  return lines.join("\n");
+export const buildPricingReferenceText = (items: Pick<PricingStandardItem, "name" | "unit" | "unitPrice" | "note">[]): string => {
+  if (!items || items.length === 0) return "（尚未設定標準報價表）";
+  return items
+    .map((p) => {
+      const price = p.unitPrice > 0 ? `NT$ ${p.unitPrice.toLocaleString()} / ${p.unit}` : p.note || "-";
+      return `- ${p.name}（${price}）`;
+    })
+    .join("\n");
 };

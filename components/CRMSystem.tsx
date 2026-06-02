@@ -78,7 +78,17 @@ const STATUS_COLORS: Record<string, string> = {
   signed: "bg-green-100 text-green-700",
 };
 
-type CrmTab = "contacts" | "line-settings";
+type CrmTab = "contacts" | "line-settings" | "pricing";
+
+interface PricingItem {
+  id: string;
+  name: string;
+  unit: string;
+  unitPrice: number;
+  category: string;
+  aliases?: string[];
+  note?: string;
+}
 
 interface LineSettingsData {
   connected: boolean;
@@ -217,6 +227,92 @@ export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) =>
   useEffect(() => {
     if (activeTab === "line-settings" && userScope) fetchLineSettings();
   }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- pricing standards ---- */
+  const [pricingItems, setPricingItems] = useState<PricingItem[]>([]);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingDirty, setPricingDirty] = useState(false);
+  const [pricingMsg, setPricingMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const fetchPricing = useCallback(async () => {
+    setPricingLoading(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/pricing${params}`, { headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setPricingItems(data.items || []);
+        setPricingDirty(false);
+      }
+    } catch { /* ignore */ } finally {
+      setPricingLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (activeTab === "pricing" && userScope) fetchPricing();
+  }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const savePricing = async () => {
+    setPricingSaving(true);
+    setPricingMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const res = await fetch(`/api/crm/settings/pricing`, {
+        method: "PUT",
+        headers: buildHeaders(),
+        body: JSON.stringify({ userId: scope, items: pricingItems }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPricingItems(data.items || []);
+        setPricingDirty(false);
+        setPricingMsg({ type: "ok", text: "已儲存，AI 報價會立即套用新單價" });
+      } else {
+        setPricingMsg({ type: "err", text: "儲存失敗，請重試" });
+      }
+    } catch {
+      setPricingMsg({ type: "err", text: "網路錯誤，請重試" });
+    } finally {
+      setPricingSaving(false);
+    }
+  };
+
+  const resetPricing = async () => {
+    if (!confirm("確定要重設為預設標準報價表嗎？你目前的自訂內容會被覆蓋。")) return;
+    setPricingSaving(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/pricing${params}`, { method: "DELETE", headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setPricingItems(data.items || []);
+        setPricingDirty(false);
+        setPricingMsg({ type: "ok", text: "已重設為預設報價表" });
+      }
+    } catch { /* ignore */ } finally {
+      setPricingSaving(false);
+    }
+  };
+
+  const updatePricingItem = (id: string, patch: Partial<PricingItem>) => {
+    setPricingItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    setPricingDirty(true);
+  };
+  const removePricingItem = (id: string) => {
+    setPricingItems((prev) => prev.filter((it) => it.id !== id));
+    setPricingDirty(true);
+  };
+  const addPricingItem = () => {
+    setPricingItems((prev) => [
+      ...prev,
+      { id: `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: "", unit: "式", unitPrice: 0, category: "其他" },
+    ]);
+    setPricingDirty(true);
+  };
 
   /* ---- save LINE settings ---- */
   const saveLineSettings = async () => {
@@ -787,10 +883,22 @@ ${transcript}
         ? existingProjects.find((p) => p.id === linkedProjectId)
         : null;
 
-      // 標準報價表 — 讓 AI 在客戶沒明講價格時，依此填入參考單價
+      // 標準報價表 — 讀使用者帳號自訂的那份（管理介面可增修），讓 AI 在客戶
+      // 沒明講價格時，依此填入參考單價
+      let pricingItems: Array<{ name: string; unit: string; unitPrice: number; note?: string }> = [];
+      try {
+        const pr = await fetch(
+          `/api/crm/settings/pricing?userId=${encodeURIComponent(userScope || "")}`,
+          { headers: buildHeaders() },
+        );
+        if (pr.ok) {
+          const pd = await pr.json();
+          pricingItems = pd.items || [];
+        }
+      } catch { /* ignore — fall back to empty */ }
       const pricingBlock =
         `\n【公司標準報價表（客戶若沒明講單價，請優先對應此表填入 unitPrice，並在 description 標註「參考標準價」；對應不到才填 0 並標「待確認」）】\n` +
-        buildPricingReferenceText() +
+        buildPricingReferenceText(pricingItems) +
         `\n注意：工程管理費為工程總額的 8-10%，請以百分比在備註說明，不要當成固定單價項目。\n`;
 
       let prompt: string;
@@ -1135,7 +1243,140 @@ ${transcript}
             <span className="w-2 h-2 rounded-full bg-green-500" />
           )}
         </button>
+        <button
+          onClick={() => setActiveTab("pricing")}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "pricing"
+              ? "border-brand-600 text-brand-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+        >
+          <Calculator className="w-4 h-4" /> 報價標準
+        </button>
       </div>
+
+      {/* ===== PRICING STANDARDS TAB ===== */}
+      {activeTab === "pricing" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-4xl mx-auto w-full">
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">標準報價表</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  AI 從 LINE 對話歸納報價時，客戶沒明講價格就依這份表自動填入單價。隨時可增修。
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={resetPricing}
+                  disabled={pricingSaving}
+                  className="text-xs px-3 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  重設預設
+                </button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={savePricing}
+                  disabled={pricingSaving || !pricingDirty}
+                  className="gap-1.5"
+                >
+                  {pricingSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  {pricingSaving ? "儲存中" : pricingDirty ? "儲存變更" : "已儲存"}
+                </Button>
+              </div>
+            </div>
+
+            {pricingMsg && (
+              <div className={`mt-3 mb-2 p-2.5 rounded-lg text-sm ${
+                pricingMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+              }`}>
+                {pricingMsg.text}
+              </div>
+            )}
+
+            {pricingLoading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
+                <RefreshCw className="w-5 h-5 animate-spin mr-2" /> 載入中...
+              </div>
+            ) : (
+              <div className="mt-4 border border-gray-200 rounded-xl overflow-hidden">
+                {/* header row */}
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500">
+                  <div className="col-span-3">工項名稱</div>
+                  <div className="col-span-2">分類</div>
+                  <div className="col-span-1">單位</div>
+                  <div className="col-span-2">單價(NT$)</div>
+                  <div className="col-span-3">別名 / 備註（逗號分隔）</div>
+                  <div className="col-span-1"></div>
+                </div>
+                <div className="max-h-[calc(100vh-22rem)] overflow-y-auto divide-y divide-gray-100">
+                  {pricingItems.map((it) => (
+                    <div key={it.id} className="grid grid-cols-12 gap-2 px-3 py-2 items-center hover:bg-gray-50/60">
+                      <input
+                        className="col-span-3 text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="例：木作天花板"
+                        value={it.name}
+                        onChange={(e) => updatePricingItem(it.id, { name: e.target.value })}
+                      />
+                      <input
+                        className="col-span-2 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="分類"
+                        value={it.category}
+                        onChange={(e) => updatePricingItem(it.id, { category: e.target.value })}
+                      />
+                      <input
+                        className="col-span-1 text-xs border border-gray-200 rounded px-1.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 text-center"
+                        placeholder="坪"
+                        value={it.unit}
+                        onChange={(e) => updatePricingItem(it.id, { unit: e.target.value })}
+                      />
+                      <input
+                        type="number"
+                        className="col-span-2 text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="0"
+                        value={it.unitPrice}
+                        onChange={(e) => updatePricingItem(it.id, { unitPrice: Number(e.target.value) || 0 })}
+                      />
+                      <input
+                        className="col-span-3 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 text-gray-600"
+                        placeholder="拆除,打牆 / 8-10%"
+                        value={[...(it.aliases || []), ...(it.note ? [it.note] : [])].join(", ")}
+                        onChange={(e) => {
+                          // crude split: everything is alias unless it looks like a note (contains %, 區間, 元)
+                          const parts = e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+                          const notes = parts.filter((p) => /[%％]|區間|元|備註/.test(p));
+                          const aliases = parts.filter((p) => !notes.includes(p));
+                          updatePricingItem(it.id, { aliases, note: notes.join("；") || undefined });
+                        }}
+                      />
+                      <div className="col-span-1 flex justify-end">
+                        <button
+                          onClick={() => removePricingItem(it.id)}
+                          className="text-gray-300 hover:text-red-500 p-1"
+                          title="刪除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={addPricingItem}
+                  className="w-full py-2.5 text-sm text-brand-600 hover:bg-brand-50 border-t border-gray-200 flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> 新增工項
+                </button>
+              </div>
+            )}
+
+            <p className="text-[11px] text-gray-400 mt-3">
+              提示：單位可填「坪 / 尺 / 式 / 台 / 間 / 車 / 平方米 / %」。別名讓 AI 對得上客戶的口語說法（例如「打牆」對應「拆除」）。百分比類（如工程管理費）單價填 0，在備註寫「8-10%」。
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ===== LINE SETTINGS TAB ===== */}
       {activeTab === "line-settings" && (
