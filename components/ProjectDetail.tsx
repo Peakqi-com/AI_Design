@@ -9,6 +9,7 @@ import {
   ProjectQuotationMeta,
   ProjectWorkflowTask,
 } from "../types";
+import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
 import {
   ArrowLeft,
   MessageSquare,
@@ -431,7 +432,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
 
   const handleQuotationChange = (
     itemId: string,
-    field: keyof Pick<ProjectQuotationItem, "name" | "description" | "quantity" | "unitPrice">,
+    field: keyof Pick<ProjectQuotationItem, "name" | "description" | "unit" | "quantity" | "unitPrice">,
     value: string,
   ) => {
     setDraft((prev) => ({
@@ -455,7 +456,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       ...prev,
       quotationItems: [
         ...(prev.quotationItems || []),
-        { id: `quote_${crypto.randomUUID()}`, name: "新增項目", description: "", quantity: 1, unitPrice: 0 },
+        { id: `quote_${crypto.randomUUID()}`, name: "新增項目", description: "", unit: "式", quantity: 1, unitPrice: 0 },
       ],
     }));
   };
@@ -1153,15 +1154,27 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                     value={item.quantity}
                     min={0}
                     onChange={(event) => handleQuotationChange(item.id, "quantity", event.target.value)}
-                    className="col-span-4 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    className="col-span-3 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
                     placeholder="數量"
                   />
+                  <select
+                    value={item.unit || "式"}
+                    onChange={(event) => handleQuotationChange(item.id, "unit", event.target.value)}
+                    className="col-span-3 md:col-span-1 rounded border border-gray-300 px-1 py-1.5 text-sm bg-white"
+                  >
+                    {COMMON_UNITS.map((u) => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                    {item.unit && !COMMON_UNITS.includes(item.unit as typeof COMMON_UNITS[number]) && (
+                      <option value={item.unit}>{item.unit}</option>
+                    )}
+                  </select>
                   <input
                     type="number"
                     value={item.unitPrice}
                     min={0}
                     onChange={(event) => handleQuotationChange(item.id, "unitPrice", event.target.value)}
-                    className="col-span-5 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    className="col-span-3 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
                     placeholder="單價"
                   />
                   <div className="col-span-2 md:col-span-1 text-sm text-right text-gray-700">
