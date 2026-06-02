@@ -202,6 +202,15 @@ export interface PricingStandardItem {
   note?: string;
 }
 
+/** 自訂標籤定義（顏色 + 自動套用關鍵字）。 */
+export interface TagDefinition {
+  id: string;
+  name: string;
+  color: string; // tailwind 顏色 key，如 "blue" | "green" | "amber" ...
+  /** 自動套用：客戶訊息含任一關鍵字就自動加此標籤 */
+  autoKeywords?: string[];
+}
+
 export interface CrmStore {
   version: number;
   lineSettings: LineIntegrationSettings | null;
@@ -212,4 +221,6 @@ export interface CrmStore {
   presentations?: PresentationDraft[];
   /** Per-user standard pricing tables, keyed by user scope. */
   pricingByUser?: Record<string, PricingStandardItem[]>;
+  /** Per-user custom tag definitions, keyed by user scope. */
+  tagsByUser?: Record<string, TagDefinition[]>;
 }

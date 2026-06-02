@@ -16,6 +16,7 @@ import {
   LineIntegrationSettings,
   PresentationDraft,
   PricingStandardItem,
+  TagDefinition,
 } from "@/lib/crm/types";
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -123,6 +124,7 @@ const createDefaultStore = (): CrmStore => ({
   projects: [],
   presentations: [],
   pricingByUser: {},
+  tagsByUser: {},
 });
 
 const cloneStore = (store: CrmStore): CrmStore => structuredClone(store);
@@ -227,6 +229,8 @@ const normalizeStore = (raw: unknown): CrmStore => {
     presentations: Array.isArray(maybe.presentations) ? maybe.presentations : [],
     pricingByUser:
       maybe.pricingByUser && typeof maybe.pricingByUser === "object" ? maybe.pricingByUser : {},
+    tagsByUser:
+      maybe.tagsByUser && typeof maybe.tagsByUser === "object" ? maybe.tagsByUser : {},
   };
 };
 
@@ -1426,6 +1430,69 @@ export async function savePricingStandards(
     store.pricingByUser[key] = normalized;
   });
   return normalized;
+}
+
+/* ================================================================
+   Custom tag definitions + auto-tagging (per-user)
+   ================================================================ */
+
+export async function getTagDefinitions(userScopeId: string): Promise<TagDefinition[]> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  return (store.tagsByUser?.[key] ?? []).map((t) => ({ ...t }));
+}
+
+export async function saveTagDefinitions(
+  userScopeId: string,
+  tags: TagDefinition[],
+): Promise<TagDefinition[]> {
+  const key = pricingScopeKey(userScopeId);
+  const normalized = tags
+    .filter((t) => t.name?.trim())
+    .map((t) => ({
+      id: t.id || createId("tag"),
+      name: t.name.trim(),
+      color: (t.color || "gray").trim(),
+      autoKeywords: Array.isArray(t.autoKeywords)
+        ? t.autoKeywords.map((k) => String(k).trim()).filter(Boolean)
+        : undefined,
+    }));
+  await mutateStore((store) => {
+    if (!store.tagsByUser) store.tagsByUser = {};
+    store.tagsByUser[key] = normalized;
+  });
+  return normalized;
+}
+
+/**
+ * 依使用者的標籤關鍵字規則，對某段文字自動套標籤到指定聯絡人。
+ * 回傳新加上的標籤名稱陣列。
+ */
+export async function applyAutoTags(
+  userScopeId: string,
+  contactId: string,
+  text: string,
+): Promise<string[]> {
+  if (!text?.trim()) return [];
+  const key = pricingScopeKey(userScopeId);
+  const added: string[] = [];
+  await mutateStore((store) => {
+    const defs = store.tagsByUser?.[key] ?? [];
+    if (defs.length === 0) return;
+    const contact = store.contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    const lower = text.toLowerCase();
+    for (const def of defs) {
+      if (!def.autoKeywords || def.autoKeywords.length === 0) continue;
+      const hit = def.autoKeywords.some((kw) => kw && lower.includes(kw.toLowerCase()));
+      if (hit && !contact.tags.includes(def.name)) {
+        contact.tags.push(def.name);
+        added.push(def.name);
+      }
+    }
+    if (added.length > 0) contact.updatedAt = nowIso();
+  });
+  return added;
 }
 
 export interface UpdateProjectInput {

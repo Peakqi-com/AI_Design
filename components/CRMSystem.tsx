@@ -78,7 +78,26 @@ const STATUS_COLORS: Record<string, string> = {
   signed: "bg-green-100 text-green-700",
 };
 
-type CrmTab = "contacts" | "line-settings" | "pricing";
+type CrmTab = "contacts" | "line-settings" | "pricing" | "tags";
+
+interface TagDef {
+  id: string;
+  name: string;
+  color: string;
+  autoKeywords?: string[];
+}
+
+const TAG_COLORS = ["gray", "blue", "green", "amber", "red", "purple", "pink", "teal"] as const;
+const TAG_COLOR_CLASS: Record<string, string> = {
+  gray: "bg-gray-100 text-gray-700",
+  blue: "bg-blue-100 text-blue-700",
+  green: "bg-green-100 text-green-700",
+  amber: "bg-amber-100 text-amber-700",
+  red: "bg-red-100 text-red-700",
+  purple: "bg-purple-100 text-purple-700",
+  pink: "bg-pink-100 text-pink-700",
+  teal: "bg-teal-100 text-teal-700",
+};
 
 interface PricingItem {
   id: string;
@@ -312,6 +331,74 @@ export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) =>
       { id: `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: "", unit: "式", unitPrice: 0, category: "其他" },
     ]);
     setPricingDirty(true);
+  };
+
+  /* ---- tag definitions（標籤管理） ---- */
+  const [tagDefs, setTagDefs] = useState<TagDef[]>([]);
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagDirty, setTagDirty] = useState(false);
+  const [tagMsg, setTagMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const fetchTagDefs = useCallback(async () => {
+    setTagLoading(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/tags${params}`, { headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setTagDefs(data.tags || []);
+        setTagDirty(false);
+      }
+    } catch { /* ignore */ } finally {
+      setTagLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (activeTab === "tags" && userScope) fetchTagDefs();
+  }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveTagDefs = async () => {
+    setTagSaving(true);
+    setTagMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const res = await fetch(`/api/crm/settings/tags`, {
+        method: "PUT",
+        headers: buildHeaders(),
+        body: JSON.stringify({ userId: scope, tags: tagDefs }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTagDefs(data.tags || []);
+        setTagDirty(false);
+        setTagMsg({ type: "ok", text: "已儲存。新訊息進來會依關鍵字自動套標籤" });
+      } else {
+        setTagMsg({ type: "err", text: "儲存失敗" });
+      }
+    } catch {
+      setTagMsg({ type: "err", text: "網路錯誤" });
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
+  const updateTagDef = (id: string, patch: Partial<TagDef>) => {
+    setTagDefs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    setTagDirty(true);
+  };
+  const removeTagDef = (id: string) => {
+    setTagDefs((prev) => prev.filter((t) => t.id !== id));
+    setTagDirty(true);
+  };
+  const addTagDef = () => {
+    setTagDefs((prev) => [
+      ...prev,
+      { id: `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: "", color: "blue", autoKeywords: [] },
+    ]);
+    setTagDirty(true);
   };
 
   /* ---- save LINE settings ---- */
@@ -1269,7 +1356,97 @@ ${transcript}
         >
           <Calculator className="w-4 h-4" /> 報價標準
         </button>
+        <button
+          onClick={() => setActiveTab("tags")}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "tags"
+              ? "border-brand-600 text-brand-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+        >
+          <Tag className="w-4 h-4" /> 標籤管理
+        </button>
       </div>
+
+      {/* ===== TAG MANAGEMENT TAB ===== */}
+      {activeTab === "tags" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-3xl mx-auto w-full">
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">標籤管理</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  自訂標籤與顏色。設定「自動關鍵字」後，客戶 LINE 訊息含關鍵字就會自動貼上該標籤。
+                </p>
+              </div>
+              <Button variant="primary" size="sm" onClick={saveTagDefs} disabled={tagSaving || !tagDirty} className="gap-1.5">
+                {tagSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                {tagSaving ? "儲存中" : tagDirty ? "儲存變更" : "已儲存"}
+              </Button>
+            </div>
+
+            {tagMsg && (
+              <div className={`mt-3 mb-2 p-2.5 rounded-lg text-sm ${tagMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {tagMsg.text}
+              </div>
+            )}
+
+            {tagLoading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
+                <RefreshCw className="w-5 h-5 animate-spin mr-2" /> 載入中...
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {tagDefs.length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg">
+                    尚無自訂標籤，按下方「新增標籤」開始。
+                  </p>
+                )}
+                {tagDefs.map((t) => (
+                  <div key={t.id} className="border border-gray-200 rounded-lg p-3 grid grid-cols-12 gap-2 items-center">
+                    <input
+                      className="col-span-12 md:col-span-3 text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      placeholder="標籤名稱（如：高意願）"
+                      value={t.name}
+                      onChange={(e) => updateTagDef(t.id, { name: e.target.value })}
+                    />
+                    <div className="col-span-6 md:col-span-3 flex items-center gap-1.5">
+                      <select
+                        className="text-sm border border-gray-200 rounded px-2 py-1.5 bg-white"
+                        value={t.color}
+                        onChange={(e) => updateTagDef(t.id, { color: e.target.value })}
+                      >
+                        {TAG_COLORS.map((c) => (<option key={c} value={c}>{c}</option>))}
+                      </select>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${TAG_COLOR_CLASS[t.color] || TAG_COLOR_CLASS.gray}`}>
+                        {t.name || "預覽"}
+                      </span>
+                    </div>
+                    <input
+                      className="col-span-11 md:col-span-5 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      placeholder="自動關鍵字（逗號分隔，如：報價,預算,什麼時候）"
+                      value={(t.autoKeywords || []).join(", ")}
+                      onChange={(e) => updateTagDef(t.id, { autoKeywords: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) })}
+                    />
+                    <button onClick={() => removeTagDef(t.id)} className="col-span-1 text-gray-300 hover:text-red-500 justify-self-end" title="刪除">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={addTagDef}
+                  className="w-full py-2.5 text-sm text-brand-600 hover:bg-brand-50 border border-dashed border-gray-300 rounded-lg flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> 新增標籤
+                </button>
+              </div>
+            )}
+            <p className="text-[11px] text-gray-400 mt-3">
+              提示：自動關鍵字比對客戶傳來的訊息內容（不分大小寫）。例如「報價,多少錢」→ 自動貼「詢價中」標籤，方便日後依標籤群發。
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ===== PRICING STANDARDS TAB ===== */}
       {activeTab === "pricing" && (

@@ -6,6 +6,7 @@ import {
   verifyLineSignature,
 } from "@/lib/crm/line";
 import {
+  applyAutoTags,
   createMessage,
   getLineSettings,
   listLineSettingsByScope,
@@ -134,6 +135,8 @@ async function processLineMessageEvent(
       timestamp,
       rawEvent: event,
     });
+    // 自動標籤：依使用者的關鍵字規則套用
+    await applyAutoTags(userScopeId, contact.id, lineMessage.text ?? "").catch(() => undefined);
     return;
   }
 
