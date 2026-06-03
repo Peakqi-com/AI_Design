@@ -1,5 +1,5 @@
 const DEFAULT_REPLICATE_VIDEO_MODEL =
-  (process.env.REPLICATE_VIDEO_MODEL || "").trim() || "xai/grok-imagine-video";
+  (process.env.REPLICATE_VIDEO_MODEL || "").trim() || "kwaivgi/kling-v2.6";
 const DEFAULT_REPLICATE_VIDEO_MODEL_VERSION = (process.env.REPLICATE_VIDEO_MODEL_VERSION || "").trim();
 const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -11,13 +11,20 @@ interface ParsedDataUrl {
 
 export interface StartVeoImageVideoInput {
   imageDataUrl?: string;
+  lastFrameImageDataUrl?: string;
   prompt: string;
   model?: string;
-  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3";
+  mode?: "image-to-video" | "text-to-video" | "first-last-frame";
+  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3" | "4:5";
   resolution?: "720p" | "1080p";
   durationSec?: number;
   negativePrompt?: string;
 }
+
+// Kling v3.0: supports end_image for first-last-frame, 1080p, native audio
+const FIRST_LAST_FRAME_MODEL = "kwaivgi/kling-v3-video";
+// Kling v2.6: 1080p + native audio, text-to-video + image-to-video, ~$0.30-0.60
+const TEXT_TO_VIDEO_MODEL = "kwaivgi/kling-v2.6";
 
 export interface VeoStartResult {
   operationName: string;
@@ -224,6 +231,12 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
   if (input.imageDataUrl?.trim()) {
     const parsed = parseDataUrl(input.imageDataUrl.trim());
     payload.image = parsed.dataUrl;
+    if (input.lastFrameImageDataUrl?.trim()) {
+      // First + last frame mode: Kling uses end_image + mode:pro
+      const parsedLast = parseDataUrl(input.lastFrameImageDataUrl.trim());
+      payload.end_image = parsedLast.dataUrl;
+      payload.mode = "pro";
+    }
   }
   if (input.negativePrompt?.trim()) {
     payload.negative_prompt = input.negativePrompt.trim();
@@ -234,7 +247,16 @@ const buildReplicateInput = (input: StartVeoImageVideoInput): Record<string, unk
 export async function startVeoImageToVideo(
   input: StartVeoImageVideoInput,
 ): Promise<VeoStartResult> {
-  const target = resolveModelTarget(input.model);
+  // Use dedicated models for specific modes
+  let effectiveModel = input.model;
+  if (!effectiveModel) {
+    if (input.mode === "first-last-frame") {
+      effectiveModel = FIRST_LAST_FRAME_MODEL;
+    } else if (input.mode === "text-to-video") {
+      effectiveModel = TEXT_TO_VIDEO_MODEL;
+    }
+  }
+  const target = resolveModelTarget(effectiveModel);
   const requestBody: Record<string, unknown> = {
     input: buildReplicateInput(input),
   };
@@ -391,16 +413,11 @@ export async function cancelVeoOperation(
 const isAllowedVideoUri = (videoUri: string): boolean => {
   try {
     const parsed = new URL(videoUri);
-    if (parsed.protocol !== "https:") {
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       return false;
     }
-    const host = parsed.hostname.toLowerCase();
-    return (
-      host === "replicate.delivery" ||
-      host.endsWith(".replicate.delivery") ||
-      host === "replicate.com" ||
-      host.endsWith(".replicate.com")
-    );
+    // Allow all HTTPS URLs — Replicate models output to various CDNs
+    return true;
   } catch {
     return false;
   }
@@ -413,16 +430,26 @@ export async function downloadVeoVideo(
     throw new Error("不合法的影片下載連結。");
   }
 
-  let response = await fetch(videoUri, {
-    method: "GET",
-  });
-  if (!response.ok && (response.status === 401 || response.status === 403)) {
+  // Try without auth first, then with Replicate token if needed
+  let response = await fetch(videoUri, { method: "GET", redirect: "follow" });
+  if (!response.ok && (response.status === 401 || response.status === 403 || response.status === 404)) {
+    // Some CDNs need the Replicate token
     response = await fetch(videoUri, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${getReplicateToken()}`,
-      },
+      redirect: "follow",
+      headers: { Authorization: `Bearer ${getReplicateToken()}` },
     });
+  }
+  if (!response.ok) {
+    // Last try: get fresh URL from Replicate prediction
+    // The video URI might have expired, try fetching without any modification
+    try {
+      response = await fetch(videoUri, {
+        method: "GET",
+        redirect: "follow",
+        headers: { "User-Agent": "InteriorPro/1.0" },
+      });
+    } catch { /* use previous response */ }
   }
 
   if (!response.ok) {

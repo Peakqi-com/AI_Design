@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:/Users/User/Documents/GitHub/\" 2>&1)",
+      "Read(//c/Users/User/Documents/GitHub/**)",
+      "Bash(cd /c)",
+      "Bash(rmdir \"c:/Users/User/Documents/GitHub/AI_Design\")",
+      "Bash(mv \"c:/Users/User/Documents/GitHub/AI_Design-main/AI_Design\" \"c:/Users/User/Documents/GitHub/AI_Design\")",
+      "PowerShell(Set-Location C:\\\\; robocopy \"C:\\\\Users\\\\User\\\\Documents\\\\GitHub\\\\AI_Design-main\\\\AI_Design\" \"C:\\\\Users\\\\User\\\\Documents\\\\GitHub\\\\AI_Design\" /E /MOVE /NFL /NDL /NJH /NJS /NC /NS; Write-Output \"robocopy exit code: $LASTEXITCODE\"; if \\(Test-Path \"C:\\\\Users\\\\User\\\\Documents\\\\GitHub\\\\AI_Design\\\\.git\"\\) { Write-Output \"OK: .git is at new location\" } else { Write-Output \"MISSING: .git not at new location\" })"
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
 import {
   Project,
@@ -9,6 +9,12 @@ import {
   ProjectQuotationMeta,
   ProjectWorkflowTask,
 } from "../types";
+import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
+import { GanttChart } from "./project/GanttChart";
+import { CalendarView } from "./project/CalendarView";
+import { exportElementToPng, exportElementToPdf } from "@/lib/project/export-element";
+import { AIStudio } from "./AIStudio";
+import { PresentationMaker } from "./PresentationMaker";
 import {
   ArrowLeft,
   MessageSquare,
@@ -23,6 +29,13 @@ import {
   Plus,
   Wand2,
   FolderArchive,
+  Presentation,
+  Download,
+  Pencil,
+  Eye,
+  Calculator,
+  ChevronDown,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface ProjectDetailProps {
@@ -30,6 +43,7 @@ interface ProjectDetailProps {
   onBack: () => void;
   onGoToAI: () => void;
   onGoToQuotation?: () => void;
+  onGoToPresentation?: (projectId: string) => void;
   onProjectUpdated?: (project: Project) => void;
 }
 
@@ -131,6 +145,8 @@ const WORKFLOW_TEMPLATES: Array<{ id: string; label: string; tasks: Omit<Project
 const createFlowTask = (task?: Partial<ProjectWorkflowTask>): ProjectWorkflowTask => ({
   id: `task_${crypto.randomUUID()}`,
   date: task?.date || "",
+  durationDays: Number.isFinite(task?.durationDays) ? Math.max(1, Number(task?.durationDays)) : 1,
+  stage: task?.stage || "",
   time: task?.time || "",
   title: task?.title || "新流程項目",
   detail: task?.detail || "",
@@ -264,6 +280,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   onBack,
   onGoToAI,
   onGoToQuotation,
+  onGoToPresentation,
   onProjectUpdated,
 }) => {
   const [draft, setDraft] = useState<Project>(normalizeDraftProject(project));
@@ -275,6 +292,83 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
+
+  /* 媒體庫選圖（給空間渲染紀錄用） */
+  const [mediaPickerTarget, setMediaPickerTarget] = useState<
+    { recordId: string; field: "referenceImageUrl" | "generatedImageUrl" } | null
+  >(null);
+  const [pickerAssets, setPickerAssets] = useState<Array<{ id: string; url: string; meta?: { slotLabel?: string; style?: string; projectId?: string } }>>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+
+  const openMediaPicker = async (recordId: string, field: "referenceImageUrl" | "generatedImageUrl") => {
+    setMediaPickerTarget({ recordId, field });
+    setPickerLoading(true);
+    try {
+      const res = await fetch(`/api/social/assets?limit=200&kind=image`);
+      if (res.ok) {
+        const data = await res.json();
+        const items = (data.items || []).map((a: { id: string; url: string; meta?: { blobUrl?: string; slotLabel?: string; style?: string; projectId?: string } }) => ({
+          id: a.id,
+          url: a.meta?.blobUrl || a.url,
+          meta: a.meta,
+        }));
+        setPickerAssets(items);
+      }
+    } catch { /* ignore */ } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  /* 本專案連結的媒體庫圖片（儀表板預覽用） */
+  const [projectAssets, setProjectAssets] = useState<Array<{ id: string; url: string; label?: string }>>([]);
+  const [previewAsset, setPreviewAsset] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/social/assets?limit=200&kind=image`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const linked = (data.items || [])
+          .filter((a: { meta?: { projectId?: string } }) => a.meta?.projectId === project.id)
+          .map((a: { id: string; url: string; meta?: { blobUrl?: string; slotLabel?: string; style?: string } }) => ({
+            id: a.id,
+            url: a.meta?.blobUrl || a.url,
+            label: a.meta?.slotLabel || a.meta?.style,
+          }));
+        if (!cancelled) setProjectAssets(linked);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  /* 本專案連結的簡報（儀表板列表用） */
+  const [projectPresentations, setProjectPresentations] = useState<
+    Array<{ id: string; title: string; updatedAt: string; slideCount: number }>
+  >([]);
+  const [openPresentationId, setOpenPresentationId] = useState<string | null>(null);
+
+  const loadProjectPresentations = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/presentations?projectId=${encodeURIComponent(project.id)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = (data.presentations || []).map(
+        (p: { id: string; title?: string; updatedAt?: string; slides?: unknown[] }) => ({
+          id: p.id,
+          title: p.title || "未命名簡報",
+          updatedAt: p.updatedAt || "",
+          slideCount: Array.isArray(p.slides) ? p.slides.length : 0,
+        }),
+      );
+      setProjectPresentations(list);
+    } catch { /* ignore */ }
+  }, [project.id]);
+
+  useEffect(() => {
+    void loadProjectPresentations();
+  }, [loadProjectPresentations]);
 
   useEffect(() => {
     setDraft(normalizeDraftProject(project));
@@ -332,7 +426,8 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [onProjectUpdated, project.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   const linkedContact = useMemo(
     () => contacts.find((item) => item.id === draft.linkedContactId) || null,
@@ -342,9 +437,30 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
   const isArchived = Boolean(draft.archivedAt);
   const isFiled = Boolean(draft.filedAt);
   const isDeleted = Boolean(draft.deletedAt);
-  const [workflowTemplateId, setWorkflowTemplateId] = useState(WORKFLOW_TEMPLATES[0].id);
-  const [workflowView, setWorkflowView] = useState<"list" | "gantt" | "calendar">("list");
-  const [dispatchingReminder, setDispatchingReminder] = useState(false);
+  const [workflowEditing, setWorkflowEditing] = useState(false);
+  const [workflowFullscreen, setWorkflowFullscreen] = useState(false);
+  const [renderFullscreen, setRenderFullscreen] = useState(false);
+  const [presentationFullscreen, setPresentationFullscreen] = useState(false);
+  const [workflowViewMode, setWorkflowViewMode] = useState<"gantt" | "calendar">("gantt");
+  const [exportingGantt, setExportingGantt] = useState(false);
+  const ganttRef = useRef<HTMLDivElement>(null);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+
+  const exportGantt = async (format: "png" | "pdf") => {
+    if (!ganttRef.current) return;
+    setExportingGantt(true);
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((r) => setTimeout(r, 200));
+      const fileName = `${draft.name || "工程進度"}_甘特圖`;
+      if (format === "png") await exportElementToPng(ganttRef.current, fileName);
+      else await exportElementToPdf(ganttRef.current, fileName);
+    } catch {
+      setNotice("甘特圖匯出失敗，請重試");
+    } finally {
+      setExportingGantt(false);
+    }
+  };
 
   const quotationTotal = useMemo(
     () =>
@@ -427,7 +543,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
 
   const handleQuotationChange = (
     itemId: string,
-    field: keyof Pick<ProjectQuotationItem, "name" | "description" | "quantity" | "unitPrice">,
+    field: keyof Pick<ProjectQuotationItem, "name" | "description" | "unit" | "quantity" | "unitPrice">,
     value: string,
   ) => {
     setDraft((prev) => ({
@@ -451,7 +567,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       ...prev,
       quotationItems: [
         ...(prev.quotationItems || []),
-        { id: `quote_${crypto.randomUUID()}`, name: "新增項目", description: "", quantity: 1, unitPrice: 0 },
+        { id: `quote_${crypto.randomUUID()}`, name: "新增項目", description: "", unit: "式", quantity: 1, unitPrice: 0 },
       ],
     }));
   };
@@ -499,16 +615,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     }));
   };
 
-  const applyWorkflowTemplate = () => {
-    const selected = WORKFLOW_TEMPLATES.find((item) => item.id === workflowTemplateId) || WORKFLOW_TEMPLATES[0];
-    const fallbackDate = draft.auspiciousPlan?.ceremonyDate || draft.date || "";
-    setDraft((prev) => ({
-      ...prev,
-      workflowTasks: selected.tasks.map((task) => createFlowTask({ ...task, date: fallbackDate })),
-    }));
-    setNotice(`已套用流程模板：${selected.label}`);
-  };
-
   const addWorkflowTask = () => {
     const fallbackDate = draft.auspiciousPlan?.ceremonyDate || draft.date || "";
     setDraft((prev) => ({
@@ -517,27 +623,71 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     }));
   };
 
-  const generateWorkflowByAi = () => {
-    const fallbackDate = draft.auspiciousPlan?.ceremonyDate || draft.date || "";
-    const base = (draft.workflowTasks || []).length
-      ? [...(draft.workflowTasks || [])]
-      : WORKFLOW_TEMPLATES[0].tasks.map((task) => createFlowTask({ ...task, date: fallbackDate }));
-    const hasSiteCheck = base.some((task) => /放樣|工序確認|site review/i.test(task.title));
-    if (!hasSiteCheck) {
-      base.unshift(
+  const [generatingGantt, setGeneratingGantt] = useState(false);
+
+  /**
+   * AI 依報價項目 + 整體施作需求，自動排出一份以「天」為單位的施工排程（甘特圖）。
+   * 每個報價工項對應一個施工階段，並補上整體必要工項（保護、放樣、清潔、驗收等）。
+   */
+  const generateGanttSchedule = async () => {
+    setGeneratingGantt(true);
+    setNotice(null);
+    try {
+      const items = (draft.quotationItems || []).map((i) => `${i.name}（${i.quantity}${i.unit || "式"}）`).join("、") || "（報價單尚無項目）";
+      // 開工日：用既有工項最早日期，否則用今天（真實日期，避免 AI 亂猜）
+      const existingStart = (draft.workflowTasks || [])
+        .map((t) => t.date)
+        .filter(Boolean)
+        .sort()[0];
+      const startDate = existingStart || new Date().toISOString().slice(0, 10);
+
+      const prompt =
+        `你是資深室內裝修工程的工務經理。請根據以下「報價項目」排出一份完整的施工排程，以天為單位。\n\n` +
+        `專案：${draft.name}（${draft.budget || "預算未定"}）\n` +
+        `報價項目：${items}\n\n` +
+        `排程原則：\n` +
+        `1. 依正確的裝修施工順序排列（保護→拆除→水電配管→泥作/防水→木作→油漆→系統櫃/設備安裝→地板→廚衛設備→清潔→驗收）\n` +
+        `2. 每個報價項目都要有對應的施工工項；同時補上「整體施作」必要工項（如全室保護、放樣定位、垃圾清運、完工清潔、驗收交屋），即使報價單沒列\n` +
+        `3. 合理估算每個工項的工期天數（durationDays，整數）\n` +
+        `4. 用 startOffsetDays 表示「該工項從開工日起算第幾天開始」（開工日為第 0 天的整數，不要給絕對日期）。前置工項先做、可重疊的給相近的 offset\n` +
+        `5. stage 填階段分類（保護/拆除/水電/泥作/防水/木作/油漆/系統櫃/地板/廚衛/空調/清潔/收尾 其中之一）\n\n` +
+        `只輸出 JSON 陣列，不要其他文字。格式：\n` +
+        `[{"title":"工項名稱","stage":"階段","startOffsetDays":數字,"durationDays":數字,"detail":"簡短說明","owner":"工班/負責人"}]`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      const data = (await res.json()) as { text?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "生成失敗");
+      const text = (data.text || "").trim();
+      const m = text.match(/\[[\s\S]*\]/);
+      const parsed: Array<Record<string, unknown>> = m ? JSON.parse(m[0]) : [];
+      if (parsed.length === 0) throw new Error("AI 未產生工項");
+
+      const startMs = new Date(startDate + "T00:00:00").getTime();
+      const toDate = (offset: number) => new Date(startMs + Math.max(0, offset) * 86400000).toISOString().slice(0, 10);
+
+      const tasks = parsed.map((p) =>
         createFlowTask({
-          date: fallbackDate,
-          time: "16:30",
-          title: "現場放樣與工序確認",
-          detail: "確認保護工程、動線與工班交接節點",
-          owner: "設計師",
+          title: String(p.title || "工項").trim(),
+          stage: String(p.stage || "").trim(),
+          date: toDate(Number(p.startOffsetDays) || 0),
+          durationDays: Math.max(1, Number(p.durationDays) || 1),
+          detail: String(p.detail || "").trim(),
+          owner: String(p.owner || "").trim(),
           isCustom: false,
         }),
       );
+      setDraft((prev) => ({ ...prev, workflowTasks: tasks }));
+      setWorkflowEditing(false);
+      setNotice(`已依報價項目生成 ${tasks.length} 個施工工項的甘特圖，記得儲存專案。`);
+    } catch (err) {
+      setNotice(err instanceof Error ? `甘特圖生成失敗：${err.message}` : "甘特圖生成失敗");
+    } finally {
+      setGeneratingGantt(false);
     }
-    base.sort((a, b) => (a.time || "").localeCompare(b.time || ""));
-    setDraft((prev) => ({ ...prev, workflowTasks: base }));
-    setNotice("已完成 AI 流程優化（排序與關鍵節點補全）。");
   };
 
   const updateWorkflowTask = (
@@ -595,49 +745,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       ...prev,
       workflowTasks: (prev.workflowTasks || []).filter((task) => task.id !== taskId),
     }));
-  };
-
-  const generateAuspiciousPlan = () => {
-    const preferred = draft.auspiciousPlan?.preferredWindow || "afternoon";
-    const generated = buildAuspiciousPlan(draft, preferred);
-    setDraft((prev) => ({
-      ...prev,
-      auspiciousPlan: generated,
-    }));
-    setNotice("已產生 AI 工期節點建議，可再手動微調。");
-  };
-
-  const handleDispatchReminders = async (force: boolean) => {
-    setDispatchingReminder(true);
-    setError(null);
-    try {
-      const response = await requestJson<{
-        result: {
-          processed: number;
-          sent: number;
-          failed: number;
-          skipped: number;
-          nextWorkflowTasks: ProjectWorkflowTask[];
-        };
-      }>(`/api/projects/${draft.id}/reminders/dispatch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
-      });
-      if (response.result.processed > 0) {
-        setDraft((prev) => ({
-          ...prev,
-          workflowTasks: response.result.nextWorkflowTasks || prev.workflowTasks || [],
-        }));
-      }
-      setNotice(
-        `提醒處理完成：共 ${response.result.processed} 筆，已送出 ${response.result.sent}，失敗 ${response.result.failed}，略過 ${response.result.skipped}。`,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "派送提醒失敗");
-    } finally {
-      setDispatchingReminder(false);
-    }
   };
 
   const handleSave = async () => {
@@ -734,6 +841,53 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       setError(err instanceof Error ? err.message : "同步 CRM 註記失敗");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  /** 由下拉選單切換專案狀態：作用中 / 已封存 / 已建檔 / 刪除區。 */
+  const handleStatusChange = async (target: string) => {
+    const current = isDeleted ? "deleted" : isFiled ? "filed" : isArchived ? "archived" : "active";
+    if (target === current) return;
+    setError(null);
+
+    const callApi = async (path: string, method: "POST" | "DELETE") =>
+      requestJson<{ project: ProjectApiItem }>(`/api/projects/${draft.id}${path}`, { method });
+
+    try {
+      if (target === "deleted") {
+        const ok = window.confirm("確定要移到刪除區嗎？30 天內可還原，之後系統自動清除。");
+        if (!ok) return;
+        await requestJson<{ ok: boolean }>(`/api/projects/${draft.id}`, { method: "DELETE" });
+        const data = await requestJson<{ project: ProjectApiItem }>(`/api/projects/${draft.id}`);
+        const next = toProject(data.project);
+        setDraft(normalizeDraftProject(next));
+        onProjectUpdated?.(next);
+        setNotice("專案已移到刪除區，30 天後自動清除。");
+        return;
+      }
+
+      // From deleted → restore first
+      if (current === "deleted") {
+        await callApi(`/restore`, "POST");
+      }
+      // Clear states that aren't the target
+      if (isArchived && target !== "archived") await callApi(`/archive`, "DELETE");
+      if (isFiled && target !== "filed") await callApi(`/file`, "DELETE");
+
+      // Apply target
+      let next: ProjectApiItem | null = null;
+      if (target === "archived" && !isArchived) next = (await callApi(`/archive`, "POST")).project;
+      else if (target === "filed" && !isFiled) next = (await callApi(`/file`, "POST")).project;
+
+      // Re-fetch to get the final consolidated state
+      const data = await requestJson<{ project: ProjectApiItem }>(`/api/projects/${draft.id}`);
+      const resolved = toProject((next && data.project) || data.project);
+      setDraft(normalizeDraftProject(resolved));
+      onProjectUpdated?.(resolved);
+      const label = { active: "作用中", archived: "已封存", filed: "已建檔" }[target] || target;
+      setNotice(`專案狀態已更新為「${label}」`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新專案狀態失敗");
     }
   };
 
@@ -885,49 +1039,60 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
           </div>
         </div>
         <div className="flex gap-3 w-full lg:w-auto">
-          {isDeleted ? (
+          {/* 狀態下拉選單（取代封存/建檔/刪除三按鈕） */}
+          <select
+            value={isDeleted ? "deleted" : isFiled ? "filed" : isArchived ? "archived" : "active"}
+            onChange={(event) => void handleStatusChange(event.target.value)}
+            className="flex-1 lg:flex-none rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            title="專案狀態"
+          >
+            <option value="active">作用中</option>
+            <option value="archived">已封存</option>
+            <option value="filed">已建檔</option>
+            <option value="deleted">移到刪除區</option>
+          </select>
+          {/* 專案工具下拉選單（收納渲染/簡報/報價/工程安排，避免按鈕爆版） */}
+          <div className="relative flex-1 lg:flex-none">
             <Button
               variant="outline"
-              className="flex-1 lg:flex-none gap-2"
-              onClick={() => void handleRestoreFromTrash()}
+              className="w-full lg:w-auto gap-2"
+              onClick={() => setStatusMenuOpen((v) => !v)}
             >
-              <ArchiveRestore className="w-4 h-4" />
-              還原專案
+              <Wand2 className="w-4 h-4" /> 專案工具
+              <ChevronDown className={`w-4 h-4 transition-transform ${statusMenuOpen ? "rotate-180" : ""}`} />
             </Button>
-          ) : (
-            <>
-          <Button
-            variant="outline"
-            className="flex-1 lg:flex-none gap-2"
-            onClick={() => void handleArchiveToggle()}
-          >
-            {isArchived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
-            {isArchived ? "取消封存" : "封存專案"}
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1 lg:flex-none gap-2"
-            onClick={() => void handleFileToggle()}
-          >
-            <FolderArchive className="w-4 h-4" />
-            {isFiled ? "取消建檔" : "歸納建檔"}
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1 lg:flex-none gap-2 text-red-700 border-red-200 hover:bg-red-50"
-            onClick={() => void handleDeleteProject()}
-          >
-            <Trash2 className="w-4 h-4" />
-            移到刪除區
-          </Button>
-            </>
-          )}
-          <Button onClick={onGoToAI} variant="outline" className="flex-1 lg:flex-none gap-2">
-            <PenTool className="w-4 h-4" /> 進入 線稿轉渲染工坊
-          </Button>
-          <Button onClick={onGoToQuotation} variant="outline" className="flex-1 lg:flex-none gap-2">
-            報價單系統
-          </Button>
+            {statusMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setStatusMenuOpen(false)} />
+                <div className="absolute right-0 mt-1 w-56 z-40 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); setRenderFullscreen(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <PenTool className="w-4 h-4 text-brand-600" /> 線稿轉渲染工坊
+                  </button>
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); setPresentationFullscreen(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Presentation className="w-4 h-4 text-brand-600" /> 生成提案簡報
+                  </button>
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); onGoToQuotation?.(); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Calculator className="w-4 h-4 text-brand-600" /> 報價單系統
+                  </button>
+                  <button
+                    onClick={() => { setStatusMenuOpen(false); setWorkflowFullscreen(true); setWorkflowEditing(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Wand2 className="w-4 h-4 text-brand-600" /> 工程安排 / 甘特圖
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <Button onClick={() => void handleSave()} disabled={saving || isDeleted} className="flex-1 lg:flex-none gap-2">
             {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? "儲存中..." : "儲存專案"}
@@ -950,12 +1115,12 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="space-y-6 lg:col-span-2">
+      <div className="space-y-6">
+        <div className="space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h3 className="font-bold text-gray-900 mb-4">室內設計專案基本資料</h3>
             {loading && <p className="mb-3 text-xs text-gray-500">同步最新專案資料中...</p>}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-sm">
               <div>
                 <label className="mb-1 block text-xs text-gray-600">室內設計專案名稱</label>
                 <input
@@ -1061,118 +1226,109 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-gray-900">報價單管理（可由獨立報價系統回存草稿）</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  可在報價單系統維護草稿與內容，儲存後回寫至本專案。
-                </p>
+          {/* ===== 報價總覽 + 工程安排（並排摘要卡） ===== */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 報價總覽 */}
+            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-gray-900 flex items-center gap-2"><Calculator className="w-4 h-4 text-brand-600" /> 報價總覽</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{(draft.quotationItems || []).length} 個項目 · 詳細編輯與刪減在報價系統（即時同步）</p>
+                </div>
               </div>
-              <Button size="sm" variant="outline" className="gap-1" onClick={addQuotationItem}>
-                <Plus className="w-4 h-4" />
-                新增項目
+              <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-4 flex-1">
+                <span className="text-sm text-gray-500">報價總計</span>
+                <span className="text-2xl font-bold text-brand-700">NT$ {quotationTotal.toLocaleString("zh-TW")}</span>
+              </div>
+              <Button variant="primary" className="gap-2 mt-4 w-full" onClick={onGoToQuotation}>
+                <Calculator className="w-4 h-4" /> 開啟報價單系統
               </Button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-              <input
-                value={draft.quotationMeta?.quoteNo || ""}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: { ...(prev.quotationMeta || {}), quoteNo: event.target.value },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                placeholder="報價單號"
-              />
-              <input
-                type="date"
-                value={draft.quotationMeta?.validUntil || ""}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: { ...(prev.quotationMeta || {}), validUntil: event.target.value },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-              />
-              <select
-                value={draft.quotationMeta?.status || "draft"}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: {
-                      ...(prev.quotationMeta || {}),
-                      status: event.target.value as "draft" | "sent" | "accepted",
-                    },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
-              >
-                <option value="draft">草稿</option>
-                <option value="sent">已送出</option>
-                <option value="accepted">已接受</option>
-              </select>
-              <input
-                value={draft.quotationMeta?.note || ""}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    quotationMeta: { ...(prev.quotationMeta || {}), note: event.target.value },
-                  }))
-                }
-                className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                placeholder="草稿註記"
-              />
+
+            {/* 工程安排 */}
+            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><Wand2 className="w-4 h-4 text-brand-600" /> 工程安排（甘特圖）</h3>
+                <p className="text-xs text-gray-500 mt-0.5">依報價自動排程，全螢幕編輯與輸出</p>
+              </div>
+              <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-4 flex-1">
+                <span className="text-sm text-gray-500">施工工項</span>
+                <span className="text-2xl font-bold text-gray-800">{(draft.workflowTasks || []).length} <span className="text-sm font-normal text-gray-400">項</span></span>
+              </div>
+              <Button variant="primary" className="gap-2 mt-4 w-full" onClick={() => { setWorkflowFullscreen(true); setWorkflowEditing(false); }}>
+                <Wand2 className="w-4 h-4" /> 開啟工程安排
+              </Button>
             </div>
-            <div className="space-y-3">
-              {(draft.quotationItems || []).map((item) => (
-                <div key={item.id} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-gray-200 p-3">
-                  <input
-                    value={item.name}
-                    onChange={(event) => handleQuotationChange(item.id, "name", event.target.value)}
-                    className="col-span-12 md:col-span-4 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="項目名稱"
-                  />
-                  <input
-                    value={item.description || ""}
-                    onChange={(event) => handleQuotationChange(item.id, "description", event.target.value)}
-                    className="col-span-12 md:col-span-3 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="說明"
-                  />
-                  <input
-                    type="number"
-                    value={item.quantity}
-                    min={0}
-                    onChange={(event) => handleQuotationChange(item.id, "quantity", event.target.value)}
-                    className="col-span-4 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="數量"
-                  />
-                  <input
-                    type="number"
-                    value={item.unitPrice}
-                    min={0}
-                    onChange={(event) => handleQuotationChange(item.id, "unitPrice", event.target.value)}
-                    className="col-span-5 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                    placeholder="單價"
-                  />
-                  <div className="col-span-2 md:col-span-1 text-sm text-right text-gray-700">
-                    {(item.quantity * item.unitPrice).toLocaleString("zh-TW")}
-                  </div>
-                  <button
-                    onClick={() => removeQuotationItem(item.id)}
-                    className="col-span-1 text-red-600 hover:text-red-800 justify-self-end"
-                    title="刪除項目"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-              <div className="flex justify-end border-t border-gray-100 pt-3">
-                <p className="text-sm font-semibold text-gray-900">總計：NT$ {quotationTotal.toLocaleString("zh-TW")}</p>
+          </div>
+
+          {/* 本專案媒體庫圖片 */}
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><ImageIcon className="w-4 h-4 text-brand-600" /> 專案圖庫</h3>
+                <p className="text-xs text-gray-500 mt-0.5">已連結到本專案的媒體庫圖片（共 {projectAssets.length} 張）。在媒體庫可將更多圖連結到此專案。</p>
               </div>
             </div>
+            {projectAssets.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg">
+                尚無連結圖片。到「媒體庫」開啟圖片預覽 → 選擇「連結專案」即可加入本專案。
+              </p>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {projectAssets.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => setPreviewAsset(a.url)}
+                    className="group rounded-lg overflow-hidden border border-gray-200 hover:border-brand-400 transition-colors"
+                  >
+                    <div className="aspect-square bg-gray-100">
+                      <img src={a.url} alt={a.label || ""} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                    </div>
+                    {a.label && <p className="text-[10px] text-gray-500 truncate px-1 py-0.5">{a.label}</p>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 本專案連結的簡報 */}
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><Presentation className="w-4 h-4 text-brand-600" /> 專案簡報</h3>
+                <p className="text-xs text-gray-500 mt-0.5">由本專案生成的提案簡報（共 {projectPresentations.length} 份）。點擊可開啟續編、匯出。</p>
+              </div>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => { setOpenPresentationId(null); setPresentationFullscreen(true); }}>
+                <Plus className="w-4 h-4" /> 新增簡報
+              </Button>
+            </div>
+            {projectPresentations.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg">
+                尚無簡報。點「新增簡報」即可從本專案的報價、需求、圖庫一鍵生成提案。
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {projectPresentations.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => { setOpenPresentationId(p.id); setPresentationFullscreen(true); }}
+                    className="group text-left rounded-lg border border-gray-200 hover:border-brand-400 hover:shadow-sm transition p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="shrink-0 w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center">
+                        <Presentation className="w-4 h-4 text-brand-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-brand-700">{p.title}</p>
+                        <p className="text-[11px] text-gray-500">
+                          {p.slideCount} 頁{p.updatedAt ? ` · ${new Date(p.updatedAt).toLocaleDateString("zh-TW")}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
@@ -1240,23 +1396,47 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                     className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm h-16 resize-y"
                     placeholder="渲染重點（材質、燈光、動線）"
                   />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <input
-                      value={record.referenceImageUrl || ""}
-                      onChange={(event) =>
-                        updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
-                      }
-                      className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="參考圖片 URL"
-                    />
-                    <input
-                      value={record.generatedImageUrl || ""}
-                      onChange={(event) =>
-                        updateDressSelectionRecord(record.id, "generatedImageUrl", event.target.value)
-                      }
-                      className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      placeholder="生成結果圖片 URL"
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {([
+                      { field: "referenceImageUrl" as const, label: "參考圖", url: record.referenceImageUrl },
+                      { field: "generatedImageUrl" as const, label: "生成成果圖", url: record.generatedImageUrl },
+                    ]).map(({ field, label, url }) => (
+                      <div key={field}>
+                        <p className="text-xs text-gray-500 mb-1">{label}</p>
+                        {url ? (
+                          <div className="relative group">
+                            <img
+                              src={url}
+                              alt={label}
+                              className="w-full h-32 object-cover rounded-lg border border-gray-200 cursor-pointer"
+                              onClick={() => setPreviewAsset(url)}
+                            />
+                            <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => void openMediaPicker(record.id, field)}
+                                className="px-2 py-1 text-[11px] bg-black/60 text-white rounded hover:bg-black/80 backdrop-blur-sm"
+                              >
+                                更換
+                              </button>
+                              <button
+                                onClick={() => updateDressSelectionRecord(record.id, field, "")}
+                                className="px-2 py-1 text-[11px] bg-black/60 text-white rounded hover:bg-red-600 backdrop-blur-sm"
+                              >
+                                移除
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => void openMediaPicker(record.id, field)}
+                            className="w-full h-32 rounded-lg border-2 border-dashed border-gray-300 hover:border-brand-400 hover:bg-brand-50/40 transition-colors flex flex-col items-center justify-center text-gray-400 hover:text-brand-600"
+                          >
+                            <ImageIcon className="w-7 h-7 mb-1" />
+                            <span className="text-xs">從媒體庫選擇</span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                   <textarea
                     value={record.note || ""}
@@ -1282,372 +1462,247 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex flex-col gap-2">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                <h3 className="font-bold text-gray-900">工程流程安排（清單 / 甘特圖 / 日曆）</h3>
-                <div className="flex flex-wrap gap-2">
-                  <select
-                    value={workflowTemplateId}
-                    onChange={(event) => setWorkflowTemplateId(event.target.value)}
-                    className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm bg-white"
-                  >
-                    {WORKFLOW_TEMPLATES.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.label}
-                      </option>
-                    ))}
-                  </select>
-                  <Button size="sm" variant="outline" onClick={applyWorkflowTemplate}>
-                    套用模板
-                  </Button>
-                  <Button size="sm" variant="outline" className="gap-1" onClick={generateWorkflowByAi}>
-                    <Wand2 className="w-4 h-4" />
-                    AI 流程優化
-                  </Button>
-                  <Button size="sm" variant="outline" className="gap-1" onClick={addWorkflowTask}>
-                    <Plus className="w-4 h-4" />
-                    新增流程
-                  </Button>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant={workflowView === "list" ? "primary" : "outline"}
-                  onClick={() => setWorkflowView("list")}
-                >
-                  清單編輯
-                </Button>
-                <Button
-                  size="sm"
-                  variant={workflowView === "gantt" ? "primary" : "outline"}
-                  onClick={() => setWorkflowView("gantt")}
-                >
-                  甘特圖
-                </Button>
-                <Button
-                  size="sm"
-                  variant={workflowView === "calendar" ? "primary" : "outline"}
-                  onClick={() => setWorkflowView("calendar")}
-                >
-                  日曆視圖
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleDispatchReminders(false)}
-                  disabled={dispatchingReminder}
-                >
-                  {dispatchingReminder ? "派送中..." : "執行到期提醒"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleDispatchReminders(true)}
-                  disabled={dispatchingReminder}
-                >
-                  立即測試提醒
-                </Button>
-              </div>
-            </div>
-
-            {workflowView === "list" && (
-              <div className="space-y-2">
-                {(draft.workflowTasks || []).map((task) => (
-                  <div key={task.id} className="space-y-2 rounded-lg border border-gray-200 p-3">
-                    <div className="grid grid-cols-12 gap-2 items-center">
-                      <input
-                        type="date"
-                        value={task.date || ""}
-                        onChange={(event) => updateWorkflowTask(task.id, "date", event.target.value)}
-                        className="col-span-12 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                      />
-                      <input
-                        type="time"
-                        value={task.time}
-                        onChange={(event) => updateWorkflowTask(task.id, "time", event.target.value)}
-                        className="col-span-6 md:col-span-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="時間"
-                      />
-                      <input
-                        value={task.title}
-                        onChange={(event) => updateWorkflowTask(task.id, "title", event.target.value)}
-                        className="col-span-6 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="流程名稱"
-                      />
-                      <input
-                        value={task.detail || ""}
-                        onChange={(event) => updateWorkflowTask(task.id, "detail", event.target.value)}
-                        className="col-span-12 md:col-span-3 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="流程細節"
-                      />
-                      <input
-                        value={task.owner || ""}
-                        onChange={(event) => updateWorkflowTask(task.id, "owner", event.target.value)}
-                        className="col-span-6 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        placeholder="負責人"
-                      />
-                      <label className="col-span-4 md:col-span-1 inline-flex items-center justify-center gap-1 text-xs text-gray-600">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(task.done)}
-                          onChange={(event) => updateWorkflowTask(task.id, "done", event.target.checked)}
-                        />
-                        完成
-                      </label>
-                      <button
-                        onClick={() => removeWorkflowTask(task.id)}
-                        className="col-span-2 text-red-600 hover:text-red-800 justify-self-end"
-                        title="刪除流程"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">提醒提前分鐘</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={task.reminderMinutesBefore || 0}
-                          onChange={(event) =>
-                            updateWorkflowTask(task.id, "reminderMinutesBefore", Math.max(0, Number(event.target.value) || 0))
-                          }
-                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">提醒模板</label>
-                        <select
-                          value={task.templateId || "default_timeline"}
-                          onChange={(event) => updateWorkflowTask(task.id, "templateId", event.target.value)}
-                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
-                        >
-                          {(draft.notificationTemplates || []).map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {template.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="text-xs text-gray-500 flex items-end">
-                        上次提醒：{task.lastReminderSentAt ? new Date(task.lastReminderSentAt).toLocaleString("zh-TW") : "尚未發送"}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {workflowView === "gantt" && (
-              <div className="space-y-3">
-                <div className="text-xs text-gray-500">
-                  時間軸：{timelineBounds.start.toString().padStart(2, "0")}:00 ~{" "}
-                  {timelineBounds.end.toString().padStart(2, "0")}:59
-                </div>
-                {sortedWorkflowTasks.map((task) => {
-                  const [h, m] = (task.time || "00:00").split(":");
-                  const hour = Number(h || "0");
-                  const minute = Number(m || "0");
-                  const ratioBase = Math.max(1, timelineBounds.end - timelineBounds.start + 1);
-                  const hourFloat = hour + minute / 60;
-                  const left = Math.min(96, Math.max(0, ((hourFloat - timelineBounds.start) / ratioBase) * 100));
-                  const width = Math.max(4, 100 / ratioBase);
-                  return (
-                    <div key={task.id} className="rounded-lg border border-gray-200 p-3">
-                      <div className="flex items-center justify-between text-xs text-gray-500">
-                        <span>
-                          {(task.date || draft.auspiciousPlan?.ceremonyDate || "--")} {task.time || "--:--"}
-                        </span>
-                        <span>{task.owner || "未指定負責人"}</span>
-                      </div>
-                      <p className="mt-1 text-sm font-medium text-gray-800">{task.title}</p>
-                      <div className="mt-2 h-3 rounded bg-gray-100 relative overflow-hidden">
-                        <div
-                          className={`absolute top-0 h-full rounded ${task.done ? "bg-green-500" : "bg-brand-500"}`}
-                          style={{ left: `${left}%`, width: `${width}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {workflowView === "calendar" && (
-              <div className="space-y-3">
-                {workflowByDate.map(([date, tasks]) => (
-                  <div key={date} className="rounded-lg border border-gray-200 p-3">
-                    <h4 className="font-semibold text-sm text-gray-900">{date}</h4>
-                    <div className="mt-2 space-y-2">
-                      {tasks.map((task) => (
-                        <div key={task.id} className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-gray-800">
-                              {task.time || "--:--"} {task.title}
-                            </span>
-                            <span className="text-xs text-gray-500">{task.owner || "未指定"}</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mt-1">{task.detail || "無細節描述"}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">AI 工期節點建議</h3>
-              <Button size="sm" variant="outline" className="gap-1" onClick={generateAuspiciousPlan}>
-                <Wand2 className="w-4 h-4" />
-                AI 產生建議
-              </Button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">預計施工起日</label>
-                <input
-                  type="date"
-                  value={draft.auspiciousPlan?.ceremonyDate || ""}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      auspiciousPlan: {
-                        ...(prev.auspiciousPlan || {}),
-                        ceremonyDate: event.target.value,
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">偏好時段</label>
-                <select
-                  value={draft.auspiciousPlan?.preferredWindow || "afternoon"}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      auspiciousPlan: {
-                        ...(prev.auspiciousPlan || {}),
-                        preferredWindow: event.target.value as "morning" | "afternoon" | "evening",
-                      },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white"
-                >
-                  <option value="morning">上午</option>
-                  <option value="afternoon">下午</option>
-                  <option value="evening">晚間</option>
-                </select>
-              </div>
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs text-gray-500">建議開工時間</p>
-                <p className="mt-1 text-base font-semibold text-gray-800">
-                  {draft.auspiciousPlan?.recommendedStartTime || "--:--"}
-                </p>
-                <ul className="mt-2 list-disc pl-5 text-xs text-gray-600 space-y-1">
-                  {(draft.auspiciousPlan?.recommendations || []).map((item, idx) => (
-                    <li key={`${idx}_${item}`}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900">流程提醒與罐頭訊息</h3>
-              <Button size="sm" variant="outline" onClick={addNotificationTemplate}>
-                <Plus className="w-4 h-4" />
-                新增模板
-              </Button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">提醒 Email（未填則使用 CRM 客戶 Email）</label>
-                <input
-                  type="email"
-                  value={draft.notificationEmail || ""}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, notificationEmail: event.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2"
-                  placeholder="example@domain.com"
-                />
-              </div>
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs text-gray-500 mb-2">
-                  可用變數：{"{projectName}"} {"{clientName}"} {"{taskTitle}"} {"{taskDateTime}"} {"{taskOwner}"} {"{taskDetail}"}
-                </p>
-                <div className="space-y-2">
-                  {(draft.notificationTemplates || []).map((template) => (
-                    <div key={template.id} className="rounded border border-gray-200 bg-white p-2 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={template.name}
-                          onChange={(event) =>
-                            updateNotificationTemplate(template.id, "name", event.target.value)
-                          }
-                          className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                          placeholder="模板名稱"
-                        />
-                        <button
-                          onClick={() => removeNotificationTemplate(template.id)}
-                          className="text-red-600 hover:text-red-800"
-                          title="刪除模板"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <textarea
-                        value={template.content}
-                        onChange={(event) =>
-                          updateNotificationTemplate(template.id, "content", event.target.value)
-                        }
-                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs h-20 resize-y"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-gray-500" /> 專案註記（可串接 CRM）
-            </h3>
-            <textarea
-              value={draft.note || ""}
-              onChange={(event) => setDraft((prev) => ({ ...prev, note: event.target.value }))}
-              className="w-full text-sm border-gray-200 rounded-lg bg-gray-50 p-3 h-36 focus:ring-brand-500 focus:border-brand-500 resize-none"
-              placeholder="輸入案件筆記，例如：希望主臥收納加強、公共區改用耐磨材質、並安排 3D 渲染提案..."
-            />
-            <div className="mt-3 flex flex-col gap-2">
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => void handleSyncNoteToCrm()}
-                disabled={syncing}
-              >
-                {syncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-                {syncing ? "同步中..." : "同步註記到 LINE CRM"}
-              </Button>
-              <p className="text-[11px] text-gray-500">
-                最後同步：{draft.lastSyncedToCrmAt ? new Date(draft.lastSyncedToCrmAt).toLocaleString("zh-TW") : "尚未同步"}
-              </p>
-              <p className="text-[11px] text-gray-500">
-                同步後會寫入 CRM 系統註記並加上案件標籤，不會發送給 LINE 客戶。
-              </p>
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* ===== 圖片預覽 Lightbox ===== */}
+      {previewAsset && (
+        <div className="fixed inset-0 z-[85] bg-black/80 flex items-center justify-center p-6" onClick={() => setPreviewAsset(null)}>
+          <img src={previewAsset} alt="預覽" className="max-w-full max-h-full object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+          <button onClick={() => setPreviewAsset(null)} className="absolute top-4 right-4 text-white/80 hover:text-white">
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+        </div>
+      )}
+
+      {/* ===== 媒體庫選圖 Modal（給空間渲染紀錄） ===== */}
+      {mediaPickerTarget && (
+        <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4" onClick={() => setMediaPickerTarget(null)}>
+          <div className="w-full max-w-3xl max-h-[85vh] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-brand-600" /> 從媒體庫選擇圖片
+              </h3>
+              <button onClick={() => setMediaPickerTarget(null)} className="text-gray-400 hover:text-gray-600">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {pickerLoading ? (
+                <div className="flex items-center justify-center h-40 text-gray-400">
+                  <RefreshCw className="w-6 h-6 animate-spin" />
+                </div>
+              ) : pickerAssets.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-12">媒體庫尚無圖片</p>
+              ) : (
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                  {pickerAssets.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => {
+                        if (mediaPickerTarget) {
+                          updateDressSelectionRecord(mediaPickerTarget.recordId, mediaPickerTarget.field, a.url);
+                        }
+                        setMediaPickerTarget(null);
+                      }}
+                      className="group rounded-lg overflow-hidden border-2 border-gray-200 hover:border-brand-400 transition-colors"
+                    >
+                      <div className="aspect-[4/3] bg-gray-100">
+                        <img src={a.url} alt="" className="w-full h-full object-cover" />
+                      </div>
+                      <p className="text-[10px] text-gray-500 truncate px-1.5 py-1">
+                        {a.meta?.slotLabel || a.meta?.style || "素材"}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 線稿轉渲染全螢幕子頁（專案內） ===== */}
+      {renderFullscreen && (
+        <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
+          <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
+            <button onClick={() => setRenderFullscreen(false)} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium">
+              <ArrowLeft className="w-5 h-5" /> 返回專案管理
+            </button>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-base font-bold text-gray-800">線稿轉渲染 · {draft.name}</h1>
+            <span className="ml-2 text-[11px] text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full">生成的圖會自動歸到本專案</span>
+          </div>
+          <div className="flex-1 overflow-auto p-4 md:p-6">
+            <AIStudio initialProjectId={project.id} />
+          </div>
+        </div>
+      )}
+
+      {/* ===== 生成提案簡報全螢幕子頁（專案內） ===== */}
+      {presentationFullscreen && (
+        <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
+          <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
+            <button onClick={() => { setPresentationFullscreen(false); setOpenPresentationId(null); void loadProjectPresentations(); }} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium">
+              <ArrowLeft className="w-5 h-5" /> 返回專案管理
+            </button>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-base font-bold text-gray-800">{openPresentationId ? "續編簡報" : "生成提案簡報"} · {draft.name}</h1>
+          </div>
+          <div className="flex-1 overflow-auto p-4 md:p-6">
+            <PresentationMaker key={openPresentationId ?? "new"} initialProjectId={project.id} initialPresentationId={openPresentationId ?? undefined} />
+          </div>
+        </div>
+      )}
+
+      {/* ===== 工程安排全螢幕子頁 ===== */}
+      {workflowFullscreen && (
+        <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
+          {/* 返回列 */}
+          <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
+            <button
+              onClick={() => setWorkflowFullscreen(false)}
+              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium"
+            >
+              <ArrowLeft className="w-5 h-5" /> 返回專案管理
+            </button>
+            <span className="text-gray-300">|</span>
+            <h1 className="text-base font-bold text-gray-800">工程安排 · {draft.name}</h1>
+            <div className="ml-auto flex flex-wrap gap-2">
+              {!workflowEditing && (
+                <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                  <button
+                    onClick={() => setWorkflowViewMode("gantt")}
+                    className={`px-3 py-1.5 text-sm ${workflowViewMode === "gantt" ? "bg-brand-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    甘特圖
+                  </button>
+                  <button
+                    onClick={() => setWorkflowViewMode("calendar")}
+                    className={`px-3 py-1.5 text-sm border-l border-gray-200 ${workflowViewMode === "calendar" ? "bg-brand-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    日曆
+                  </button>
+                </div>
+              )}
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => void generateGanttSchedule()} disabled={generatingGantt}>
+                {generatingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                {generatingGantt ? "排程中..." : "AI 依報價生成排程"}
+              </Button>
+              {!workflowEditing ? (
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => setWorkflowEditing(true)}>
+                  <Pencil className="w-4 h-4" /> 編輯
+                </Button>
+              ) : (
+                <Button size="sm" variant="primary" className="gap-1" onClick={() => setWorkflowEditing(false)}>
+                  <Eye className="w-4 h-4" /> 完成編輯（看甘特圖）
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("png")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
+                {exportingGantt ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PNG
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => void exportGantt("pdf")} disabled={exportingGantt || (draft.workflowTasks || []).length === 0}>
+                <Download className="w-4 h-4" /> PDF
+              </Button>
+              <Button size="sm" onClick={() => void handleSave()} disabled={saving} className="gap-1">
+                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} 儲存
+              </Button>
+            </div>
+          </div>
+
+          {/* 內容 */}
+          <div className="flex-1 overflow-auto p-4 md:p-8">
+            {notice && (
+              <div className="mb-3 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2 text-sm text-brand-700">{notice}</div>
+            )}
+            {!workflowEditing && workflowViewMode === "gantt" && (
+              <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div ref={ganttRef}>
+                  <GanttChart
+                    tasks={draft.workflowTasks || []}
+                    projectName={draft.name}
+                    fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
+                  />
+                </div>
+              </div>
+            )}
+            {!workflowEditing && workflowViewMode === "calendar" && (
+              <div ref={ganttRef}>
+                <CalendarView
+                  tasks={draft.workflowTasks || []}
+                  fallbackDate={draft.date || new Date().toISOString().slice(0, 10)}
+                />
+              </div>
+            )}
+            {workflowEditing && (
+              <div className="space-y-2 max-w-5xl">
+                <div className="flex justify-between items-center">
+                  <p className="text-sm text-gray-500">為每個工項設定階段、開始日與工期天數，甘特圖會自動排列。</p>
+                  <Button size="sm" variant="outline" className="gap-1" onClick={addWorkflowTask}>
+                    <Plus className="w-4 h-4" /> 新增工項
+                  </Button>
+                </div>
+                {(draft.workflowTasks || []).length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-8">
+                    尚無工項。按「AI 依報價生成排程」自動建立，或手動新增。
+                  </p>
+                )}
+                {(draft.workflowTasks || []).map((task) => (
+                  <div key={task.id} className="grid grid-cols-12 gap-2 items-center rounded-lg border border-gray-200 bg-white p-3">
+                    <input
+                      value={task.title}
+                      onChange={(event) => updateWorkflowTask(task.id, "title", event.target.value)}
+                      className="col-span-12 md:col-span-3 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      placeholder="工項名稱"
+                    />
+                    <input
+                      value={task.stage || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "stage", event.target.value)}
+                      className="col-span-4 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      placeholder="階段(如:木作)"
+                    />
+                    <input
+                      type="date"
+                      value={task.date || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "date", event.target.value)}
+                      className="col-span-5 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    />
+                    <div className="col-span-3 md:col-span-2 flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={1}
+                        value={task.durationDays || 1}
+                        onChange={(event) => updateWorkflowTask(task.id, "durationDays", Math.max(1, Number(event.target.value) || 1))}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                      <span className="text-xs text-gray-400">天</span>
+                    </div>
+                    <input
+                      value={task.owner || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "owner", event.target.value)}
+                      className="col-span-8 md:col-span-2 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      placeholder="工班/負責人"
+                    />
+                    <button
+                      onClick={() => removeWorkflowTask(task.id)}
+                      className="col-span-4 md:col-span-1 text-red-600 hover:text-red-800 justify-self-end"
+                      title="刪除工項"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    <input
+                      value={task.detail || ""}
+                      onChange={(event) => updateWorkflowTask(task.id, "detail", event.target.value)}
+                      className="col-span-12 rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-600"
+                      placeholder="工項說明（選填）"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

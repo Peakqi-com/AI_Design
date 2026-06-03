@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button } from "./Button";
 import { RefreshCw, Sparkles } from "lucide-react";
+import { useCredits } from "@/lib/client/use-credits";
 
 interface ContactLite {
   id: string;
@@ -210,6 +211,7 @@ export const CrmInteriorIntakePanel: React.FC<InteriorIntakePanelProps> = ({
   conversationMessages,
   onCompletionChange,
 }) => {
+  const credits = useCredits();
   const [survey, setSurvey] = useState<InteriorSurveyForm>({ ...DEFAULT_SURVEY });
   const [recommendation, setRecommendation] = useState<InteriorAiRecommendation>({ ...EMPTY_RECOMMENDATION });
   const [loading, setLoading] = useState(false);
@@ -337,6 +339,11 @@ export const CrmInteriorIntakePanel: React.FC<InteriorIntakePanelProps> = ({
     }
     if (!intakeComplete) {
       setError("請先完整填寫問卷，再產生 AI 推薦。");
+      return;
+    }
+    const deduction = await credits.confirmAndDeduct("AI 室內推薦", "ai-text");
+    if (!deduction.ok) {
+      if (!deduction.cancelled) setError(deduction.error || "點數不足");
       return;
     }
     setGenerating(true);

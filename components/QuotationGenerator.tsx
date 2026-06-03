@@ -3,6 +3,7 @@ import { useSession } from "next-auth/react";
 import { Button } from './Button';
 import { Printer, Download, Plus, Trash2, Sparkles, Calculator, FileText, MessageSquare, Bot, Paperclip, CheckCircle2, FileImage, RefreshCw } from 'lucide-react';
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { COMMON_UNITS } from "@/lib/crm/pricing-standards";
 
 interface QuoteItem {
   id: number;
@@ -17,6 +18,7 @@ interface QuoteItem {
 
 interface QuotationGeneratorProps {
   initialProjectId?: string;
+  onBack?: () => void;
 }
 
 interface ProjectListItem {
@@ -36,6 +38,7 @@ interface ProjectDetailItem extends ProjectListItem {
     id: string;
     name: string;
     description?: string;
+    unit?: string;
     quantity: number;
     unitPrice: number;
   }>;
@@ -162,7 +165,7 @@ const buildQuoteItemsFromProject = (project: ProjectDetailItem): QuoteItem[] => 
   ];
 };
 
-export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialProjectId }) => {
+export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialProjectId, onBack }) => {
   const { data: session } = useSession();
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -336,7 +339,7 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
           id: Number(item.id.replace(/\D+/g, "")) || idx + 1,
           category: "室內設計服務",
           name: item.name,
-          unit: "式",
+          unit: item.unit || "式",
           quantity: item.quantity,
           price: item.unitPrice,
           source: "manual" as const,
@@ -374,8 +377,9 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
         id: String(item.id),
         name: item.name,
         description: `${item.category}${item.source ? `（${item.source}）` : ""}`,
+        unit: item.unit || "式",
         quantity: item.quantity,
-        unitPrice: item.price,
+        unitPrice: Math.round(item.price),
       })),
     [items],
   );
@@ -457,8 +461,53 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
     setHasGenerated(true);
   };
 
+  /* #4：套用標準工項模板（整套帶入報價標準表的工項） */
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const applyStandardTemplate = async () => {
+    setApplyingTemplate(true);
+    try {
+      const res = await fetch(`/api/crm/settings/pricing?userId=${encodeURIComponent(lineScopeId)}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      const standards: Array<{ name: string; unit: string; unitPrice: number; category: string }> = data.items || [];
+      if (standards.length === 0) {
+        setError("報價標準表尚無工項，請先到 線上訊息管理 → 報價標準 設定。");
+        return;
+      }
+      const existingNames = new Set(items.map((i) => i.name.trim()));
+      let nextId = items.length + 1;
+      const newItems: QuoteItem[] = standards
+        .filter((s) => s.name && !existingNames.has(s.name.trim()) && s.unitPrice > 0)
+        .map((s) => ({
+          id: nextId++,
+          category: s.category || "標準工項",
+          name: s.name,
+          unit: s.unit || "式",
+          quantity: 1,
+          price: Math.round(s.unitPrice),
+          source: "manual" as const,
+          confidence: 100,
+        }));
+      if (newItems.length === 0) {
+        setError("標準工項都已在清單中。");
+        return;
+      }
+      setItems((prev) => [...prev, ...newItems]);
+      setHasGenerated(true);
+      setError(null);
+    } catch {
+      setError("套用工項模板失敗，請重試。");
+    } finally {
+      setApplyingTemplate(false);
+    }
+  };
+
   const removeItem = (id: number) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateItem = (id: number, patch: Partial<QuoteItem>) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
 
   const handlePrint = () => {
@@ -502,9 +551,9 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
     setNotice("已匯出報價單檔案（JSON）。");
   };
 
-  return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6">
-      
+  const content = (
+    <div className={onBack ? "flex flex-col lg:flex-row gap-6" : "h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-6"}>
+
       {/* Left Sidebar: AI Context & Source Data */}
       <div className="w-full lg:w-96 flex flex-col gap-4">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex-shrink-0">
@@ -712,9 +761,36 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                                         <div className={`h-full ${item.confidence! > 90 ? 'bg-green-500' : 'bg-yellow-500'}`} style={{ width: `${item.confidence}%` }}></div>
                                     </div>
                                 </td>
-                                <td className="px-6 py-4 text-gray-500">{item.unit}</td>
-                                <td className="px-6 py-4 text-gray-900">{item.quantity}</td>
-                                <td className="px-6 py-4 text-gray-900">${item.price.toLocaleString()}</td>
+                                <td className="px-6 py-4">
+                                    <select
+                                      value={item.unit || "式"}
+                                      onChange={(e) => updateItem(item.id, { unit: e.target.value })}
+                                      className="text-sm border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    >
+                                      {COMMON_UNITS.map((u) => (
+                                        <option key={u} value={u}>{u}</option>
+                                      ))}
+                                      {item.unit && !COMMON_UNITS.includes(item.unit as typeof COMMON_UNITS[number]) && (
+                                        <option value={item.unit}>{item.unit}</option>
+                                      )}
+                                    </select>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <input
+                                      type="number"
+                                      value={item.quantity}
+                                      onChange={(e) => updateItem(item.id, { quantity: Number(e.target.value) || 0 })}
+                                      className="w-16 text-sm border border-gray-200 rounded px-2 py-1 text-gray-900 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    />
+                                </td>
+                                <td className="px-6 py-4">
+                                    <input
+                                      type="number"
+                                      value={item.price}
+                                      onChange={(e) => updateItem(item.id, { price: Number(e.target.value) || 0 })}
+                                      className="w-24 text-sm border border-gray-200 rounded px-2 py-1 text-gray-900 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                    />
+                                </td>
                                 <td className="px-6 py-4 font-bold text-gray-900">${(item.quantity * item.price).toLocaleString()}</td>
                                 <td className="px-6 py-4">
                                     <button
@@ -728,12 +804,22 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                         ))}
                         <tr>
                             <td colSpan={7} className="px-6 py-4">
-                                <button
-                                  className="flex items-center gap-1 text-brand-600 hover:text-brand-700 font-medium text-sm transition-colors"
-                                  onClick={addManualItem}
-                                >
-                                    <Plus className="w-4 h-4" /> 手動新增項目
-                                </button>
+                                <div className="flex items-center gap-4">
+                                  <button
+                                    className="flex items-center gap-1 text-brand-600 hover:text-brand-700 font-medium text-sm transition-colors"
+                                    onClick={addManualItem}
+                                  >
+                                      <Plus className="w-4 h-4" /> 手動新增項目
+                                  </button>
+                                  <button
+                                    className="flex items-center gap-1 text-purple-600 hover:text-purple-700 font-medium text-sm transition-colors disabled:opacity-50"
+                                    onClick={() => void applyStandardTemplate()}
+                                    disabled={applyingTemplate}
+                                  >
+                                      {applyingTemplate ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                                      套用標準工項模板（整套帶入）
+                                  </button>
+                                </div>
                             </td>
                         </tr>
                     </tbody>
@@ -747,15 +833,15 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
                 <div className="w-64 space-y-2">
                     <div className="flex justify-between text-gray-600 text-sm">
                         <span>小計 Subtotal</span>
-                        <span>${calculateTotal().toLocaleString()}</span>
+                        <span>${Math.round(calculateTotal()).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between text-gray-600 text-sm">
                         <span>稅金 Tax (5%)</span>
-                        <span>${(calculateTotal() * 0.05).toLocaleString()}</span>
+                        <span>${Math.round(calculateTotal() * 0.05).toLocaleString()}</span>
                     </div>
                     <div className="border-t border-gray-300 my-2 pt-2 flex justify-between text-2xl font-bold text-brand-600">
                         <span>總計 Total</span>
-                        <span>${(calculateTotal() * 1.05).toLocaleString()}</span>
+                        <span>${Math.round(calculateTotal() * 1.05).toLocaleString()}</span>
                     </div>
                 </div>
                 <div>
@@ -772,4 +858,28 @@ export const QuotationGenerator: React.FC<QuotationGeneratorProps> = ({ initialP
       </div>
     </div>
   );
+
+  // 子頁模式：全螢幕 + 返回列（從專案進入時）
+  if (onBack) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            返回專案管理
+          </button>
+          <span className="text-gray-300">|</span>
+          <h1 className="text-base font-bold text-gray-800 flex items-center gap-2">
+            <Calculator className="w-4 h-4 text-brand-600" /> AI 裝修報價
+          </h1>
+        </div>
+        <div className="p-4 md:p-8">{content}</div>
+      </div>
+    );
+  }
+
+  return content;
 };

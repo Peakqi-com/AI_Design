@@ -14,6 +14,10 @@ import {
   CrmProject,
   CrmStore,
   LineIntegrationSettings,
+  PresentationDraft,
+  PricingStandardItem,
+  TagDefinition,
+  LineAutoReplyConfig,
 } from "@/lib/crm/types";
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -119,6 +123,10 @@ const createDefaultStore = (): CrmStore => ({
   contacts: [],
   messages: [],
   projects: [],
+  presentations: [],
+  pricingByUser: {},
+  tagsByUser: {},
+  autoReplyByUser: {},
 });
 
 const cloneStore = (store: CrmStore): CrmStore => structuredClone(store);
@@ -220,6 +228,13 @@ const normalizeStore = (raw: unknown): CrmStore => {
     contacts: Array.isArray(maybe.contacts) ? maybe.contacts : [],
     messages: Array.isArray(maybe.messages) ? maybe.messages : [],
     projects: normalizedProjects,
+    presentations: Array.isArray(maybe.presentations) ? maybe.presentations : [],
+    pricingByUser:
+      maybe.pricingByUser && typeof maybe.pricingByUser === "object" ? maybe.pricingByUser : {},
+    tagsByUser:
+      maybe.tagsByUser && typeof maybe.tagsByUser === "object" ? maybe.tagsByUser : {},
+    autoReplyByUser:
+      maybe.autoReplyByUser && typeof maybe.autoReplyByUser === "object" ? maybe.autoReplyByUser : {},
   };
 };
 
@@ -342,6 +357,7 @@ const normalizeQuotationItems = (items?: ProjectQuotationItem[]): ProjectQuotati
       id: item.id?.trim() || createId("quote"),
       name: item.name?.trim() || "未命名項目",
       description: item.description?.trim() || "",
+      unit: item.unit?.trim() || "式",
       quantity: Number.isFinite(item.quantity) ? Math.max(0, Number(item.quantity)) : 0,
       unitPrice: Number.isFinite(item.unitPrice) ? Math.max(0, Number(item.unitPrice)) : 0,
     }))
@@ -390,6 +406,8 @@ const normalizeWorkflowTasks = (items?: ProjectWorkflowTask[]): ProjectWorkflowT
     .map((item) => ({
       id: item.id?.trim() || createId("task"),
       date: item.date?.trim() || "",
+      durationDays: Number.isFinite(item.durationDays) ? Math.max(1, Number(item.durationDays)) : 1,
+      stage: item.stage?.trim() || "",
       time: item.time?.trim() || "",
       title: item.title?.trim() || "未命名流程",
       detail: item.detail?.trim() || "",
@@ -791,6 +809,7 @@ export async function clearLineSettings(userScopeId?: string): Promise<void> {
 }
 
 export interface ListContactsOptions {
+  userId?: string;
   search?: string;
   tag?: string;
 }
@@ -800,9 +819,28 @@ export async function listContacts(options: ListContactsOptions = {}): Promise<C
   const store = await getStore();
   const searchKey = search?.trim().toLowerCase();
   const tagKey = tag?.trim();
+  const filterUserId = options.userId?.trim();
 
   return store.contacts
     .filter((contact) => {
+      // User scope: only show contacts owned by this user.
+      // The LINE OA is a single shared account stored under the global scope,
+      // so its contacts (created by the webhook) carry userId="__global__".
+      // Surface those to every authenticated user — otherwise received LINE
+      // messages exist in the store but are filtered out of everyone's view.
+      if (
+        filterUserId &&
+        contact.userId &&
+        contact.userId !== filterUserId &&
+        contact.userId !== GLOBAL_LINE_SETTINGS_SCOPE
+      ) {
+        return false;
+      }
+      // Hide legacy contacts without userId when a userId filter is active
+      if (filterUserId && !contact.userId) {
+        return false;
+      }
+
       const hitSearch = !searchKey
         ? true
         : [
@@ -833,7 +871,7 @@ export async function getContactById(contactId: string): Promise<CrmContact | nu
 
 export async function updateContact(
   contactId: string,
-  patch: Partial<Pick<CrmContact, "displayName" | "email" | "phone" | "status" | "avatarUrl">>,
+  patch: Partial<Pick<CrmContact, "displayName" | "email" | "phone" | "status" | "avatarUrl" | "company" | "title" | "address" | "notes" | "cardImageUrl">>,
 ): Promise<CrmContact | null> {
   return mutateStore((store) => {
     const index = store.contacts.findIndex((contact) => contact.id === contactId);
@@ -842,9 +880,21 @@ export async function updateContact(
     }
 
     const current = store.contacts[index];
+    // 只套用「有意義」的欄位：跳過 undefined / null / 空字串 / 字面 "undefined"|"null"，
+    // 避免某個 PATCH 沒帶到欄位時把既有姓名、頭像等資料覆蓋掉。
+    const cleanPatch: Partial<CrmContact> = {};
+    (Object.keys(patch) as Array<keyof typeof patch>).forEach((k) => {
+      const v = patch[k];
+      if (v === undefined || v === null) return;
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t || t === "undefined" || t === "null") return;
+      }
+      (cleanPatch as Record<string, unknown>)[k] = v;
+    });
     const next: CrmContact = {
       ...current,
-      ...patch,
+      ...cleanPatch,
       updatedAt: nowIso(),
     };
     store.contacts[index] = next;
@@ -856,24 +906,43 @@ export interface UpsertLineContactInput {
   lineUserId: string;
   displayName: string;
   avatarUrl?: string | null;
+  userId?: string;
 }
 
 export async function upsertLineContact(input: UpsertLineContactInput): Promise<CrmContact> {
   return mutateStore((store) => {
     const now = nowIso();
-    const normalizedName = input.displayName.trim() || `LINE ${input.lineUserId.slice(-6)}`;
+    const rawName = (input.displayName || "").trim();
+    // 字面 "undefined"/"null" 視為無效名稱（曾因 String(undefined) 寫入造成姓名變 "undefined"）
+    const incomingName = rawName === "undefined" || rawName === "null" ? "" : rawName;
+    // A "fallback" name is one we synthesized when the LINE profile fetch failed
+    // (e.g. "LINE 使用者 ab12cd" / "LINE 群組 …"). It must NEVER overwrite a real
+    // display name we captured earlier.
+    const isFallbackName = (n: string): boolean =>
+      !n || n === "undefined" || n === "null" || /^LINE (使用者|群組|聊天室) /.test(n);
+    const normalizedName = incomingName || `LINE 使用者 ${input.lineUserId.slice(-6)}`;
 
     const existingIndex = store.contacts.findIndex(
       (contact) => contact.lineUserId === input.lineUserId,
     );
 
+    const scopeId = input.userId?.trim() || undefined;
+
     if (existingIndex >= 0) {
       const existing = store.contacts[existingIndex];
+      const existingNameIsReal = existing.displayName && !isFallbackName(existing.displayName);
+      // Keep the existing real name unless the incoming name is also real.
+      const nextName =
+        existingNameIsReal && isFallbackName(normalizedName)
+          ? existing.displayName
+          : normalizedName;
       const updated: CrmContact = {
         ...existing,
-        displayName: normalizedName,
+        // never clobber a good name/avatar with a fallback / null
+        displayName: nextName,
         avatarUrl: input.avatarUrl ?? existing.avatarUrl ?? null,
         source: "line",
+        userId: existing.userId ?? scopeId,
         updatedAt: now,
       };
       store.contacts[existingIndex] = updated;
@@ -884,6 +953,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
       id: createId("contact"),
       source: "line",
       lineUserId: input.lineUserId,
+      userId: scopeId,
       displayName: normalizedName,
       avatarUrl: input.avatarUrl ?? null,
       tags: [],
@@ -899,6 +969,7 @@ export async function upsertLineContact(input: UpsertLineContactInput): Promise<
 }
 
 export interface EnsureCrmContactInput {
+  userId?: string;
   source?: "line" | "manual";
   lineUserId?: string;
   displayName: string;
@@ -931,6 +1002,7 @@ export async function ensureCrmContact(input: EnsureCrmContactInput): Promise<Cr
     if (contactIndex < 0) {
       const created: CrmContact = {
         id: createId("contact"),
+        userId: input.userId?.trim() || undefined,
         source: normalizedSource,
         lineUserId,
         displayName: normalizedName,
@@ -1087,6 +1159,7 @@ export async function createMessage(input: CreateMessageInput): Promise<CrmMessa
 }
 
 export interface ListProjectsOptions {
+  userId?: string;
   search?: string;
   includeArchived?: boolean;
   includeFiled?: boolean;
@@ -1108,9 +1181,18 @@ export async function listProjects(options: ListProjectsOptions = {}): Promise<C
   const includeArchived = Boolean(options.includeArchived);
   const includeFiled = Boolean(options.includeFiled);
   const includeDeleted = Boolean(options.includeDeleted);
+  const filterUserId = options.userId?.trim();
 
   return store.projects
     .filter((project) => {
+      // User scope: only show projects owned by this user
+      if (filterUserId && project.userId && project.userId !== filterUserId) {
+        return false;
+      }
+      // Hide legacy projects without userId when a userId filter is active
+      if (filterUserId && !project.userId) {
+        return false;
+      }
       if (!includeDeleted && project.deletedAt) {
         return false;
       }
@@ -1146,6 +1228,7 @@ export async function getProjectById(projectId: string): Promise<CrmProject | nu
 }
 
 export interface CreateProjectInput {
+  userId?: string;
   name: string;
   clientName: string;
   status: CrmProject["status"];
@@ -1175,6 +1258,7 @@ export async function createProject(input: CreateProjectInput): Promise<CrmProje
   const now = nowIso();
   const project: CrmProject = {
     id: createId("project"),
+    userId: input.userId?.trim() || undefined,
     name: input.name.trim(),
     clientName: input.clientName.trim(),
     status: input.status,
@@ -1201,6 +1285,310 @@ export async function createProject(input: CreateProjectInput): Promise<CrmProje
   store.projects.unshift(project);
   await saveStore(store);
   return project;
+}
+
+/* ================================================================
+   Presentations (draft persistence)
+   ================================================================ */
+
+export interface ListPresentationsOptions {
+  userId?: string;
+  linkedProjectId?: string;
+}
+
+export async function listPresentations(
+  options: ListPresentationsOptions = {},
+): Promise<PresentationDraft[]> {
+  const store = await getStore();
+  const all = store.presentations ?? [];
+  const filterUserId = options.userId?.trim();
+  return all
+    .filter((p) => {
+      if (filterUserId && p.userId && p.userId !== filterUserId) return false;
+      if (filterUserId && !p.userId) return false;
+      if (options.linkedProjectId && p.linkedProjectId !== options.linkedProjectId) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+export async function getPresentationById(
+  id: string,
+  userId?: string,
+): Promise<PresentationDraft | null> {
+  const store = await getStore();
+  const found = (store.presentations ?? []).find((p) => p.id === id) ?? null;
+  if (!found) return null;
+  // Ownership guard: when a caller scope is supplied, only the owner may read
+  // this draft. Legacy ownerless drafts (no userId) are hidden from scoped
+  // callers, matching listPresentations behaviour. Returning null (not 403)
+  // avoids leaking the existence of other tenants' drafts.
+  const filterUserId = userId?.trim();
+  if (filterUserId && found.userId !== filterUserId) return null;
+  return found;
+}
+
+export interface SavePresentationInput {
+  id?: string;
+  userId?: string;
+  title: string;
+  designerName?: string;
+  briefDesc?: string;
+  linkedProjectId?: string;
+  slides: PresentationDraft["slides"];
+  styleId?: string;
+  step?: number;
+}
+
+/** Upsert a presentation draft (create if no id, else update in place). */
+export async function savePresentation(input: SavePresentationInput): Promise<PresentationDraft> {
+  return mutateStore((store) => {
+    const now = nowIso();
+    if (!store.presentations) store.presentations = [];
+
+    if (input.id) {
+      const idx = store.presentations.findIndex((p) => p.id === input.id);
+      if (idx >= 0) {
+        const existing = store.presentations[idx];
+        // Ownership guard: a caller may only update a draft they own. Legacy
+        // ownerless drafts remain editable and get adopted by the editor below.
+        const callerScope = input.userId?.trim();
+        if (callerScope && existing.userId && existing.userId !== callerScope) {
+          throw new Error("PRESENTATION_FORBIDDEN");
+        }
+        const updated: PresentationDraft = {
+          ...existing,
+          userId: existing.userId ?? (input.userId?.trim() || undefined),
+          title: input.title.trim() || existing.title,
+          designerName: input.designerName ?? existing.designerName,
+          briefDesc: input.briefDesc ?? existing.briefDesc,
+          linkedProjectId: input.linkedProjectId ?? existing.linkedProjectId,
+          slides: input.slides ?? existing.slides,
+          styleId: input.styleId ?? existing.styleId,
+          step: input.step ?? existing.step,
+          updatedAt: now,
+        };
+        store.presentations[idx] = updated;
+        return updated;
+      }
+    }
+
+    const created: PresentationDraft = {
+      id: input.id || createId("deck"),
+      userId: input.userId?.trim() || undefined,
+      title: input.title.trim() || "未命名簡報",
+      designerName: input.designerName,
+      briefDesc: input.briefDesc,
+      linkedProjectId: input.linkedProjectId,
+      slides: input.slides ?? [],
+      styleId: input.styleId,
+      step: input.step,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.presentations.push(created);
+    return created;
+  });
+}
+
+export async function deletePresentation(id: string, userId?: string): Promise<boolean> {
+  return mutateStore((store) => {
+    if (!store.presentations) return false;
+    const target = store.presentations.find((p) => p.id === id);
+    if (!target) return false;
+    // Ownership guard: refuse to delete a draft owned by another tenant.
+    // Legacy ownerless drafts remain deletable for backward compatibility.
+    const filterUserId = userId?.trim();
+    if (filterUserId && target.userId && target.userId !== filterUserId) {
+      return false;
+    }
+    const before = store.presentations.length;
+    store.presentations = store.presentations.filter((p) => p.id !== id);
+    return store.presentations.length !== before;
+  });
+}
+
+/* ================================================================
+   Standard pricing table (per-user, editable)
+   ================================================================ */
+
+const pricingScopeKey = (userScopeId?: string): string =>
+  normalizeLineScope(userScopeId) || GLOBAL_LINE_SETTINGS_SCOPE;
+
+/**
+ * Get a user's pricing table. If they have none yet, seed it from the default
+ * and persist, so first-time users immediately have the standard table.
+ */
+export async function getPricingStandards(
+  userScopeId: string,
+  seed: Omit<PricingStandardItem, "id">[],
+): Promise<PricingStandardItem[]> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  const existing = store.pricingByUser?.[key];
+  if (existing && existing.length > 0) {
+    return existing.map((p) => ({ ...p }));
+  }
+  // seed
+  const seeded: PricingStandardItem[] = seed.map((s) => ({
+    ...s,
+    id: createId("price"),
+  }));
+  await mutateStore((s) => {
+    if (!s.pricingByUser) s.pricingByUser = {};
+    if (!s.pricingByUser[key] || s.pricingByUser[key].length === 0) {
+      s.pricingByUser[key] = seeded;
+    }
+  });
+  return seeded;
+}
+
+/** Read a user's pricing table without seeding (used by AI prompt build). */
+export async function peekPricingStandards(userScopeId: string): Promise<PricingStandardItem[]> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  return (store.pricingByUser?.[key] ?? []).map((p) => ({ ...p }));
+}
+
+/** Replace a user's entire pricing table. */
+export async function savePricingStandards(
+  userScopeId: string,
+  items: PricingStandardItem[],
+): Promise<PricingStandardItem[]> {
+  const key = pricingScopeKey(userScopeId);
+  const normalized = items
+    .filter((it) => it.name?.trim())
+    .map((it) => ({
+      id: it.id || createId("price"),
+      name: it.name.trim(),
+      unit: (it.unit || "").trim() || "式",
+      unitPrice: Number(it.unitPrice) || 0,
+      category: (it.category || "其他").trim(),
+      aliases: Array.isArray(it.aliases)
+        ? it.aliases.map((a) => String(a).trim()).filter(Boolean)
+        : undefined,
+      note: it.note?.trim() || undefined,
+    }));
+  await mutateStore((store) => {
+    if (!store.pricingByUser) store.pricingByUser = {};
+    store.pricingByUser[key] = normalized;
+  });
+  return normalized;
+}
+
+/* ================================================================
+   Custom tag definitions + auto-tagging (per-user)
+   ================================================================ */
+
+export async function getTagDefinitions(userScopeId: string): Promise<TagDefinition[]> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  return (store.tagsByUser?.[key] ?? []).map((t) => ({ ...t }));
+}
+
+export async function saveTagDefinitions(
+  userScopeId: string,
+  tags: TagDefinition[],
+): Promise<TagDefinition[]> {
+  const key = pricingScopeKey(userScopeId);
+  const normalized = tags
+    .filter((t) => t.name?.trim())
+    .map((t) => ({
+      id: t.id || createId("tag"),
+      name: t.name.trim(),
+      color: (t.color || "gray").trim(),
+      autoKeywords: Array.isArray(t.autoKeywords)
+        ? t.autoKeywords.map((k) => String(k).trim()).filter(Boolean)
+        : undefined,
+    }));
+  await mutateStore((store) => {
+    if (!store.tagsByUser) store.tagsByUser = {};
+    store.tagsByUser[key] = normalized;
+  });
+  return normalized;
+}
+
+/**
+ * 依使用者的標籤關鍵字規則，對某段文字自動套標籤到指定聯絡人。
+ * 回傳新加上的標籤名稱陣列。
+ */
+export async function applyAutoTags(
+  userScopeId: string,
+  contactId: string,
+  text: string,
+): Promise<string[]> {
+  if (!text?.trim()) return [];
+  const key = pricingScopeKey(userScopeId);
+  const added: string[] = [];
+  await mutateStore((store) => {
+    const defs = store.tagsByUser?.[key] ?? [];
+    if (defs.length === 0) return;
+    const contact = store.contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    const lower = text.toLowerCase();
+    for (const def of defs) {
+      if (!def.autoKeywords || def.autoKeywords.length === 0) continue;
+      const hit = def.autoKeywords.some((kw) => kw && lower.includes(kw.toLowerCase()));
+      if (hit && !contact.tags.includes(def.name)) {
+        contact.tags.push(def.name);
+        added.push(def.name);
+      }
+    }
+    if (added.length > 0) contact.updatedAt = nowIso();
+  });
+  return added;
+}
+
+/* ================================================================
+   LINE 自動回覆設定（歡迎訊息 + 關鍵字回覆）
+   ================================================================ */
+
+export async function getAutoReplyConfig(userScopeId: string): Promise<LineAutoReplyConfig> {
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  const cfg = store.autoReplyByUser?.[key];
+  return cfg ? { ...cfg, rules: (cfg.rules || []).map((r) => ({ ...r })) } : { welcomeEnabled: false, welcomeMessage: "", rules: [] };
+}
+
+export async function saveAutoReplyConfig(
+  userScopeId: string,
+  config: LineAutoReplyConfig,
+): Promise<LineAutoReplyConfig> {
+  const key = pricingScopeKey(userScopeId);
+  const normalized: LineAutoReplyConfig = {
+    welcomeEnabled: Boolean(config.welcomeEnabled),
+    welcomeMessage: (config.welcomeMessage || "").trim(),
+    rules: (config.rules || [])
+      .filter((r) => r.reply?.trim() && Array.isArray(r.keywords) && r.keywords.length > 0)
+      .map((r) => ({
+        id: r.id || createId("reply"),
+        keywords: r.keywords.map((k) => String(k).trim()).filter(Boolean),
+        reply: r.reply.trim(),
+        enabled: r.enabled !== false,
+      })),
+  };
+  await mutateStore((store) => {
+    if (!store.autoReplyByUser) store.autoReplyByUser = {};
+    store.autoReplyByUser[key] = normalized;
+  });
+  return normalized;
+}
+
+/** 比對訊息找出第一個符合的自動回覆內容（無則回 null）。 */
+export async function matchAutoReply(userScopeId: string, text: string): Promise<string | null> {
+  if (!text?.trim()) return null;
+  const key = pricingScopeKey(userScopeId);
+  const store = await getStore();
+  const cfg = store.autoReplyByUser?.[key];
+  if (!cfg?.rules) return null;
+  const lower = text.toLowerCase();
+  for (const rule of cfg.rules) {
+    if (rule.enabled === false) continue;
+    if (rule.keywords.some((kw) => kw && lower.includes(kw.toLowerCase()))) {
+      return rule.reply;
+    }
+  }
+  return null;
 }
 
 export interface UpdateProjectInput {

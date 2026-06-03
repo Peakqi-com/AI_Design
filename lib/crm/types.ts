@@ -55,6 +55,7 @@ export interface CrmMessage {
 
 export interface CrmContact {
   id: string;
+  userId?: string;
   source: ContactSource;
   lineUserId?: string;
   displayName: string;
@@ -63,6 +64,11 @@ export interface CrmContact {
   status: ContactStatus;
   email?: string;
   phone?: string;
+  company?: string;
+  title?: string;
+  address?: string;
+  notes?: string;
+  cardImageUrl?: string;
   unread: number;
   lastMessageText?: string;
   lastMessageAt?: string;
@@ -72,6 +78,7 @@ export interface CrmContact {
 
 export interface CrmProject {
   id: string;
+  userId?: string;
   name: string;
   clientName: string;
   status: "draft" | "active" | "quoted" | "completed";
@@ -79,6 +86,8 @@ export interface CrmProject {
   budget: string;
   coverImageUrl: string;
   linkedContactId?: string;
+  linkedContactIds?: string[];
+  linkedAssetIds?: string[];
   note?: string;
   lastSyncedToCrmAt?: string;
   archivedAt?: string;
@@ -115,6 +124,7 @@ export interface ProjectQuotationItem {
   id: string;
   name: string;
   description?: string;
+  unit?: string;
   quantity: number;
   unitPrice: number;
 }
@@ -122,6 +132,10 @@ export interface ProjectQuotationItem {
 export interface ProjectWorkflowTask {
   id: string;
   date?: string;
+  /** 工期天數（甘特圖用）；未填視為 1 天 */
+  durationDays?: number;
+  /** 階段分類（如 拆除/水電/泥作/木作/油漆/系統櫃/收尾），甘特圖分組與配色用 */
+  stage?: string;
   time: string;
   title: string;
   detail?: string;
@@ -156,6 +170,62 @@ export interface ProjectNotificationTemplate {
   content: string;
 }
 
+export interface PresentationSlideDraft {
+  id: string;
+  title: string;
+  body: string;
+  imageUrl: string | null;
+  layout: string;
+}
+
+export interface PresentationDraft {
+  id: string;
+  userId?: string;
+  title: string;
+  designerName?: string;
+  briefDesc?: string;
+  linkedProjectId?: string;
+  slides: PresentationSlideDraft[];
+  styleId?: string;
+  step?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PricingStandardItem {
+  id: string;
+  name: string;
+  unit: string;
+  unitPrice: number;
+  category: string;
+  aliases?: string[];
+  note?: string;
+}
+
+/** 關鍵字自動回覆規則。 */
+export interface AutoReplyRule {
+  id: string;
+  keywords: string[];
+  reply: string;
+  enabled?: boolean;
+}
+
+/** LINE 自動回覆設定（歡迎訊息 + 關鍵字回覆）。 */
+export interface LineAutoReplyConfig {
+  welcomeEnabled?: boolean;
+  welcomeMessage?: string;
+  rules?: AutoReplyRule[];
+}
+
+/** 自訂標籤定義（顏色 + 自動套用關鍵字）。 */
+export interface TagDefinition {
+  id: string;
+  name: string;
+  color: string; // tailwind 顏色 key，如 "blue" | "green" | "amber" ...
+  /** 自動套用：客戶訊息含任一關鍵字就自動加此標籤 */
+  autoKeywords?: string[];
+}
+
 export interface CrmStore {
   version: number;
   lineSettings: LineIntegrationSettings | null;
@@ -163,4 +233,11 @@ export interface CrmStore {
   contacts: CrmContact[];
   messages: CrmMessage[];
   projects: CrmProject[];
+  presentations?: PresentationDraft[];
+  /** Per-user standard pricing tables, keyed by user scope. */
+  pricingByUser?: Record<string, PricingStandardItem[]>;
+  /** Per-user custom tag definitions, keyed by user scope. */
+  tagsByUser?: Record<string, TagDefinition[]>;
+  /** Per-user LINE auto-reply config, keyed by user scope. */
+  autoReplyByUser?: Record<string, LineAutoReplyConfig>;
 }

@@ -3,12 +3,16 @@ import { saveAttachment } from "@/lib/crm/attachments";
 import {
   downloadLineMessageContent,
   fetchLineProfile,
+  pushLineTextMessage,
   verifyLineSignature,
 } from "@/lib/crm/line";
 import {
+  applyAutoTags,
   createMessage,
+  getAutoReplyConfig,
   getLineSettings,
   listLineSettingsByScope,
+  matchAutoReply,
   updateLineWebhookStats,
   upsertLineContact,
 } from "@/lib/crm/store";
@@ -101,6 +105,7 @@ const getSourceKey = (source?: LineWebhookSource): string | null => {
 async function processLineMessageEvent(
   event: LineWebhookEvent,
   channelAccessToken: string,
+  userScopeId: string,
 ): Promise<void> {
   const sourceKey = getSourceKey(event.source);
   const userId = event.source?.userId;
@@ -114,6 +119,7 @@ async function processLineMessageEvent(
     lineUserId: sourceKey,
     displayName: profile?.displayName ?? getFallbackName(sourceKey),
     avatarUrl: profile?.pictureUrl ?? null,
+    userId: userScopeId,
   });
 
   const messageType = mapLineMessageType(lineMessage.type);
@@ -132,6 +138,24 @@ async function processLineMessageEvent(
       timestamp,
       rawEvent: event,
     });
+    // 自動標籤：依使用者的關鍵字規則套用
+    await applyAutoTags(userScopeId, contact.id, lineMessage.text ?? "").catch(() => undefined);
+    // 關鍵字自動回覆
+    const replyText = await matchAutoReply(userScopeId, lineMessage.text ?? "").catch(() => null);
+    if (replyText && userId) {
+      const ok = await pushLineTextMessage(userId, replyText, channelAccessToken).catch(() => false);
+      if (ok) {
+        await createMessage({
+          contactId: contact.id,
+          direction: "outbound",
+          senderType: "system",
+          source: "line",
+          messageType: "text",
+          text: replyText,
+          timestamp: toIso(event.timestamp),
+        }).catch(() => undefined);
+      }
+    }
     return;
   }
 
@@ -234,7 +258,11 @@ async function processLineMessageEvent(
   });
 }
 
-async function processEvent(event: LineWebhookEvent, channelAccessToken: string): Promise<void> {
+async function processEvent(
+  event: LineWebhookEvent,
+  channelAccessToken: string,
+  userScopeId: string,
+): Promise<void> {
   const eventType = event.type;
   const userId = event.source?.userId;
   const sourceKey = getSourceKey(event.source);
@@ -252,7 +280,13 @@ async function processEvent(event: LineWebhookEvent, channelAccessToken: string)
       lineUserId: userId,
       displayName: profile?.displayName ?? getFallbackName(userId),
       avatarUrl: profile?.pictureUrl ?? null,
+      userId: userScopeId,
     });
+    // 加入好友：推送歡迎訊息（若有設定）
+    const cfg = await getAutoReplyConfig(userScopeId).catch(() => null);
+    if (cfg?.welcomeEnabled && cfg.welcomeMessage?.trim()) {
+      await pushLineTextMessage(userId, cfg.welcomeMessage.trim(), channelAccessToken).catch(() => undefined);
+    }
     return;
   }
 
@@ -260,7 +294,7 @@ async function processEvent(event: LineWebhookEvent, channelAccessToken: string)
     if (!sourceKey) {
       return;
     }
-    await processLineMessageEvent(event, channelAccessToken);
+    await processLineMessageEvent(event, channelAccessToken, userScopeId);
   }
 }
 
@@ -326,7 +360,11 @@ export async function POST(request: Request) {
 
   for (const event of events) {
     try {
-      await processEvent(event, scopedSettings.settings.channelAccessToken);
+      await processEvent(
+        event,
+        scopedSettings.settings.channelAccessToken,
+        scopedSettings.userScopeId,
+      );
       processed += 1;
     } catch (error) {
       failed += 1;
