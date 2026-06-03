@@ -1329,53 +1329,47 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
                     className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm h-16 resize-y"
                     placeholder="渲染重點（材質、燈光、動線）"
                   />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <div className="space-y-1.5">
-                      <div className="flex gap-1">
-                        <input
-                          value={record.referenceImageUrl || ""}
-                          onChange={(event) =>
-                            updateDressSelectionRecord(record.id, "referenceImageUrl", event.target.value)
-                          }
-                          className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                          placeholder="參考圖片 URL"
-                        />
-                        <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "referenceImageUrl")}>
-                          <ImageIcon className="w-4 h-4" /> 媒體庫
-                        </Button>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {([
+                      { field: "referenceImageUrl" as const, label: "參考圖", url: record.referenceImageUrl },
+                      { field: "generatedImageUrl" as const, label: "生成成果圖", url: record.generatedImageUrl },
+                    ]).map(({ field, label, url }) => (
+                      <div key={field}>
+                        <p className="text-xs text-gray-500 mb-1">{label}</p>
+                        {url ? (
+                          <div className="relative group">
+                            <img
+                              src={url}
+                              alt={label}
+                              className="w-full h-32 object-cover rounded-lg border border-gray-200 cursor-pointer"
+                              onClick={() => setPreviewAsset(url)}
+                            />
+                            <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => void openMediaPicker(record.id, field)}
+                                className="px-2 py-1 text-[11px] bg-black/60 text-white rounded hover:bg-black/80 backdrop-blur-sm"
+                              >
+                                更換
+                              </button>
+                              <button
+                                onClick={() => updateDressSelectionRecord(record.id, field, "")}
+                                className="px-2 py-1 text-[11px] bg-black/60 text-white rounded hover:bg-red-600 backdrop-blur-sm"
+                              >
+                                移除
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => void openMediaPicker(record.id, field)}
+                            className="w-full h-32 rounded-lg border-2 border-dashed border-gray-300 hover:border-brand-400 hover:bg-brand-50/40 transition-colors flex flex-col items-center justify-center text-gray-400 hover:text-brand-600"
+                          >
+                            <ImageIcon className="w-7 h-7 mb-1" />
+                            <span className="text-xs">從媒體庫選擇</span>
+                          </button>
+                        )}
                       </div>
-                      {record.referenceImageUrl && (
-                        <img
-                          src={record.referenceImageUrl}
-                          alt="參考圖"
-                          className="w-full h-28 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90"
-                          onClick={() => setPreviewAsset(record.referenceImageUrl || null)}
-                        />
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex gap-1">
-                        <input
-                          value={record.generatedImageUrl || ""}
-                          onChange={(event) =>
-                            updateDressSelectionRecord(record.id, "generatedImageUrl", event.target.value)
-                          }
-                          className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
-                          placeholder="生成結果圖片 URL"
-                        />
-                        <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => void openMediaPicker(record.id, "generatedImageUrl")}>
-                          <ImageIcon className="w-4 h-4" /> 媒體庫
-                        </Button>
-                      </div>
-                      {record.generatedImageUrl && (
-                        <img
-                          src={record.generatedImageUrl}
-                          alt="成果圖"
-                          className="w-full h-28 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90"
-                          onClick={() => setPreviewAsset(record.generatedImageUrl || null)}
-                        />
-                      )}
-                    </div>
+                    ))}
                   </div>
                   <textarea
                     value={record.note || ""}
