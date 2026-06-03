@@ -53,6 +53,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ presentation });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Save presentation failed.";
+    if (message === "PRESENTATION_FORBIDDEN") {
+      return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

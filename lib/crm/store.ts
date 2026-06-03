@@ -1312,9 +1312,20 @@ export async function listPresentations(
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
-export async function getPresentationById(id: string): Promise<PresentationDraft | null> {
+export async function getPresentationById(
+  id: string,
+  userId?: string,
+): Promise<PresentationDraft | null> {
   const store = await getStore();
-  return (store.presentations ?? []).find((p) => p.id === id) ?? null;
+  const found = (store.presentations ?? []).find((p) => p.id === id) ?? null;
+  if (!found) return null;
+  // Ownership guard: when a caller scope is supplied, only the owner may read
+  // this draft. Legacy ownerless drafts (no userId) are hidden from scoped
+  // callers, matching listPresentations behaviour. Returning null (not 403)
+  // avoids leaking the existence of other tenants' drafts.
+  const filterUserId = userId?.trim();
+  if (filterUserId && found.userId !== filterUserId) return null;
+  return found;
 }
 
 export interface SavePresentationInput {
@@ -1339,8 +1350,15 @@ export async function savePresentation(input: SavePresentationInput): Promise<Pr
       const idx = store.presentations.findIndex((p) => p.id === input.id);
       if (idx >= 0) {
         const existing = store.presentations[idx];
+        // Ownership guard: a caller may only update a draft they own. Legacy
+        // ownerless drafts remain editable and get adopted by the editor below.
+        const callerScope = input.userId?.trim();
+        if (callerScope && existing.userId && existing.userId !== callerScope) {
+          throw new Error("PRESENTATION_FORBIDDEN");
+        }
         const updated: PresentationDraft = {
           ...existing,
+          userId: existing.userId ?? (input.userId?.trim() || undefined),
           title: input.title.trim() || existing.title,
           designerName: input.designerName ?? existing.designerName,
           briefDesc: input.briefDesc ?? existing.briefDesc,
@@ -1373,9 +1391,17 @@ export async function savePresentation(input: SavePresentationInput): Promise<Pr
   });
 }
 
-export async function deletePresentation(id: string): Promise<boolean> {
+export async function deletePresentation(id: string, userId?: string): Promise<boolean> {
   return mutateStore((store) => {
     if (!store.presentations) return false;
+    const target = store.presentations.find((p) => p.id === id);
+    if (!target) return false;
+    // Ownership guard: refuse to delete a draft owned by another tenant.
+    // Legacy ownerless drafts remain deletable for backward compatibility.
+    const filterUserId = userId?.trim();
+    if (filterUserId && target.userId && target.userId !== filterUserId) {
+      return false;
+    }
     const before = store.presentations.length;
     store.presentations = store.presentations.filter((p) => p.id !== id);
     return store.presentations.length !== before;

@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
 import { deletePresentation, getPresentationById } from "@/lib/crm/store";
+import { resolveServerUserScopeId } from "@/lib/server/user-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const presentation = await getPresentationById(id);
+  const requestedUserId = new URL(request.url).searchParams.get("userId")?.trim() || "";
+  const userId = await resolveServerUserScopeId(requestedUserId);
+  const presentation = await getPresentationById(id, userId);
   if (!presentation) {
     return NextResponse.json({ error: "Presentation not found." }, { status: 404 });
   }
@@ -17,11 +20,13 @@ export async function GET(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const removed = await deletePresentation(id);
+  const requestedUserId = new URL(request.url).searchParams.get("userId")?.trim() || "";
+  const userId = await resolveServerUserScopeId(requestedUserId);
+  const removed = await deletePresentation(id, userId);
   if (!removed) {
     return NextResponse.json({ error: "Presentation not found." }, { status: 404 });
   }

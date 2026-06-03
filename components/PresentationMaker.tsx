@@ -427,7 +427,8 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
   const restoreDraft = useCallback(async (id: string) => {
     isRestoringRef.current = true;
     try {
-      const res = await fetch(`/api/presentations/${encodeURIComponent(id)}`);
+      const q = userScopeId ? `?userId=${encodeURIComponent(userScopeId)}` : "";
+      const res = await fetch(`/api/presentations/${encodeURIComponent(id)}${q}`);
       if (!res.ok) return;
       const data = (await res.json()) as { presentation?: PresentationDraftClient };
       const p = data.presentation;
@@ -454,18 +455,19 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
       // release the restore lock after state settles
       setTimeout(() => { isRestoringRef.current = false; }, 300);
     }
-  }, []);
+  }, [userScopeId]);
 
   /* ---- delete a saved draft ---- */
   const deleteDraft = useCallback(async (id: string) => {
     try {
-      await fetch(`/api/presentations/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const q = userScopeId ? `?userId=${encodeURIComponent(userScopeId)}` : "";
+      await fetch(`/api/presentations/${encodeURIComponent(id)}${q}`, { method: "DELETE" });
       setSavedDrafts((prev) => prev.filter((d) => d.id !== id));
       if (id === presentationId) {
         setPresentationId(null);
       }
     } catch { /* ignore */ }
-  }, [presentationId]);
+  }, [presentationId, userScopeId]);
 
   /* ================================================================
      Step 1 - AI outline generation
