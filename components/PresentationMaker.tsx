@@ -175,9 +175,11 @@ const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
 
 interface PresentationMakerProps {
   initialProjectId?: string;
+  /** When set, auto-restore this saved draft on mount (open an existing deck). */
+  initialPresentationId?: string;
 }
 
-export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialProjectId }) => {
+export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialProjectId, initialPresentationId }) => {
   const { data: session } = useSession();
   const credits = useCredits();
 
@@ -456,6 +458,15 @@ export const PresentationMaker: React.FC<PresentationMakerProps> = ({ initialPro
       setTimeout(() => { isRestoringRef.current = false; }, 300);
     }
   }, [userScopeId]);
+
+  /* ---- entry C: auto-open a specific saved draft (from project page) ---- */
+  const appliedInitialDeckRef = React.useRef(false);
+  useEffect(() => {
+    if (initialPresentationId && !appliedInitialDeckRef.current) {
+      appliedInitialDeckRef.current = true;
+      void restoreDraft(initialPresentationId);
+    }
+  }, [initialPresentationId, restoreDraft]);
 
   /* ---- delete a saved draft ---- */
   const deleteDraft = useCallback(async (id: string) => {

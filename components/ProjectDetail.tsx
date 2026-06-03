@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./Button";
 import {
   Project,
@@ -342,6 +342,33 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
     })();
     return () => { cancelled = true; };
   }, [project.id]);
+
+  /* 本專案連結的簡報（儀表板列表用） */
+  const [projectPresentations, setProjectPresentations] = useState<
+    Array<{ id: string; title: string; updatedAt: string; slideCount: number }>
+  >([]);
+  const [openPresentationId, setOpenPresentationId] = useState<string | null>(null);
+
+  const loadProjectPresentations = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/presentations?projectId=${encodeURIComponent(project.id)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = (data.presentations || []).map(
+        (p: { id: string; title?: string; updatedAt?: string; slides?: unknown[] }) => ({
+          id: p.id,
+          title: p.title || "未命名簡報",
+          updatedAt: p.updatedAt || "",
+          slideCount: Array.isArray(p.slides) ? p.slides.length : 0,
+        }),
+      );
+      setProjectPresentations(list);
+    } catch { /* ignore */ }
+  }, [project.id]);
+
+  useEffect(() => {
+    void loadProjectPresentations();
+  }, [loadProjectPresentations]);
 
   useEffect(() => {
     setDraft(normalizeDraftProject(project));
@@ -1264,6 +1291,46 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
             )}
           </div>
 
+          {/* 本專案連結的簡報 */}
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><Presentation className="w-4 h-4 text-brand-600" /> 專案簡報</h3>
+                <p className="text-xs text-gray-500 mt-0.5">由本專案生成的提案簡報（共 {projectPresentations.length} 份）。點擊可開啟續編、匯出。</p>
+              </div>
+              <Button size="sm" variant="outline" className="gap-1" onClick={() => { setOpenPresentationId(null); setPresentationFullscreen(true); }}>
+                <Plus className="w-4 h-4" /> 新增簡報
+              </Button>
+            </div>
+            {projectPresentations.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg">
+                尚無簡報。點「新增簡報」即可從本專案的報價、需求、圖庫一鍵生成提案。
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {projectPresentations.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => { setOpenPresentationId(p.id); setPresentationFullscreen(true); }}
+                    className="group text-left rounded-lg border border-gray-200 hover:border-brand-400 hover:shadow-sm transition p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="shrink-0 w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center">
+                        <Presentation className="w-4 h-4 text-brand-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-brand-700">{p.title}</p>
+                        <p className="text-[11px] text-gray-500">
+                          {p.slideCount} 頁{p.updatedAt ? ` · ${new Date(p.updatedAt).toLocaleDateString("zh-TW")}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -1476,14 +1543,14 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({
       {presentationFullscreen && (
         <div className="fixed inset-0 z-[70] bg-gray-50 flex flex-col">
           <div className="bg-white border-b border-gray-200 px-4 md:px-8 py-3 flex items-center gap-3 shadow-sm shrink-0">
-            <button onClick={() => setPresentationFullscreen(false)} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium">
+            <button onClick={() => { setPresentationFullscreen(false); setOpenPresentationId(null); void loadProjectPresentations(); }} className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand-700 font-medium">
               <ArrowLeft className="w-5 h-5" /> 返回專案管理
             </button>
             <span className="text-gray-300">|</span>
-            <h1 className="text-base font-bold text-gray-800">生成提案簡報 · {draft.name}</h1>
+            <h1 className="text-base font-bold text-gray-800">{openPresentationId ? "續編簡報" : "生成提案簡報"} · {draft.name}</h1>
           </div>
           <div className="flex-1 overflow-auto p-4 md:p-6">
-            <PresentationMaker initialProjectId={project.id} />
+            <PresentationMaker key={openPresentationId ?? "new"} initialProjectId={project.id} initialPresentationId={openPresentationId ?? undefined} />
           </div>
         </div>
       )}
