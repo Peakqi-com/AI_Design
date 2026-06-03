@@ -26,3 +26,6 @@ public/crm-uploads
 *.njsproj
 *.sln
 *.sw?
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
