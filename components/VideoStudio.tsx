@@ -587,6 +587,8 @@ interface VideoStudioProps {
     aspectRatio?: string;
     mode?: string;
     durationSec?: number;
+    imageUrl?: string;
+    sourceImageUrl?: string;
   };
 }
 
@@ -630,6 +632,18 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({ restore }) => {
   const [uploadedAssetKind, setUploadedAssetKind] = useState<"image" | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("尚未上傳");
   const [lastFrameImage, setLastFrameImage] = useState<string | null>(null);
+
+  /* 帶回來源圖（圖生影片）：把媒體庫帶回的圖載入為來源素材 */
+  const restoreImgAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!restore || restoreImgAppliedRef.current) return;
+    restoreImgAppliedRef.current = true;
+    const srcUrl = restore.sourceImageUrl || restore.imageUrl;
+    if (!srcUrl) return;
+    setUploadedAssetUrl(srcUrl);
+    setUploadedAssetKind("image");
+    setUploadedFileName("帶回的來源圖");
+  }, [restore]);
   const [platformPreset, setPlatformPreset] = useState<PlatformPreset>("custom");
 
   const [resultVideoUrl, setResultVideoUrl] = useState<string | null>(null);
@@ -797,6 +811,10 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({ restore }) => {
           durationSec: input.durationSec,
           prompt: input.prompt,
           summary: input.metaText,
+          // 圖生影片：若來源圖是 http 圖床網址則一併存，帶回時還原
+          ...(uploadedAssetUrl && /^https?:\/\//.test(uploadedAssetUrl)
+            ? { sourceImageUrl: uploadedAssetUrl }
+            : {}),
         }),
       );
       const response = await requestJson<SocialAssetSaveResponse>("/api/social/assets", {
@@ -808,7 +826,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({ restore }) => {
       }
       return toGeneratedVideoItem(response.item);
     },
-    [toGeneratedVideoItem, userScopeId],
+    [toGeneratedVideoItem, userScopeId, uploadedAssetUrl],
   );
 
   const loadServerHistory = useCallback(async () => {

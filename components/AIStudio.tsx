@@ -503,6 +503,7 @@ interface AIStudioProps {
     generationPrompt?: string;
     roomType?: string;
     imageUrl?: string;
+    sourceImageUrl?: string;
   };
   /** 從專案內進入時預選關聯專案，生成的圖自動歸到此專案 */
   initialProjectId?: string;
@@ -538,7 +539,25 @@ export const AIStudio: React.FC<AIStudioProps> = ({ restore, initialProjectId })
     const text = restore.prompt || restore.generationPrompt || "";
     if (text) setDesignerPrompt(text);
     if (restore.roomType) setSelectedRoomType(restore.roomType);
-    setRestoreNotice("已帶入原生成設定，請上傳線稿/空間圖後重新生成");
+    // 帶回來源圖（原始來源圖優先，否則用結果圖當基底）
+    const srcUrl = restore.sourceImageUrl || restore.imageUrl;
+    if (srcUrl) {
+      (async () => {
+        try {
+          const res = await fetch(srcUrl);
+          const blob = await res.blob();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ""));
+            reader.readAsDataURL(blob);
+          });
+          if (dataUrl) { setUploadedImage(dataUrl); setUploadedFileName("帶回的來源圖"); }
+        } catch { /* ignore */ }
+      })();
+      setRestoreNotice("已帶入原提示詞與來源圖，可修改後重新生成");
+    } else {
+      setRestoreNotice("已帶入原生成設定，請上傳線稿/空間圖後重新生成");
+    }
     setTimeout(() => setRestoreNotice(null), 7000);
   }, [restore]);
   const [generationProgress, setGenerationProgress] = useState(0);

@@ -15,6 +15,7 @@ interface AssetMeta {
   slotLabel?: string;
   prompt?: string;
   generationPrompt?: string;
+  sourceImageUrl?: string;
   aspectRatio?: string;
   durationSec?: number;
   blobUrl?: string;
@@ -51,6 +52,7 @@ interface GenerationRestorePayload {
   sourceType?: string;
   durationSec?: number;
   imageUrl?: string;
+  sourceImageUrl?: string;
 }
 
 interface MediaLibraryProps {
@@ -107,6 +109,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ onRestoreGeneration 
       model: meta.model,
       durationSec: meta.durationSec,
       imageUrl: asset.url,
+      sourceImageUrl: meta.sourceImageUrl,
     };
     // 判斷目標生成器
     let target: "ai-studio" | "ai-chat" | "video-studio";
@@ -630,7 +633,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ onRestoreGeneration 
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {onRestoreGeneration && (previewItem.meta?.prompt || previewItem.meta?.generationPrompt) && (
+                {onRestoreGeneration && (
                   <button
                     onClick={() => restoreToGenerator(previewItem)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"

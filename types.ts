@@ -15,6 +15,7 @@ export interface GenerationRestore {
   sourceType?: string;
   durationSec?: number;
   imageUrl?: string;
+  sourceImageUrl?: string;
 }
 
 export interface User {

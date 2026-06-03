@@ -44,6 +44,7 @@ export interface SocialAssetMeta {
   durationSec?: number;
   prompt?: string;
   generationPrompt?: string; // full prompt used for AI generation
+  sourceImageUrl?: string; // 圖生圖/圖生影片的原始來源圖（帶回時還原）
   summary?: string;
   roomType?: string;
   dressName?: string;

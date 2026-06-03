@@ -39,6 +39,7 @@ interface AIChatImageProps {
     style?: string;
     aspectRatio?: string;
     imageUrl?: string;
+    sourceImageUrl?: string;
   };
 }
 
@@ -63,7 +64,7 @@ export const AIChatImage: React.FC<AIChatImageProps> = ({ restore }) => {
   const [selectedRatio, setSelectedRatio] = useState("1:1");
   const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
 
-  /* 從媒體庫帶回生成設定（提示詞、比例） */
+  /* 從媒體庫帶回生成設定（提示詞、比例、來源圖） */
   const restoreAppliedRef = useRef(false);
   useEffect(() => {
     if (!restore || restoreAppliedRef.current) return;
@@ -71,7 +72,23 @@ export const AIChatImage: React.FC<AIChatImageProps> = ({ restore }) => {
     const text = restore.prompt || restore.generationPrompt || "";
     if (text) setInput(text);
     if (restore.aspectRatio) setSelectedRatio(restore.aspectRatio);
-    setRestoreNotice("已帶入原生成設定，可修改後重新生成");
+    // 帶回來源圖（優先用原始來源圖，否則用結果圖當作再生成的基底）
+    const srcUrl = restore.sourceImageUrl || restore.imageUrl;
+    if (srcUrl) {
+      (async () => {
+        try {
+          const res = await fetch(srcUrl);
+          const blob = await res.blob();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ""));
+            reader.readAsDataURL(blob);
+          });
+          if (dataUrl) setUploadedImage(dataUrl);
+        } catch { /* ignore */ }
+      })();
+    }
+    setRestoreNotice("已帶入原提示詞與來源圖，可修改後重新生成");
     setTimeout(() => setRestoreNotice(null), 6000);
   }, [restore]);
 
