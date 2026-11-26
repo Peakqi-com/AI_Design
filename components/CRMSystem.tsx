@@ -1,66 +1,115 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
-  CheckCircle,
-  Copy,
-  Link as LinkIcon,
+  AlertTriangle,
+  Calculator,
+  Camera,
+  Check,
+  ClipboardCopy,
+  Edit3,
+  ExternalLink,
+  FileText,
+  FolderPlus,
+  Link2,
+  ListChecks,
+  Phone,
+  Mail,
+  MapPin,
+  Building,
+  Briefcase,
   MessageCircle,
-  Paperclip,
+  Plus,
+  RefreshCw,
   Search,
-  Send,
   Settings,
-  Smartphone,
+  Sparkles,
   Tag,
+  Trash2,
+  Unlink,
+  Upload,
+  User,
   UserCircle,
   X,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
-import { CrmInteriorIntakePanel } from "./CrmInteriorIntakePanel";
+import { useCredits } from "@/lib/client/use-credits";
+import { buildPricingReferenceText, COMMON_UNITS } from "@/lib/crm/pricing-standards";
 
-type ContactStatus = "new" | "contacted" | "proposal" | "signed";
-type ContactSource = "line" | "manual";
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
 
 interface CrmContact {
   id: string;
-  source: ContactSource;
-  lineUserId?: string;
+  source: "line" | "manual";
   displayName: string;
   avatarUrl?: string | null;
   tags: string[];
-  status: ContactStatus;
+  status: "new" | "contacted" | "proposal" | "signed";
   email?: string;
   phone?: string;
+  company?: string;
+  title?: string;
+  address?: string;
+  notes?: string;
+  cardImageUrl?: string;
   unread: number;
   lastMessageText?: string;
   lastMessageAt?: string;
-  updatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-interface CrmAttachment {
+type StatusFilter = "all" | "new" | "contacted" | "proposal" | "signed";
+
+const STATUS_LABELS: Record<StatusFilter, string> = {
+  all: "全部",
+  new: "新客戶",
+  contacted: "已聯繫",
+  proposal: "提案中",
+  signed: "已簽約",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  new: "bg-blue-100 text-blue-700",
+  contacted: "bg-yellow-100 text-yellow-700",
+  proposal: "bg-purple-100 text-purple-700",
+  signed: "bg-green-100 text-green-700",
+};
+
+type CrmTab = "contacts" | "line-settings" | "pricing" | "tags";
+
+interface TagDef {
   id: string;
-  type: "image" | "file" | "video" | "audio";
-  storage: "public_url" | "inline_base64" | "metadata_only";
-  name?: string;
-  mimeType?: string;
-  size?: number;
-  url?: string;
-  dataUrl?: string;
+  name: string;
+  color: string;
+  autoKeywords?: string[];
 }
 
-interface CrmMessage {
+const TAG_COLORS = ["gray", "blue", "green", "amber", "red", "purple", "pink", "teal"] as const;
+const TAG_COLOR_CLASS: Record<string, string> = {
+  gray: "bg-gray-100 text-gray-700",
+  blue: "bg-blue-100 text-blue-700",
+  green: "bg-green-100 text-green-700",
+  amber: "bg-amber-100 text-amber-700",
+  red: "bg-red-100 text-red-700",
+  purple: "bg-purple-100 text-purple-700",
+  pink: "bg-pink-100 text-pink-700",
+  teal: "bg-teal-100 text-teal-700",
+};
+
+interface PricingItem {
   id: string;
-  contactId: string;
-  source: "line" | "crm";
-  direction: "inbound" | "outbound";
-  senderType: "customer" | "agent" | "system";
-  messageType: "text" | "image" | "file" | "video" | "audio" | "sticker" | "location" | "system";
-  text?: string;
-  timestamp: string;
-  attachment?: CrmAttachment;
+  name: string;
+  unit: string;
+  unitPrice: number;
+  category: string;
+  aliases?: string[];
+  note?: string;
 }
 
-interface LineSettings {
+interface LineSettingsData {
   connected: boolean;
   channelId: string;
   hasChannelAccessToken: boolean;
@@ -72,2072 +121,3051 @@ interface LineSettings {
   lastWebhookFailedCount: number;
   lastWebhookError: string | null;
   webhookUrl: string;
-  storageBackend?: "redis" | "file";
+  storageBackend: string;
 }
 
-interface CrmUiCache {
-  contacts: CrmContact[];
-  selectedContactId: string | null;
-  messagesByContact: Record<string, CrmMessage[]>;
-  cachedAt: string;
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
+interface CRMSystemProps {
+  onNavigateToProjects?: () => void;
 }
 
-const CRM_UI_CACHE_KEY = "aidesign:crm-ui-cache:v1";
-const CRM_PROFILE_DRAFT_KEY = "aidesign:crm-profile-draft:v1";
-const CRM_LINE_FORM_CACHE_KEY_PREFIX = "aidesign:line-form-cache:v1:";
-const CRM_LINE_SETTINGS_CACHE_KEY_PREFIX = "aidesign:line-settings-cache:v1:";
-const MAX_CACHE_CONTACTS = 120;
-const MAX_CACHE_MESSAGES_PER_CONTACT = 120;
-const INBOX_POLL_MS = 10000;
-const NOTICE_DEDUP_TTL_MS = 12000;
-
-interface ContactProfileForm {
-  displayName: string;
-  phone: string;
-  email: string;
-}
-
-interface LineFormState {
-  channelId: string;
-  channelAccessToken: string;
-  channelSecret: string;
-}
-
-const STATUS_LABELS: Record<ContactStatus, string> = {
-  new: "新客戶",
-  contacted: "已聯繫",
-  proposal: "提案中",
-  signed: "已簽約",
-};
-
-const formatTime = (iso?: string): string => {
-  if (!iso) {
-    return "--";
-  }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("zh-TW", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-};
-
-const getMessagePreview = (message: CrmMessage): string => {
-  if (message.text?.trim()) {
-    return message.text;
-  }
-  if (message.messageType === "sticker") {
-    return "[LINE 貼圖]";
-  }
-  if (message.messageType === "location") {
-    return "[位置訊息]";
-  }
-  if (!message.attachment) {
-    return "[訊息]";
-  }
-  if (message.attachment.type === "image") {
-    return "[圖片]";
-  }
-  if (message.attachment.type === "video") {
-    return "[影片]";
-  }
-  if (message.attachment.type === "audio") {
-    return "[語音]";
-  }
-  return "[檔案]";
-};
-
-async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const method = (
-    init?.method ??
-    (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
-  ).toUpperCase();
-  const allowRetry = method === "GET";
-
-  let response: Response;
-  const endpointLabel =
-    typeof input === "string"
-      ? input
-      : typeof Request !== "undefined" && input instanceof Request
-        ? input.url
-        : "request";
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      response = await fetch(input, init);
-      break;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch";
-      const transient = /failed to fetch|fetch failed|networkerror|network request failed/i.test(
-        message.toLowerCase(),
-      );
-      if (!allowRetry || !transient || attempt >= 1) {
-        throw new Error(message);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
-    }
-  }
-
-  const raw = await response.text();
-  let payload: (T & { error?: string }) | null = null;
-  if (raw) {
-    try {
-      payload = JSON.parse(raw) as T & { error?: string };
-    } catch {
-      payload = null;
-    }
-  }
-  if (!response.ok) {
-    if (payload?.error) {
-      const suffix = response.status >= 500 ? ` [${method} ${endpointLabel}]` : "";
-      throw new Error(`${payload.error}${suffix}`);
-    }
-    const nonJsonText = raw.trim().slice(0, 160);
-    throw new Error(nonJsonText || `Request failed (${response.status}) [${method} ${endpointLabel}].`);
-  }
-  if (!payload) {
-    if (!raw) {
-      return {} as T;
-    }
-    throw new Error("Server returned non-JSON response.");
-  }
-  return payload;
-}
-
-const getAvatarInitial = (name: string): string => {
-  const first = name.trim().charAt(0);
-  return first || "客";
-};
-
-const toContactProfileForm = (contact: CrmContact): ContactProfileForm => ({
-  displayName: contact.displayName || "",
-  phone: contact.phone || "",
-  email: contact.email || "",
-});
-
-const isSameProfileForm = (a: ContactProfileForm, b: ContactProfileForm): boolean =>
-  a.displayName === b.displayName && a.phone === b.phone && a.email === b.email;
-
-const loadProfileDraftMap = (): Record<string, ContactProfileForm> => {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(CRM_PROFILE_DRAFT_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as Record<string, ContactProfileForm>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const saveProfileDraftMap = (drafts: Record<string, ContactProfileForm>): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(CRM_PROFILE_DRAFT_KEY, JSON.stringify(drafts));
-  } catch {
-    // local cache only, ignore storage errors.
-  }
-};
-
-const loadLineFormCache = (scope: string): Partial<LineFormState> => {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(`${CRM_LINE_FORM_CACHE_KEY_PREFIX}${scope}`);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as Partial<LineFormState>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const saveLineFormCache = (form: LineFormState, scope: string): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(`${CRM_LINE_FORM_CACHE_KEY_PREFIX}${scope}`, JSON.stringify(form));
-  } catch {
-    // ignore storage errors for optional cache.
-  }
-};
-
-const clearLineFormCache = (scope: string): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(`${CRM_LINE_FORM_CACHE_KEY_PREFIX}${scope}`);
-  } catch {
-    // ignore storage errors.
-  }
-};
-
-const loadLineSettingsCache = (scope: string): Partial<LineSettings> => {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(`${CRM_LINE_SETTINGS_CACHE_KEY_PREFIX}${scope}`);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as Partial<LineSettings>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const saveLineSettingsCache = (settings: LineSettings, scope: string): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(`${CRM_LINE_SETTINGS_CACHE_KEY_PREFIX}${scope}`, JSON.stringify(settings));
-  } catch {
-    // ignore storage errors.
-  }
-};
-
-const clearLineSettingsCache = (scope: string): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(`${CRM_LINE_SETTINGS_CACHE_KEY_PREFIX}${scope}`);
-  } catch {
-    // ignore storage errors.
-  }
-};
-
-const isContactNotFoundError = (message: string): boolean => /contact not found/i.test(message);
-const isTransientFetchError = (message: string): boolean =>
-  /failed to fetch|fetch failed|networkerror|network request failed|request failed \(5\d\d\)|internal server error|service unavailable|bad gateway|gateway timeout|upstream|temporarily unavailable|crm 暫時忙碌/i.test(
-    message.toLowerCase(),
-  );
-
-const areContactListsEqual = (a: CrmContact[], b: CrmContact[]): boolean => {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i += 1) {
-    const left = a[i];
-    const right = b[i];
-    if (
-      left.id !== right.id ||
-      left.updatedAt !== right.updatedAt ||
-      left.unread !== right.unread ||
-      left.lastMessageAt !== right.lastMessageAt
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const areMessageListsEqual = (a: CrmMessage[], b: CrmMessage[]): boolean => {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i += 1) {
-    const left = a[i];
-    const right = b[i];
-    if (
-      left.id !== right.id ||
-      left.timestamp !== right.timestamp ||
-      left.text !== right.text ||
-      left.direction !== right.direction ||
-      left.messageType !== right.messageType
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const mergeMessagesById = (primary: CrmMessage[], fallback: CrmMessage[]): CrmMessage[] => {
-  if (primary.length === 0) {
-    return fallback;
-  }
-  if (fallback.length === 0) {
-    return primary;
-  }
-
-  const merged = new Map<string, CrmMessage>();
-  for (const message of fallback) {
-    merged.set(message.id, message);
-  }
-  for (const message of primary) {
-    merged.set(message.id, message);
-  }
-
-  return Array.from(merged.values()).sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  );
-};
-
-const filterContactsLocal = (
-  items: CrmContact[],
-  searchText: string,
-  tagText: string,
-): CrmContact[] => {
-  const searchKey = searchText.trim().toLowerCase();
-  const tagKey = tagText.trim();
-  return items
-    .filter((contact) => {
-      const hitSearch = !searchKey
-        ? true
-        : [
-            contact.displayName,
-            contact.email ?? "",
-            contact.phone ?? "",
-            contact.lineUserId ?? "",
-            ...contact.tags,
-          ]
-            .join(" ")
-            .toLowerCase()
-            .includes(searchKey);
-      const hitTag = !tagKey ? true : contact.tags.includes(tagKey);
-      return hitSearch && hitTag;
-    })
-    .sort((a, b) => {
-      const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-      const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-      return timeB - timeA;
-    });
-};
-
-const loadCrmUiCache = (): CrmUiCache | null => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(CRM_UI_CACHE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as Partial<CrmUiCache>;
-    if (!Array.isArray(parsed.contacts) || !parsed.messagesByContact) {
-      return null;
-    }
-    return {
-      contacts: parsed.contacts as CrmContact[],
-      selectedContactId:
-        typeof parsed.selectedContactId === "string" || parsed.selectedContactId === null
-          ? parsed.selectedContactId
-          : null,
-      messagesByContact: parsed.messagesByContact as Record<string, CrmMessage[]>,
-      cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : new Date().toISOString(),
-    };
-  } catch {
-    return null;
-  }
-};
-
-const saveCrmUiCache = (cache: CrmUiCache): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(CRM_UI_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // Ignore quota/permission errors; cache is best-effort only.
-  }
-};
-
-export const CRMSystem: React.FC = () => {
+export const CRMSystem: React.FC<CRMSystemProps> = ({ onNavigateToProjects }) => {
   const { data: session } = useSession();
-  const [activeTab, setActiveTab] = useState<"inbox" | "settings">("inbox");
-  const [showProfile, setShowProfile] = useState(true);
-  const [contacts, setContacts] = useState<CrmContact[]>([]);
-  const [messages, setMessages] = useState<CrmMessage[]>([]);
-  const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [filterTag, setFilterTag] = useState("");
-  const [newTagInput, setNewTagInput] = useState("");
-  const [composer, setComposer] = useState("");
-  const [profileForm, setProfileForm] = useState<ContactProfileForm>({
-    displayName: "",
-    phone: "",
-    email: "",
-  });
-  const [profileDirty, setProfileDirty] = useState(false);
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [tagBusy, setTagBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loadingContacts, setLoadingContacts] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [settingsBusy, setSettingsBusy] = useState(false);
-  const [lineSettings, setLineSettings] = useState<LineSettings>({
-    connected: false,
-    channelId: "",
-    hasChannelAccessToken: false,
-    hasChannelSecret: false,
-    updatedAt: null,
-    lastWebhookAt: null,
-    lastWebhookEventCount: 0,
-    lastWebhookProcessedCount: 0,
-    lastWebhookFailedCount: 0,
-    lastWebhookError: null,
-    webhookUrl: "",
-    storageBackend: "file",
-  });
-  const [lineForm, setLineForm] = useState<LineFormState>({
-    channelId: "",
-    channelAccessToken: "",
-    channelSecret: "",
-  });
-  const [lineCacheScope, setLineCacheScope] = useState("guest_server");
-  const [isInteriorIntakeComplete, setIsInteriorIntakeComplete] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const contactsRef = useRef<CrmContact[]>([]);
-  const messagesByContactRef = useRef<Record<string, CrmMessage[]>>({});
-  const selectedContactIdRef = useRef<string | null>(null);
-  const cacheHydratedRef = useRef(false);
-  const profileDraftsRef = useRef<Record<string, ContactProfileForm>>({});
-  const profileBoundContactIdRef = useRef<string | null>(null);
-  const noticeHistoryRef = useRef<Record<string, number>>({});
-  const composerFocusedRef = useRef(false);
-  const contactsFetchInFlightRef = useRef(false);
-  const messagesFetchInFlightRef = useRef<Record<string, boolean>>({});
-  const lastInboxSyncAtRef = useRef(0);
-  const lineAutoReconnectAttemptedRef = useRef(false);
-
-  const selectedContact = useMemo(
-    () => contacts.find((contact) => contact.id === selectedContactId) ?? null,
-    [contacts, selectedContactId],
+  const credits = useCredits();
+  const sessionUser = session?.user as Record<string, unknown> | undefined;
+  const userScope = resolveClientUserScopeId(
+    (sessionUser?.id ?? sessionUser?.sub) as string | undefined,
+    session?.user?.email,
   );
 
-  useEffect(() => {
-    setIsInteriorIntakeComplete(false);
-  }, [selectedContactId]);
+  /* ---- state ---- */
+  const [activeTab, setActiveTab] = useState<CrmTab>("contacts");
+  const [contacts, setContacts] = useState<CrmContact[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const pushNotice = useCallback((key: string, message: string) => {
-    const now = Date.now();
-    const lastAt = noticeHistoryRef.current[key] || 0;
-    if (now - lastAt < NOTICE_DEDUP_TTL_MS) {
-      return;
-    }
-    noticeHistoryRef.current[key] = now;
-    setNotice(message);
-  }, []);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showScanModal, setShowScanModal] = useState(false);
 
-  useEffect(() => {
-    contactsRef.current = contacts;
-  }, [contacts]);
+  /* detail panel edits */
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [newTag, setNewTag] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
+  const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    selectedContactIdRef.current = selectedContactId;
-  }, [selectedContactId]);
+  /* add-client form */
+  const [addForm, setAddForm] = useState({
+    displayName: "",
+    email: "",
+    phone: "",
+    company: "",
+    title: "",
+    address: "",
+    notes: "",
+    tags: "",
+  });
 
-  useEffect(() => {
-    profileDraftsRef.current = loadProfileDraftMap();
-  }, []);
+  /* scan card */
+  const [cardImage, setCardImage] = useState<string | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanResult, setScanResult] = useState<Record<string, string> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
-    setLineCacheScope(resolveClientUserScopeId(sessionUser?.id || null, sessionUser?.email || null));
-  }, [session?.user]);
+  /* LINE OA settings */
+  const [lineData, setLineData] = useState<LineSettingsData | null>(null);
+  const [lineLoading, setLineLoading] = useState(false);
+  const [lineSaving, setLineSaving] = useState(false);
+  const [lineForm, setLineForm] = useState({ channelId: "", channelAccessToken: "", channelSecret: "" });
+  const [lineMsg, setLineMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    setLineSettings((prev) => ({
-      ...prev,
-      connected: false,
-      channelId: "",
-      hasChannelAccessToken: false,
-      hasChannelSecret: false,
-      updatedAt: null,
-      lastWebhookAt: null,
-      lastWebhookEventCount: 0,
-      lastWebhookProcessedCount: 0,
-      lastWebhookFailedCount: 0,
-      lastWebhookError: null,
-    }));
-    setLineForm({
-      channelId: "",
-      channelAccessToken: "",
-      channelSecret: "",
-    });
+  /* LINE 自動回覆設定 */
+  interface AutoReplyRuleUI { id: string; keywords: string[]; reply: string; enabled?: boolean }
+  const [welcomeEnabled, setWelcomeEnabled] = useState(false);
+  const [welcomeMessage, setWelcomeMessage] = useState("");
+  const [replyRules, setReplyRules] = useState<AutoReplyRuleUI[]>([]);
+  const [autoReplySaving, setAutoReplySaving] = useState(false);
+  const [autoReplyDirty, setAutoReplyDirty] = useState(false);
+  const [autoReplyMsg, setAutoReplyMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-    const cachedSettings = loadLineSettingsCache(lineCacheScope);
-    if (cachedSettings && (cachedSettings.channelId || cachedSettings.webhookUrl)) {
-      setLineSettings((prev) => ({
-        ...prev,
-        ...cachedSettings,
-      }));
-    }
+  const autoReplyHeaders = (): Record<string, string> => ({
+    "Content-Type": "application/json",
+    ...(userScopeRef.current ? { "x-user-scope": userScopeRef.current } : {}),
+  });
 
-    const cached = loadLineFormCache(lineCacheScope);
-    if (!cached.channelId && !cached.channelAccessToken && !cached.channelSecret) {
-      return;
-    }
-    setLineForm((prev) => ({
-      channelId: cached.channelId || prev.channelId,
-      channelAccessToken: cached.channelAccessToken || prev.channelAccessToken,
-      channelSecret: cached.channelSecret || prev.channelSecret,
-    }));
-    lineAutoReconnectAttemptedRef.current = false;
-  }, [lineCacheScope]);
-
-  useEffect(() => {
-    saveLineFormCache(lineForm, lineCacheScope);
-  }, [lineCacheScope, lineForm]);
-
-  useEffect(() => {
-    saveLineSettingsCache(lineSettings, lineCacheScope);
-  }, [lineCacheScope, lineSettings]);
-
-  const updateContactInList = useCallback((updated: CrmContact) => {
-    setContacts((prev) => prev.map((contact) => (contact.id === updated.id ? updated : contact)));
-  }, []);
-
-  useEffect(() => {
-    if (cacheHydratedRef.current) {
-      return;
-    }
-    cacheHydratedRef.current = true;
-    const cached = loadCrmUiCache();
-    if (!cached || cached.contacts.length === 0) {
-      return;
-    }
-
-    messagesByContactRef.current = cached.messagesByContact;
-    setContacts(cached.contacts);
-
-    const nextSelected =
-      cached.selectedContactId && cached.contacts.some((item) => item.id === cached.selectedContactId)
-        ? cached.selectedContactId
-        : cached.contacts[0]?.id ?? null;
-
-    setSelectedContactId(nextSelected);
-    if (nextSelected) {
-      const cachedMessages = cached.messagesByContact[nextSelected] ?? [];
-      if (cachedMessages.length > 0) {
-        setMessages(cachedMessages);
+  const fetchAutoReply = useCallback(async () => {
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/auto-reply${params}`, { headers: autoReplyHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.config || {};
+        setWelcomeEnabled(Boolean(cfg.welcomeEnabled));
+        setWelcomeMessage(cfg.welcomeMessage || "");
+        setReplyRules((cfg.rules || []).map((r: AutoReplyRuleUI) => ({ ...r })));
+        setAutoReplyDirty(false);
       }
-    }
+    } catch { /* ignore */ }
   }, []);
 
+  const saveAutoReply = async () => {
+    setAutoReplySaving(true);
+    setAutoReplyMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const res = await fetch(`/api/crm/settings/auto-reply`, {
+        method: "PUT",
+        headers: autoReplyHeaders(),
+        body: JSON.stringify({ userId: scope, config: { welcomeEnabled, welcomeMessage, rules: replyRules } }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.config || {};
+        setReplyRules((cfg.rules || []).map((r: AutoReplyRuleUI) => ({ ...r })));
+        setAutoReplyDirty(false);
+        setAutoReplyMsg({ type: "ok", text: "已儲存。歡迎訊息與關鍵字自動回覆已生效" });
+      } else {
+        setAutoReplyMsg({ type: "err", text: "儲存失敗" });
+      }
+    } catch {
+      setAutoReplyMsg({ type: "err", text: "網路錯誤" });
+    } finally {
+      setAutoReplySaving(false);
+    }
+  };
+
+  const addReplyRule = () => {
+    setReplyRules((prev) => [...prev, { id: `new_${Date.now()}`, keywords: [], reply: "", enabled: true }]);
+    setAutoReplyDirty(true);
+  };
+  const updateReplyRule = (id: string, patch: Partial<AutoReplyRuleUI>) => {
+    setReplyRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setAutoReplyDirty(true);
+  };
+  const removeReplyRule = (id: string) => {
+    setReplyRules((prev) => prev.filter((r) => r.id !== id));
+    setAutoReplyDirty(true);
+  };
+
+  /* 依標籤群發 */
+  const [broadcastTag, setBroadcastTag] = useState("");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastMsg, setBroadcastMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const sendBroadcast = async () => {
+    const msg = broadcastMessage.trim();
+    if (!msg) { setBroadcastMsg({ type: "err", text: "請輸入群發訊息內容" }); return; }
+    if (!confirm(broadcastTag ? `確定要群發給標籤「${broadcastTag}」的所有 LINE 客戶嗎？` : "確定要群發給所有 LINE 客戶嗎？")) return;
+    setBroadcasting(true);
+    setBroadcastMsg(null);
+    try {
+      const res = await fetch(`/api/crm/broadcast`, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ userId: userScopeRef.current, tag: broadcastTag, message: msg }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setBroadcastMsg({ type: "ok", text: `已送出 ${data.sent || 0} 則（失敗 ${data.failed || 0}，共 ${data.total || 0} 位）` });
+        setBroadcastMessage("");
+      } else {
+        setBroadcastMsg({ type: "err", text: data.error || "群發失敗" });
+      }
+    } catch {
+      setBroadcastMsg({ type: "err", text: "網路錯誤" });
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
+  const selected = contacts.find((c) => c.id === selectedId) ?? null;
+  const hasFetched = useRef(false);
+  const userScopeRef = useRef(userScope);
+  userScopeRef.current = userScope;
+
+  /* ---- helpers ---- */
+  const buildHeaders = useCallback(
+    (): Record<string, string> => ({
+      "Content-Type": "application/json",
+      ...(userScopeRef.current ? { "x-user-scope": userScopeRef.current } : {}),
+    }),
+    [],
+  );
+
+  /* ---- fetch contacts (no flashing on background refresh) ---- */
+  const fetchContacts = useCallback(async () => {
+    const isInitial = !hasFetched.current;
+    if (isInitial) setLoading(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = new URLSearchParams();
+      if (scope) params.set("userId", scope);
+      if (searchQuery) params.set("search", searchQuery);
+      if (statusFilter !== "all") params.set("tag", statusFilter);
+      const res = await fetch(`/api/crm/contacts?${params.toString()}`, {
+        headers: buildHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setContacts(data.contacts ?? data);
+        hasFetched.current = true;
+      }
+    } catch {
+      /* network error — leave list as-is */
+    } finally {
+      if (isInitial) setLoading(false);
+    }
+  }, [searchQuery, statusFilter, buildHeaders]);
+
   useEffect(() => {
-    if (!selectedContact) {
-      profileBoundContactIdRef.current = null;
-      setProfileForm({ displayName: "", phone: "", email: "" });
-      setProfileDirty(false);
+    if (userScope) fetchContacts();
+  }, [userScope, searchQuery, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- fetch LINE settings ---- */
+  const fetchLineSettings = useCallback(async () => {
+    setLineLoading(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/line${params}`, { headers: buildHeaders() });
+      if (res.ok) {
+        setLineData(await res.json());
+      }
+    } catch { /* ignore */ } finally {
+      setLineLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (activeTab === "line-settings" && userScope) { fetchLineSettings(); fetchAutoReply(); fetchTagDefs(); }
+  }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- pricing standards ---- */
+  const [pricingItems, setPricingItems] = useState<PricingItem[]>([]);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingDirty, setPricingDirty] = useState(false);
+  const [pricingMsg, setPricingMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const fetchPricing = useCallback(async () => {
+    setPricingLoading(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/pricing${params}`, { headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setPricingItems(data.items || []);
+        setPricingDirty(false);
+      }
+    } catch { /* ignore */ } finally {
+      setPricingLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (activeTab === "pricing" && userScope) fetchPricing();
+  }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const savePricing = async () => {
+    setPricingSaving(true);
+    setPricingMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const res = await fetch(`/api/crm/settings/pricing`, {
+        method: "PUT",
+        headers: buildHeaders(),
+        body: JSON.stringify({ userId: scope, items: pricingItems }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPricingItems(data.items || []);
+        setPricingDirty(false);
+        setPricingMsg({ type: "ok", text: "已儲存，AI 報價會立即套用新單價" });
+      } else {
+        setPricingMsg({ type: "err", text: "儲存失敗，請重試" });
+      }
+    } catch {
+      setPricingMsg({ type: "err", text: "網路錯誤，請重試" });
+    } finally {
+      setPricingSaving(false);
+    }
+  };
+
+  const resetPricing = async () => {
+    if (!confirm("確定要重設為預設標準報價表嗎？你目前的自訂內容會被覆蓋。")) return;
+    setPricingSaving(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/pricing${params}`, { method: "DELETE", headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setPricingItems(data.items || []);
+        setPricingDirty(false);
+        setPricingMsg({ type: "ok", text: "已重設為預設報價表" });
+      }
+    } catch { /* ignore */ } finally {
+      setPricingSaving(false);
+    }
+  };
+
+  const updatePricingItem = (id: string, patch: Partial<PricingItem>) => {
+    setPricingItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    setPricingDirty(true);
+  };
+  const removePricingItem = (id: string) => {
+    setPricingItems((prev) => prev.filter((it) => it.id !== id));
+    setPricingDirty(true);
+  };
+  const addPricingItem = () => {
+    setPricingItems((prev) => [
+      ...prev,
+      { id: `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: "", unit: "式", unitPrice: 0, category: "其他" },
+    ]);
+    setPricingDirty(true);
+  };
+
+  /* ---- tag definitions（標籤管理） ---- */
+  const [tagDefs, setTagDefs] = useState<TagDef[]>([]);
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagDirty, setTagDirty] = useState(false);
+  const [tagMsg, setTagMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const fetchTagDefs = useCallback(async () => {
+    setTagLoading(true);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/tags${params}`, { headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setTagDefs(data.tags || []);
+        setTagDirty(false);
+      }
+    } catch { /* ignore */ } finally {
+      setTagLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (activeTab === "tags" && userScope) fetchTagDefs();
+  }, [activeTab, userScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveTagDefs = async () => {
+    setTagSaving(true);
+    setTagMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const res = await fetch(`/api/crm/settings/tags`, {
+        method: "PUT",
+        headers: buildHeaders(),
+        body: JSON.stringify({ userId: scope, tags: tagDefs }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTagDefs(data.tags || []);
+        setTagDirty(false);
+        setTagMsg({ type: "ok", text: "已儲存。新訊息進來會依關鍵字自動套標籤" });
+      } else {
+        setTagMsg({ type: "err", text: "儲存失敗" });
+      }
+    } catch {
+      setTagMsg({ type: "err", text: "網路錯誤" });
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
+  const updateTagDef = (id: string, patch: Partial<TagDef>) => {
+    setTagDefs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    setTagDirty(true);
+  };
+  const removeTagDef = (id: string) => {
+    setTagDefs((prev) => prev.filter((t) => t.id !== id));
+    setTagDirty(true);
+  };
+  const addTagDef = () => {
+    setTagDefs((prev) => [
+      ...prev,
+      { id: `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: "", color: "blue", autoKeywords: [] },
+    ]);
+    setTagDirty(true);
+  };
+
+  /* ---- save LINE settings ---- */
+  const saveLineSettings = async () => {
+    if (!lineForm.channelId.trim() || !lineForm.channelAccessToken.trim() || !lineForm.channelSecret.trim()) {
+      setLineMsg({ type: "err", text: "三個欄位皆為必填" });
       return;
     }
-
-    const sameContactAsBefore = profileBoundContactIdRef.current === selectedContact.id;
-    if (sameContactAsBefore && profileDirty) {
-      return;
+    setLineSaving(true);
+    setLineMsg(null);
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      const res = await fetch(`/api/crm/settings/line${params}`, {
+        method: "PUT",
+        headers: buildHeaders(),
+        body: JSON.stringify(lineForm),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLineData(data);
+        setLineMsg({ type: "ok", text: "LINE OA 連線成功！Token 驗證通過" });
+        setLineForm({ channelId: "", channelAccessToken: "", channelSecret: "" });
+      } else {
+        setLineMsg({ type: "err", text: data.error || "儲存失敗" });
+      }
+    } catch {
+      setLineMsg({ type: "err", text: "網路錯誤，請重試" });
+    } finally {
+      setLineSaving(false);
     }
+  };
 
-    const baseForm = toContactProfileForm(selectedContact);
-    const draftForm = profileDraftsRef.current[selectedContact.id];
-    const nextForm = draftForm ?? baseForm;
-
-    profileBoundContactIdRef.current = selectedContact.id;
-    setProfileForm(nextForm);
-    setProfileDirty(!isSameProfileForm(nextForm, baseForm));
-  }, [
-    profileDirty,
-    selectedContact,
-    selectedContact?.displayName,
-    selectedContact?.email,
-    selectedContact?.id,
-    selectedContact?.phone,
-  ]);
-
-  const fetchContacts = useCallback(async (options?: { background?: boolean }) => {
-    const background = Boolean(options?.background);
-    if (background && contactsFetchInFlightRef.current) {
-      return;
+  /* ---- disconnect LINE ---- */
+  const disconnectLine = async () => {
+    if (!confirm("確定要中斷 LINE OA 連線嗎？Webhook 將停止接收訊息。")) return;
+    try {
+      const scope = userScopeRef.current;
+      const params = scope ? `?userId=${encodeURIComponent(scope)}` : "";
+      await fetch(`/api/crm/settings/line${params}`, { method: "DELETE", headers: buildHeaders() });
+      setLineData(null);
+      setLineMsg({ type: "ok", text: "已中斷連線" });
+    } catch {
+      setLineMsg({ type: "err", text: "中斷連線失敗" });
     }
-    contactsFetchInFlightRef.current = true;
-    if (!background) {
-      setLoadingContacts(true);
-      setError(null);
+  };
+
+  /* ---- create contact ---- */
+  const createContact = async (body: Record<string, unknown>) => {
+    try {
+      // Remove cardImageUrl from body if too large (>1MB base64 causes API timeout)
+      const cleanBody: Record<string, unknown> = { ...body, userId: userScope };
+      if (typeof cleanBody.cardImageUrl === "string" && (cleanBody.cardImageUrl as string).length > 1_000_000) {
+        delete cleanBody.cardImageUrl;
+      }
+      const res = await fetch("/api/crm/contacts", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(cleanBody),
+      });
+      if (res.ok) {
+        await fetchContacts();
+        return true;
+      }
+      const errData = await res.json().catch(() => ({}));
+      alert(`建立客戶失敗：${(errData as { error?: string }).error || res.statusText}`);
+      return false;
+    } catch (err) {
+      alert(`建立客戶失敗：${err instanceof Error ? err.message : "網路錯誤"}`);
+      return false;
     }
+  };
+
+  /* ---- update contact field ---- */
+  const updateField = async (field: string, value: string) => {
+    if (!selected) return;
+    await fetch(`/api/crm/contacts/${selected.id}`, {
+      method: "PATCH",
+      headers: buildHeaders(),
+      body: JSON.stringify({ [field]: value }),
+    });
+    await fetchContacts();
+    setEditingField(null);
+  };
+
+  /* ---- update status ---- */
+  const updateStatus = async (status: string) => {
+    if (!selected) return;
+    await fetch(`/api/crm/contacts/${selected.id}`, {
+      method: "PATCH",
+      headers: buildHeaders(),
+      body: JSON.stringify({ status }),
+    });
+    await fetchContacts();
+  };
+
+  /* ---- notes auto-save ---- */
+  const handleNotesChange = (value: string) => {
+    setNotesDraft(value);
+    if (notesTimer.current) clearTimeout(notesTimer.current);
+    notesTimer.current = setTimeout(() => {
+      if (selected) {
+        fetch(`/api/crm/contacts/${selected.id}`, {
+          method: "PATCH",
+          headers: buildHeaders(),
+          body: JSON.stringify({ notes: value }),
+        }).then(() => fetchContacts());
+      }
+    }, 1000);
+  };
+
+  /* sync notesDraft when selection changes */
+  useEffect(() => {
+    setNotesDraft(selected?.notes ?? "");
+  }, [selected?.id, selected?.notes]);
+
+  /* ---- tag management ---- */
+  const addTag = async (tag: string) => {
+    if (!selected || !tag.trim()) return;
+    await fetch(`/api/crm/contacts/${selected.id}/tags`, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify({ tag: tag.trim() }),
+    });
+    setNewTag("");
+    await fetchContacts();
+  };
+
+  const removeTag = async (tag: string) => {
+    if (!selected) return;
+    await fetch(
+      `/api/crm/contacts/${selected.id}/tags?tag=${encodeURIComponent(tag)}`,
+      { method: "DELETE", headers: buildHeaders() },
+    );
+    await fetchContacts();
+  };
+
+  /* ---- delete contact ---- */
+  const deleteContact = async () => {
+    if (!selected || !confirm("確定要刪除此客戶嗎？")) return;
+    await fetch(`/api/crm/contacts/${selected.id}`, {
+      method: "DELETE",
+      headers: buildHeaders(),
+    });
+    setSelectedId(null);
+    await fetchContacts();
+  };
+
+  /* ---- scan business card ---- */
+  const handleCardUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCardImage(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const runCardScan = async () => {
+    if (!cardImage) return;
+    const d = await credits.confirmAndDeduct("名片 OCR 掃描", "ai-social-post");
+    if (!d.ok) { return; }
+    setScanLoading(true);
+    setScanResult(null);
+    try {
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: cardImage,
+          prompt:
+            "這是一張名片照片。請仔細辨識名片上的所有文字，提取以下欄位。" +
+            "輸出 JSON 格式：{\"displayName\":\"姓名\",\"company\":\"公司名稱\",\"title\":\"職稱\",\"phone\":\"電話\",\"email\":\"電子信箱\",\"address\":\"地址\"}" +
+            "\n找不到的欄位留空字串。只輸出 JSON，不要其他文字。",
+          temperature: 0.2,
+          jsonMode: true,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = (data.text || "").trim();
+        let parsed: Record<string, string> | null = null;
+        try {
+          const jsonCandidate = text.match(/\{[\s\S]*\}/)?.[0] || text;
+          parsed = JSON.parse(jsonCandidate);
+        } catch {
+          try { parsed = JSON.parse(text); } catch { /* give up */ }
+        }
+        if (parsed && parsed.displayName) {
+          setScanResult(parsed);
+        } else {
+          alert("無法從名片中辨識文字，請手動輸入");
+        }
+      } else {
+        alert("名片辨識失敗，請重試");
+      }
+    } catch {
+      alert("名片掃描失敗，請重試");
+    } finally {
+      setScanLoading(false);
+    }
+  };
+
+  const confirmScanResult = async () => {
+    if (!scanResult) return;
+    const ok = await createContact({
+      displayName: scanResult.displayName || "未知",
+      email: scanResult.email || "",
+      phone: scanResult.phone || "",
+      company: scanResult.company || "",
+      title: scanResult.title || "",
+      address: scanResult.address || "",
+      notes: "",
+      tags: ["名片掃描"],
+      cardImageUrl: cardImage || undefined,
+    });
+    if (ok) {
+      setShowScanModal(false);
+      setCardImage(null);
+      setScanResult(null);
+    }
+  };
+
+  /* ---- add client submit ---- */
+  const handleAddSubmit = async () => {
+    if (!addForm.displayName.trim()) return;
+    const ok = await createContact({
+      displayName: addForm.displayName.trim(),
+      email: addForm.email,
+      phone: addForm.phone,
+      company: addForm.company,
+      title: addForm.title,
+      address: addForm.address,
+      notes: addForm.notes,
+      tags: addForm.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    });
+    if (ok) {
+      setShowAddModal(false);
+      setAddForm({ displayName: "", email: "", phone: "", company: "", title: "", address: "", notes: "", tags: "" });
+    }
+  };
+
+  /* ---- inline edit helpers ---- */
+  const startEdit = (field: string, currentValue: string) => {
+    setEditingField(field);
+    setEditValue(currentValue);
+  };
+
+  const commitEdit = () => {
+    if (editingField) updateField(editingField, editValue);
+  };
+
+  /* ---- messages / chat ---- */
+  interface ChatMessage {
+    id: string;
+    contactId: string;
+    direction: "inbound" | "outbound";
+    senderType: "customer" | "agent" | "system";
+    messageType: string;
+    text?: string;
+    attachment?: { type: string; dataUrl?: string; url?: string; name?: string };
+    timestamp: string;
+  }
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContactIdRef = useRef<string | null>(null);
+
+  const fetchMessages = useCallback(async (contactId: string) => {
+    setChatLoading(true);
+    try {
+      const res = await fetch(
+        `/api/crm/messages?contactId=${encodeURIComponent(contactId)}&markRead=1`,
+        { headers: buildHeaders() },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages(data.messages ?? []);
+        setContacts((prev) =>
+          prev.map((c) => (c.id === contactId ? { ...c, unread: 0 } : c)),
+        );
+      }
+    } catch { /* ignore */ } finally {
+      setChatLoading(false);
+    }
+  }, [buildHeaders]);
+
+  useEffect(() => {
+    if (selected && selected.id !== chatContactIdRef.current) {
+      chatContactIdRef.current = selected.id;
+      setShowDetail(false);
+      fetchMessages(selected.id);
+    }
+    if (!selected) {
+      chatContactIdRef.current = null;
+      setChatMessages([]);
+    }
+  }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages.length]);
+
+  const sendMessage = async () => {
+    if (!selected || !chatInput.trim()) return;
+    setChatSending(true);
+    try {
+      const res = await fetch("/api/crm/messages", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ contactId: selected.id, text: chatInput.trim() }),
+      });
+      if (res.ok) {
+        setChatInput("");
+        await fetchMessages(selected.id);
+        await fetchContacts();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`傳送失敗：${(err as { error?: string }).error || res.statusText}`);
+      }
+    } catch {
+      alert("傳送失敗：網路錯誤");
+    } finally {
+      setChatSending(false);
+    }
+  };
+
+  /* ---- polling for new messages ---- */
+  useEffect(() => {
+    if (!selected) return;
+    const interval = setInterval(() => {
+      if (selected) fetchMessages(selected.id);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- AI conversation summary ---- */
+  interface ChatSummary {
+    topic: string;
+    customerIntent: string;
+    keyPoints: string[];
+    nextActions: string[];
+    sentiment: "positive" | "neutral" | "negative" | "urgent";
+    suggestedReply?: string;
+  }
+
+  const [summary, setSummary] = useState<ChatSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
+
+  // Reset summary when switching contacts
+  useEffect(() => {
+    setSummary(null);
+    setSummaryError(null);
+    setShowSummary(false);
+  }, [selected?.id]);
+
+  const runSummary = async () => {
+    if (!selected || chatMessages.length === 0) return;
+    const d = await credits.confirmAndDeduct("AI 對話整理", "ai-social-post");
+    if (!d.ok) return;
+
+    setSummaryLoading(true);
+    setSummaryError(null);
+    setShowSummary(true);
+    try {
+      const transcript = chatMessages
+        .slice(-50)
+        .map((m) => {
+          const who = m.direction === "outbound" ? "我方" : selected.displayName;
+          const time = new Date(m.timestamp).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const content = m.text || `[${m.messageType}]`;
+          return `[${time}] ${who}：${content}`;
+        })
+        .join("\n");
+
+      const prompt = `你是一位專業的客戶服務顧問。下面是我（室內設計師）與客戶「${selected.displayName}」在 LINE 上的對話記錄，請幫我整理重點。
+
+對話記錄：
+${transcript}
+
+請以 JSON 格式回覆，只輸出 JSON 不要其他文字，欄位如下：
+{
+  "topic": "這段對話的主題（一句話，10-20 字）",
+  "customerIntent": "客戶目前的意圖或需求（具體說明，30-60 字）",
+  "keyPoints": ["3-5 個對話中提到的關鍵資訊或客戶訴求"],
+  "nextActions": ["2-4 個我應該採取的後續行動（具體、可執行）"],
+  "sentiment": "positive / neutral / negative / urgent 其中一個（評估客戶情緒/急迫性）",
+  "suggestedReply": "如果客戶最後一句話需要回覆，給我一句適合的回覆內容（沒必要回覆就留空字串）"
+}`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "AI 整理失敗");
+      }
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || text;
+      const parsed = JSON.parse(jsonStr) as ChatSummary;
+      setSummary(parsed);
+    } catch (e) {
+      setSummaryError(e instanceof Error ? e.message : "整理失敗，請重試");
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const useReplyDraft = () => {
+    if (summary?.suggestedReply) {
+      setChatInput(summary.suggestedReply);
+    }
+  };
+
+  /* ---- AI: extract project + quotation + workflow from conversation ---- */
+  interface ExtractedQuotationItem {
+    name: string;
+    description?: string;
+    unit?: string;
+    quantity: number;
+    unitPrice: number;
+  }
+  interface ExtractedWorkflowTask {
+    title: string;
+    detail?: string;
+    date?: string;
+    time?: string;
+    stage?: string;
+    durationDays?: number;
+    startOffsetDays?: number;
+  }
+  interface ExtractedContactDetails {
+    phone?: string;
+    email?: string;
+    company?: string;
+    address?: string;
+    title?: string;
+  }
+  interface ExtractedProject {
+    projectName: string;
+    clientName: string;
+    phase: string;
+    budget: string;
+    note: string;
+    quotationItems: ExtractedQuotationItem[];
+    workflowTasks: ExtractedWorkflowTask[];
+    contactDetails: ExtractedContactDetails;
+  }
+
+  interface ExistingProject {
+    id: string;
+    name: string;
+    clientName: string;
+    phase: string;
+    budget: string;
+    status: string;
+    note?: string;
+    quotationItems?: Array<{ id: string; name: string; description?: string; unit?: string; quantity: number; unitPrice: number }>;
+    workflowTasks?: Array<{ id: string; title: string; detail?: string; date?: string; time?: string; done?: boolean }>;
+    updatedAt: string;
+  }
+
+  // Mode: "picker" = choose new vs update existing | "preview" = show editable extraction
+  const [extractStep, setExtractStep] = useState<"picker" | "preview">("picker");
+  const [extractMode, setExtractMode] = useState<"create" | "update">("create");
+  const [linkedProjectId, setLinkedProjectId] = useState<string | null>(null);
+  const [existingProjects, setExistingProjects] = useState<ExistingProject[]>([]);
+  const [existingProjectsLoading, setExistingProjectsLoading] = useState(false);
+  const [showExtractModal, setShowExtractModal] = useState(false);
+  const [extractLoading, setExtractLoading] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [extracted, setExtracted] = useState<ExtractedProject | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
+
+  // Open the modal — start by fetching existing projects for this contact
+  const openExtractFlow = async () => {
+    if (!selected || chatMessages.length === 0) return;
+    setShowExtractModal(true);
+    setExtractStep("picker");
+    setExtracted(null);
+    setExtractError(null);
+    setExistingProjectsLoading(true);
     try {
       const params = new URLSearchParams();
-      if (search.trim()) {
-        params.set("search", search.trim());
-      }
-      if (filterTag.trim()) {
-        params.set("tag", filterTag.trim());
-      }
-
-      const query = params.toString();
-      const data = await requestJson<{ contacts: CrmContact[] }>(
-        `/api/crm/contacts${query ? `?${query}` : ""}`,
-      );
-      const previousContacts = contactsRef.current;
-      const stickyBackgroundFallback =
-        background &&
-        previousContacts.length > 0 &&
-        data.contacts.length === 0 &&
-        !search.trim() &&
-        !filterTag.trim();
-      const canFallback = previousContacts.length > 0;
-      const shouldUseLocalFilteredFallback =
-        stickyBackgroundFallback || (data.contacts.length === 0 && canFallback);
-
-      const nextContacts = shouldUseLocalFilteredFallback
-        ? stickyBackgroundFallback
-          ? previousContacts
-          : filterContactsLocal(previousContacts, search, filterTag)
-        : data.contacts;
-
-      if (shouldUseLocalFilteredFallback && !background) {
-        pushNotice(
-          "contacts-cache-fallback",
-          search.trim() || filterTag.trim()
-            ? "後端暫時回傳空資料，已改用本機快取進行搜尋/篩選。"
-            : "偵測到後端暫時回傳空列表，已保留本機快取避免訊息清單跳動。",
-        );
-      }
-
-      // Remap cached messages when backend contact IDs change
-      if (!shouldUseLocalFilteredFallback && previousContacts.length > 0 && nextContacts.length > 0) {
-        for (const oldContact of previousContacts) {
-          const oldMessages = messagesByContactRef.current[oldContact.id];
-          if (!oldMessages?.length) {
-            continue;
-          }
-          if (nextContacts.some((item) => item.id === oldContact.id)) {
-            continue;
-          }
-          const matched =
-            (oldContact.lineUserId
-              ? nextContacts.find((item) => item.lineUserId === oldContact.lineUserId)
-              : undefined) ??
-            nextContacts.find((item) => item.displayName === oldContact.displayName);
-          if (matched && !messagesByContactRef.current[matched.id]) {
-            messagesByContactRef.current[matched.id] = oldMessages;
-          }
-        }
-      }
-
-      setContacts((prev) => (areContactListsEqual(prev, nextContacts) ? prev : nextContacts));
-      setSelectedContactId((current) => {
-        if (current && nextContacts.some((contact) => contact.id === current)) {
-          return current;
-        }
-        if (current) {
-          const oldSelected = previousContacts.find((contact) => contact.id === current);
-          if (oldSelected) {
-            const matched =
-              (oldSelected.lineUserId
-                ? nextContacts.find((contact) => contact.lineUserId === oldSelected.lineUserId)
-                : undefined) ??
-              nextContacts.find((contact) => contact.displayName === oldSelected.displayName);
-            if (matched) {
-              return matched.id;
-            }
-          }
-        }
-        return nextContacts[0]?.id ?? null;
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "讀取聯絡人失敗";
-      const previousContacts = contactsRef.current;
-      if (previousContacts.length > 0 && isTransientFetchError(message)) {
-        const fallbackContacts = filterContactsLocal(previousContacts, search, filterTag);
-        setContacts((prev) => (areContactListsEqual(prev, fallbackContacts) ? prev : fallbackContacts));
-        setSelectedContactId((current) => {
-          if (current && fallbackContacts.some((contact) => contact.id === current)) {
-            return current;
-          }
-          return fallbackContacts[0]?.id ?? null;
-        });
-        if (!background) {
-          setError(null);
-        }
-      } else if (!background) {
-        setError(message);
-      }
-    } finally {
-      contactsFetchInFlightRef.current = false;
-      if (!background) {
-        setLoadingContacts(false);
-      }
-    }
-  }, [filterTag, pushNotice, search]);
-
-  const fetchMessages = useCallback(
-    async (contactId: string, markRead: boolean, options?: { background?: boolean }) => {
-      const background = Boolean(options?.background);
-      if (background && messagesFetchInFlightRef.current[contactId]) {
-        return;
-      }
-      messagesFetchInFlightRef.current[contactId] = true;
-      if (!background) {
-        setLoadingMessages(true);
-      }
-      try {
-        const params = new URLSearchParams({ contactId });
-        if (markRead) {
-          params.set("markRead", "1");
-        }
-        const data = await requestJson<{ messages: CrmMessage[] }>(`/api/crm/messages?${params}`);
-        const cachedMessages = messagesByContactRef.current[contactId] ?? [];
-        const shouldKeepCachedMessages = data.messages.length === 0 && cachedMessages.length > 0;
-        const nextMessages =
-          data.messages.length > 0
-            ? mergeMessagesById(data.messages, cachedMessages)
-            : cachedMessages;
-
-        if (shouldKeepCachedMessages && !background) {
-          pushNotice("messages-cache-fallback", "偵測到後端暫時回傳空訊息，已保留本機快取對話內容。");
-        }
-
-        messagesByContactRef.current[contactId] = nextMessages.slice(-MAX_CACHE_MESSAGES_PER_CONTACT);
-        if (selectedContactIdRef.current === contactId) {
-          setMessages((prev) => (areMessageListsEqual(prev, nextMessages) ? prev : nextMessages));
-        }
-        if (markRead) {
-          setContacts((prev) => {
-            let changed = false;
-            const next = prev.map((contact) => {
-              if (contact.id !== contactId || contact.unread === 0) {
-                return contact;
-              }
-              changed = true;
-              return { ...contact, unread: 0 };
-            });
-            return changed ? next : prev;
-          });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "讀取訊息失敗";
-        if (isContactNotFoundError(message)) {
-          pushNotice("contact-rebind-start", "聯絡人資料已變更，正在重新整理清單。");
-          setError(null);
-          void (async () => {
-            const reboundId = await tryRecoverContact(contactId);
-            if (!reboundId) {
-              setSelectedContactId((current) => (current === contactId ? null : current));
-              if (selectedContactIdRef.current === contactId) {
-                setMessages([]);
-              }
-              void fetchContacts({ background: true });
-              return;
-            }
-            const reboundParams = new URLSearchParams({ contactId: reboundId });
-            if (markRead) {
-              reboundParams.set("markRead", "1");
-            }
-            try {
-              const reboundData = await requestJson<{ messages: CrmMessage[] }>(
-                `/api/crm/messages?${reboundParams}`,
-              );
-              const nextMessages = reboundData.messages.length
-                ? mergeMessagesById(reboundData.messages, messagesByContactRef.current[reboundId] ?? [])
-                : messagesByContactRef.current[reboundId] ?? [];
-              messagesByContactRef.current[reboundId] = nextMessages.slice(-MAX_CACHE_MESSAGES_PER_CONTACT);
-              if (selectedContactIdRef.current === reboundId) {
-                setMessages((prev) => (areMessageListsEqual(prev, nextMessages) ? prev : nextMessages));
-              }
-              pushNotice("contact-rebind-success", "已自動重新綁定相同 LINE 客戶，對話已恢復。");
-            } catch (reboundErr) {
-              setError(reboundErr instanceof Error ? reboundErr.message : "重新讀取訊息失敗");
-            }
-          })();
-        } else if (isTransientFetchError(message)) {
-          const cached = messagesByContactRef.current[contactId] ?? [];
-          if (cached.length > 0) {
-            if (selectedContactIdRef.current === contactId) {
-              setMessages((prev) => (areMessageListsEqual(prev, cached) ? prev : cached));
-            }
-            // Keep UI stable silently when cache exists.
-            if (!background) {
-              setError(null);
-            }
-          } else if (!background) {
-            setError(message);
-          }
-        } else if (!background) {
-          setError(message);
-        }
-      } finally {
-        delete messagesFetchInFlightRef.current[contactId];
-        if (!background) {
-          setLoadingMessages(false);
-        }
-      }
-    },
-    [fetchContacts, pushNotice],
-  );
-
-  const appendMessageToLocalCache = useCallback((contactId: string, message: CrmMessage) => {
-    const previous = messagesByContactRef.current[contactId] ?? [];
-    const merged = mergeMessagesById([...previous, message], previous).slice(
-      -MAX_CACHE_MESSAGES_PER_CONTACT,
-    );
-    messagesByContactRef.current[contactId] = merged;
-    if (selectedContactIdRef.current === contactId) {
-      setMessages((prev) => (areMessageListsEqual(prev, merged) ? prev : merged));
-    }
-  }, []);
-
-  const fetchLineSettings = useCallback(async () => {
-    setSettingsBusy(true);
-    try {
-      const data = await requestJson<LineSettings>(
-        `/api/crm/settings/line?userId=${encodeURIComponent(lineCacheScope)}`,
-      );
-      setLineSettings(data);
-      const cached = loadLineFormCache(lineCacheScope);
-      setLineForm((prev) => ({
-        ...prev,
-        channelId: data.channelId || prev.channelId,
-        channelAccessToken: prev.channelAccessToken || cached.channelAccessToken || "",
-        channelSecret: prev.channelSecret || cached.channelSecret || "",
-      }));
-
-      if (!data.connected && !lineAutoReconnectAttemptedRef.current) {
-        const cachedForm = loadLineFormCache(lineCacheScope);
-        const autoChannelId = (cachedForm.channelId || data.channelId || "").trim();
-        const autoToken = (cachedForm.channelAccessToken || "").trim();
-        const autoSecret = (cachedForm.channelSecret || "").trim();
-        if (autoChannelId && autoToken && autoSecret) {
-          lineAutoReconnectAttemptedRef.current = true;
-          try {
-            const autoConnected = await requestJson<LineSettings>(
-              `/api/crm/settings/line?userId=${encodeURIComponent(lineCacheScope)}`,
-              {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                channelId: autoChannelId,
-                channelAccessToken: autoToken,
-                channelSecret: autoSecret,
-              }),
-              },
-            );
-            setLineSettings(autoConnected);
-            setLineForm((prev) => ({
-              ...prev,
-              channelId: autoConnected.channelId || autoChannelId,
-              channelAccessToken: prev.channelAccessToken || autoToken,
-              channelSecret: prev.channelSecret || autoSecret,
-            }));
-            pushNotice("line-settings-auto-reconnect", "已自動用既有憑證重連 LINE OA。");
-          } catch (autoErr) {
-            const autoMessage = autoErr instanceof Error ? autoErr.message : "LINE 自動重連失敗";
-            if (!isTransientFetchError(autoMessage)) {
-              setError(autoMessage);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "讀取 LINE 設定失敗";
-      const cachedSettings = loadLineSettingsCache(lineCacheScope);
-      if (cachedSettings && (cachedSettings.channelId || cachedSettings.webhookUrl)) {
-        setLineSettings((prev) => ({
-          ...prev,
-          ...cachedSettings,
+      if (userScope) params.set("userId", userScope);
+      const res = await fetch(`/api/projects?${params.toString()}`, { headers: buildHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const all: ExistingProject[] = (data.projects || []).map((p: Record<string, unknown>) => ({
+          id: String(p.id),
+          name: String(p.name || ""),
+          clientName: String(p.clientName || ""),
+          phase: String(p.phase || ""),
+          budget: String(p.budget || ""),
+          status: String(p.status || "draft"),
+          note: typeof p.note === "string" ? p.note : "",
+          quotationItems: Array.isArray(p.quotationItems) ? (p.quotationItems as ExistingProject["quotationItems"]) : [],
+          workflowTasks: Array.isArray(p.workflowTasks) ? (p.workflowTasks as ExistingProject["workflowTasks"]) : [],
+          updatedAt: String(p.updatedAt || ""),
         }));
-        pushNotice("line-settings-cache-fallback", "已使用本機快取 LINE 設定。");
-        setError(null);
-      } else if (isTransientFetchError(message)) {
-        pushNotice("line-settings-network", "LINE 設定同步時網路波動，請稍後自動重試。");
-        setError(null);
+        // Filter: this contact's linked projects + projects with matching clientName
+        const filtered = all.filter((p) => {
+          const linked = (p as unknown as { linkedContactId?: string }).linkedContactId === selected.id;
+          const nameMatch = p.clientName && (
+            p.clientName === selected.displayName ||
+            p.clientName.includes(selected.displayName) ||
+            selected.displayName.includes(p.clientName)
+          );
+          return linked || nameMatch;
+        });
+        setExistingProjects(filtered);
+        // Auto-suggest: if exactly one match, preselect update mode
+        if (filtered.length === 1) {
+          setExtractMode("update");
+          setLinkedProjectId(filtered[0].id);
+        } else {
+          setExtractMode("create");
+          setLinkedProjectId(null);
+        }
       } else {
-        setError(message);
+        setExistingProjects([]);
       }
+    } catch {
+      setExistingProjects([]);
     } finally {
-      setSettingsBusy(false);
+      setExistingProjectsLoading(false);
     }
-  }, [lineCacheScope, pushNotice]);
+  };
 
-  async function tryRecoverContact(missingContactId: string): Promise<string | null> {
-    const previousContacts = contactsRef.current;
-    const missing = previousContacts.find((item) => item.id === missingContactId);
-    if (!missing) {
-      return null;
-    }
+  const runExtraction = async () => {
+    if (!selected || chatMessages.length === 0) return;
+    const d = await credits.confirmAndDeduct(
+      extractMode === "update" ? "AI 更新專案" : "AI 對話建立專案",
+      "ai-social-post",
+    );
+    if (!d.ok) return;
 
+    setExtractStep("preview");
+    setExtractLoading(true);
+    setExtractError(null);
+    setExtracted(null);
     try {
-      const data = await requestJson<{ contacts: CrmContact[] }>("/api/crm/contacts");
-      const nextContacts =
-        data.contacts.length === 0 && previousContacts.length > 0
-          ? previousContacts
-          : data.contacts;
-      setContacts(nextContacts);
+      const transcript = chatMessages
+        .slice(-80)
+        .map((m) => {
+          const who = m.direction === "outbound" ? "我方（設計師）" : `客戶（${selected.displayName}）`;
+          const time = new Date(m.timestamp).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const content = m.text || `[${m.messageType}]`;
+          return `[${time}] ${who}：${content}`;
+        })
+        .join("\n");
 
-      const rebound =
-        (missing.lineUserId
-          ? nextContacts.find((item) => item.lineUserId === missing.lineUserId)
-          : undefined) ??
-        nextContacts.find((item) => item.displayName === missing.displayName);
+      const existingContact = `
+現有客戶資料（不要覆蓋已有值）：
+- 姓名：${selected.displayName}
+- 電話：${selected.phone || "(未填)"}
+- Email：${selected.email || "(未填)"}
+- 公司：${selected.company || "(未填)"}
+- 地址：${selected.address || "(未填)"}`;
 
-      let recovered = rebound;
-      if (!recovered) {
-        const ensured = await requestJson<{ contact: CrmContact }>("/api/crm/contacts/ensure", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+      const targetProject = extractMode === "update" && linkedProjectId
+        ? existingProjects.find((p) => p.id === linkedProjectId)
+        : null;
+
+      // 標準報價表 — 讀使用者帳號自訂的那份（管理介面可增修），讓 AI 在客戶
+      // 沒明講價格時，依此填入參考單價
+      let pricingItems: Array<{ name: string; unit: string; unitPrice: number; note?: string }> = [];
+      try {
+        const pr = await fetch(
+          `/api/crm/settings/pricing?userId=${encodeURIComponent(userScope || "")}`,
+          { headers: buildHeaders() },
+        );
+        if (pr.ok) {
+          const pd = await pr.json();
+          pricingItems = pd.items || [];
+        }
+      } catch { /* ignore — fall back to empty */ }
+      const pricingBlock =
+        `\n【公司標準報價表（客戶若沒明講單價，請優先對應此表填入 unitPrice，並在 description 標註「參考標準價」；對應不到才填 0 並標「待確認」）】\n` +
+        buildPricingReferenceText(pricingItems) +
+        `\n注意：工程管理費為工程總額的 8-10%，請以百分比在備註說明，不要當成固定單價項目。` +
+        `\n所有單價(unitPrice)必須是整數（新台幣元），不要小數、不要千分位逗號。\n`;
+
+      let prompt: string;
+      if (targetProject) {
+        // UPDATE MODE: send existing project snapshot, ask AI to return merged final state
+        const existingItems = (targetProject.quotationItems || [])
+          .map((i, idx) => `  ${idx + 1}. ${i.name} | ${i.description || "-"} | ${i.quantity} ${i.unit || "式"} | 單價 ${i.unitPrice}`)
+          .join("\n") || "  （目前沒有報價項目）";
+        const existingTasks = (targetProject.workflowTasks || [])
+          .map((t, idx) => `  ${idx + 1}. ${t.title} | ${t.date || "未排"} ${t.time || ""} | ${t.done ? "✓已完成" : "進行中"}`)
+          .join("\n") || "  （目前沒有工作流程任務）";
+
+        prompt = `你是一位資深室內設計專案經理。客戶「${selected.displayName}」已有一個進行中的專案，我（設計師）和他在 LINE 上又聊了新內容。請根據新對話更新專案。
+
+【現有專案資料】
+專案名稱：${targetProject.name}
+階段：${targetProject.phase}
+預算：${targetProject.budget}
+備註：${targetProject.note || "(無)"}
+
+現有報價項目：
+${existingItems}
+
+現有工作流程任務：
+${existingTasks}
+
+${existingContact}
+${pricingBlock}
+【最新對話記錄】
+${transcript}
+
+請依照下列原則更新專案，並以 JSON 回覆「更新後的完整專案狀態」（不是只給新增的部分）：
+
+1. **報價項目**：
+   - 保留現有項目，除非對話明確表示取消（取消的不要放進結果）
+   - 如果對話提到新的工程項目，加入結果；單價優先對應上方標準報價表，標註「參考標準價」
+   - 如果對話提到已有項目的數量/單價變動，更新該項目（客戶明講的價格優先於標準價）
+   - 對話沒提到的舊項目原樣保留（不要改動其單價）
+
+2. **工作流程任務**：
+   - 保留現有任務，除非對話明確表示取消
+   - 如果對話約定新時程（例如「下週三量尺」），加入新任務
+   - 如果對話提到舊任務的日期改變或已完成，更新該任務
+
+3. **基本資訊**：
+   - 階段：根據對話最新進展更新（例如從「需求訪談」進到「提案中」）
+   - 預算：客戶有提到新預算就更新
+   - 備註：在原備註後追加新進度（用 \\n 換行），不要刪掉舊內容
+
+4. **客戶聯絡資料**：對話中新提到的才填，否則空字串
+
+只輸出 JSON，不要其他文字。格式：
+{
+  "projectName": "專案名稱（通常保留原名）",
+  "clientName": "客戶姓名（${selected.displayName}）",
+  "phase": "更新後階段",
+  "budget": "預算",
+  "note": "更新後的完整備註",
+  "quotationItems": [{ "name": "...", "description": "...", "unit": "對應標準表的單位（坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }],
+  "workflowTasks": [{ "title": "施工工項", "stage": "階段(保護/拆除/水電/泥作/木作/油漆/系統櫃/地板/廚衛/清潔/收尾)", "detail": "...", "date": "YYYY-MM-DD 開始日", "durationDays": 工期天數, "time": "" }],
+  "contactDetails": { "phone": "", "email": "", "company": "", "address": "", "title": "" }
+}`;
+      } else {
+        // CREATE MODE: original prompt
+        prompt = `你是一位資深室內設計專案經理。下面是設計師與客戶在 LINE 上的對話。請從對話中提取資訊，建立一個室內設計專案的草稿，包含：基本資訊、報價項目、工作流程任務、客戶聯絡資訊。
+
+${existingContact}
+${pricingBlock}
+對話記錄：
+${transcript}
+
+請以 JSON 格式回覆，只輸出 JSON 不要其他文字。如果某些資訊對話中沒提到，數字欄位填 0、字串欄位填合理推測或空字串、陣列可以給空陣列。
+報價項目單價規則：(1) 客戶有明講價格 → 用客戶的價格。(2) 客戶沒講但對應得到上方標準報價表 → 填標準單價並在 description 標註「參考標準價」。(3) 都對應不到 → unitPrice 填 0 並標註「待確認」。
+
+格式：
+{
+  "projectName": "簡短專案名稱（例如：王小姐三房兩廳裝修、北歐風新成屋）",
+  "clientName": "客戶姓名（預設用「${selected.displayName}」）",
+  "phase": "目前階段（需求訪談 / 提案中 / 報價中 / 簽約 / 施工中 / 完工 之一）",
+  "budget": "預算範圍（例如：80-100萬、待定）",
+  "note": "專案備註（30-100 字，概述客戶需求、風格偏好、特殊要求）",
+  "quotationItems": [
+    { "name": "項目名稱（例如：客廳系統櫃）", "description": "規格或說明（待確認的標註「待確認」）", "unit": "計價單位（對應標準表，如 坪/尺/式/台/間/車/平方米/%）", "quantity": 數字, "unitPrice": 數字 }
+  ],
+  "workflowTasks": [
+    { "title": "施工工項（依報價項目 + 整體施作需求，如：全室保護、拆除、水電配管、泥作、木作天花、系統櫃安裝、油漆、地板、清潔驗收）", "stage": "階段分類（保護/拆除/水電/泥作/防水/木作/系統櫃/油漆/地板/廚衛/空調/清潔/收尾）", "detail": "細節說明（可選）", "startOffsetDays": 從開工日起算第幾天開始的整數, "durationDays": 工期天數, "time": "" }
+  ],
+  // 注意：workflowTasks 請勿輸出絕對日期，只用 startOffsetDays（開工=0）；實際日期由系統換算
+  "contactDetails": {
+    "phone": "電話（對話中提到才填，否則空字串）",
+    "email": "Email（同上）",
+    "company": "公司（同上）",
+    "address": "地址（同上）",
+    "title": "職稱（同上）"
+  }
+}`;
+      }
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "AI 提取失敗");
+      }
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || text;
+      const parsed = JSON.parse(jsonStr) as ExtractedProject;
+
+      // Sanitize defaults
+      parsed.projectName = parsed.projectName?.trim() || targetProject?.name || `${selected.displayName} 的專案`;
+      parsed.clientName = parsed.clientName?.trim() || selected.displayName;
+      parsed.phase = parsed.phase?.trim() || targetProject?.phase || "需求訪談";
+      parsed.budget = parsed.budget?.trim() || targetProject?.budget || "待定";
+      parsed.note = parsed.note?.trim() || targetProject?.note || "";
+      parsed.quotationItems = (parsed.quotationItems || []).map((it) => ({
+        name: String(it.name || "").trim(),
+        description: String(it.description || "").trim(),
+        unit: String(it.unit || "").trim() || "式",
+        quantity: Number(it.quantity) || 1,
+        unitPrice: Math.round(Number(it.unitPrice) || 0),
+      })).filter((it) => it.name);
+      // 工期日期：用 startOffsetDays 從今天起算真實日期（避免 AI 亂猜絕對日期）
+      const wfStartMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00").getTime();
+      parsed.workflowTasks = (parsed.workflowTasks || []).map((t) => ({
+        title: String(t.title || "").trim(),
+        detail: String(t.detail || "").trim(),
+        stage: String(t.stage || "").trim(),
+        date: t.startOffsetDays !== undefined && t.startOffsetDays !== null
+          ? new Date(wfStartMs + Math.max(0, Number(t.startOffsetDays) || 0) * 86400000).toISOString().slice(0, 10)
+          : String(t.date || "").trim(),
+        durationDays: Math.max(1, Number(t.durationDays) || 1),
+        time: String(t.time || "").trim(),
+      })).filter((t) => t.title);
+      parsed.contactDetails = parsed.contactDetails || {};
+
+      setExtracted(parsed);
+    } catch (e) {
+      setExtractError(e instanceof Error ? e.message : "提取失敗，請重試");
+    } finally {
+      setExtractLoading(false);
+    }
+  };
+
+  const createProjectFromExtraction = async () => {
+    if (!extracted || !selected) return;
+    setCreatingProject(true);
+    try {
+      // 1) Update contact details if AI extracted new ones (non-empty + not already set)
+      const cd = extracted.contactDetails;
+      const contactPatch: Record<string, string> = {};
+      if (cd.phone && !selected.phone) contactPatch.phone = cd.phone;
+      if (cd.email && !selected.email) contactPatch.email = cd.email;
+      if (cd.company && !selected.company) contactPatch.company = cd.company;
+      if (cd.address && !selected.address) contactPatch.address = cd.address;
+      if (cd.title && !selected.title) contactPatch.title = cd.title;
+      if (Object.keys(contactPatch).length > 0) {
+        await fetch(`/api/crm/contacts/${selected.id}`, {
+          method: "PATCH",
+          headers: buildHeaders(),
+          body: JSON.stringify(contactPatch),
+        }).catch(() => undefined);
+      }
+
+      const isUpdate = extractMode === "update" && linkedProjectId;
+      const targetProject = isUpdate ? existingProjects.find((p) => p.id === linkedProjectId) : null;
+
+      // 2) Build quotationItems — preserve IDs for items that match existing ones by name (allows downstream tracking)
+      const existingItemsByName = new Map(
+        (targetProject?.quotationItems || []).map((i) => [i.name.trim(), i.id]),
+      );
+      const quotationItems = extracted.quotationItems.map((it) => ({
+        id: existingItemsByName.get(it.name.trim()) || `qi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: it.name,
+        description: it.description || "",
+        unit: it.unit || "式",
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+      }));
+
+      // 3) Build workflowTasks — preserve IDs and done-state for matching tasks
+      const existingTasksByTitle = new Map(
+        (targetProject?.workflowTasks || []).map((t) => [t.title.trim(), t]),
+      );
+      const workflowTasks = extracted.workflowTasks.map((t) => {
+        const existing = existingTasksByTitle.get(t.title.trim());
+        return {
+          id: existing?.id || `wt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          title: t.title,
+          detail: t.detail || existing?.detail || "",
+          stage: t.stage || "",
+          date: t.date || existing?.date || "",
+          durationDays: Math.max(1, Number(t.durationDays) || 1),
+          time: t.time || existing?.time || "",
+          owner: "",
+          done: existing?.done || false,
+          isCustom: true,
+        };
+      });
+
+      if (isUpdate && targetProject) {
+        // PATCH existing project — append-merge note so manual edits aren't lost
+        const mergedNote = extracted.note.includes(targetProject.note || "")
+          ? extracted.note
+          : `${targetProject.note || ""}\n\n[${new Date().toLocaleString("zh-TW", { month: "numeric", day: "numeric" })} AI 更新]\n${extracted.note}`.trim();
+
+        const res = await fetch(`/api/projects/${targetProject.id}`, {
+          method: "PATCH",
+          headers: buildHeaders(),
           body: JSON.stringify({
-            source: missing.source,
-            lineUserId: missing.lineUserId,
-            displayName: missing.displayName,
-            avatarUrl: missing.avatarUrl,
-            email: missing.email,
-            phone: missing.phone,
-            status: missing.status,
-            tags: missing.tags,
+            name: extracted.projectName,
+            phase: extracted.phase,
+            budget: extracted.budget,
+            note: mergedNote,
+            linkedContactId: selected.id,
+            quotationItems,
+            workflowTasks,
           }),
         });
-        recovered = ensured.contact;
-        setContacts((prev) => {
-          const exists = prev.some((item) => item.id === recovered!.id);
-          return exists ? prev.map((item) => (item.id === recovered!.id ? recovered! : item)) : [recovered!, ...prev];
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || "更新失敗");
+        }
+      } else {
+        // POST new project
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify({
+            userId: userScope,
+            name: extracted.projectName,
+            clientName: extracted.clientName,
+            status: "draft",
+            phase: extracted.phase,
+            budget: extracted.budget,
+            note: extracted.note || `從 LINE 對話自動建立 · 客戶：${selected.displayName}`,
+            linkedContactId: selected.id,
+            quotationItems,
+            workflowTasks,
+          }),
         });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string }).error || "建立失敗");
+        }
       }
 
-      const oldMessages = messagesByContactRef.current[missingContactId];
-      if (oldMessages?.length && !messagesByContactRef.current[recovered.id]) {
-        messagesByContactRef.current[recovered.id] = oldMessages;
-      }
-      setSelectedContactId(recovered.id);
-      return recovered.id;
-    } catch {
-      return null;
+      setShowExtractModal(false);
+      setExtracted(null);
+      setExtractStep("picker");
+      setLinkedProjectId(null);
+      // Navigate to projects page so user can see the result
+      onNavigateToProjects?.();
+    } catch (e) {
+      alert(`建立專案失敗：${e instanceof Error ? e.message : "未知錯誤"}`);
+    } finally {
+      setCreatingProject(false);
     }
-  }
+  };
 
-  const syncInboxNow = useCallback(
-    (options?: { force?: boolean }) => {
-      const force = Boolean(options?.force);
-      const now = Date.now();
-      if (!force && now - lastInboxSyncAtRef.current < INBOX_POLL_MS - 300) {
-        return;
-      }
-      lastInboxSyncAtRef.current = now;
-      void fetchContacts({ background: true });
-      if (selectedContactId && !composerFocusedRef.current) {
-        void fetchMessages(selectedContactId, false, { background: true });
-      }
-    },
-    [fetchContacts, fetchMessages, selectedContactId],
+  // Editable updaters for the preview Modal
+  const updateExtractedField = <K extends keyof ExtractedProject>(key: K, value: ExtractedProject[K]) => {
+    setExtracted((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+  const updateQuotationItem = (idx: number, patch: Partial<ExtractedQuotationItem>) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      const items = [...prev.quotationItems];
+      items[idx] = { ...items[idx], ...patch };
+      return { ...prev, quotationItems: items };
+    });
+  };
+  const removeQuotationItem = (idx: number) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return { ...prev, quotationItems: prev.quotationItems.filter((_, i) => i !== idx) };
+    });
+  };
+  const addQuotationItem = () => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        quotationItems: [...prev.quotationItems, { name: "", description: "", unit: "式", quantity: 1, unitPrice: 0 }],
+      };
+    });
+  };
+  const updateWorkflowTask = (idx: number, patch: Partial<ExtractedWorkflowTask>) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      const tasks = [...prev.workflowTasks];
+      tasks[idx] = { ...tasks[idx], ...patch };
+      return { ...prev, workflowTasks: tasks };
+    });
+  };
+  const removeWorkflowTask = (idx: number) => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return { ...prev, workflowTasks: prev.workflowTasks.filter((_, i) => i !== idx) };
+    });
+  };
+  const addWorkflowTask = () => {
+    setExtracted((prev) => {
+      if (!prev) return prev;
+      return { ...prev, workflowTasks: [...prev.workflowTasks, { title: "", detail: "", date: "", time: "" }] };
+    });
+  };
+
+  const quotationTotal = (extracted?.quotationItems || []).reduce(
+    (sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0),
+    0,
   );
 
-  useEffect(() => {
-    void fetchContacts();
-  }, [fetchContacts]);
-
-  useEffect(() => {
-    if (selectedContactId) {
-      let cachedMessages = messagesByContactRef.current[selectedContactId];
-      const currentContact = contactsRef.current.find((contact) => contact.id === selectedContactId);
-      if ((!cachedMessages || cachedMessages.length === 0) && currentContact?.lineUserId) {
-        const matchedContactId = contactsRef.current.find(
-          (contact) =>
-            contact.id !== selectedContactId && contact.lineUserId === currentContact.lineUserId,
-        )?.id;
-        if (matchedContactId) {
-          const reboundMessages = messagesByContactRef.current[matchedContactId];
-          if (reboundMessages?.length) {
-            messagesByContactRef.current[selectedContactId] = reboundMessages;
-            cachedMessages = reboundMessages;
-          }
-        }
-      }
-
-      if (cachedMessages && cachedMessages.length > 0) {
-        setMessages((prev) => (areMessageListsEqual(prev, cachedMessages!) ? prev : cachedMessages!));
-      }
-      void fetchMessages(selectedContactId, true);
-    } else {
-      setMessages([]);
-    }
-  }, [selectedContactId]);
-
-  useEffect(() => {
-    const trimmedContacts = contacts.slice(0, MAX_CACHE_CONTACTS);
-    const allowedIds = new Set(trimmedContacts.map((contact) => contact.id));
-    const nextMessagesByContact: Record<string, CrmMessage[]> = {
-      ...messagesByContactRef.current,
-    };
-
-    if (selectedContactId) {
-      nextMessagesByContact[selectedContactId] = messages.slice(-MAX_CACHE_MESSAGES_PER_CONTACT);
-    }
-
-    for (const contactId of Object.keys(nextMessagesByContact)) {
-      if (!allowedIds.has(contactId)) {
-        delete nextMessagesByContact[contactId];
-      }
-    }
-    messagesByContactRef.current = nextMessagesByContact;
-
-    if (trimmedContacts.length === 0 && !selectedContactId) {
-      return;
-    }
-
-    saveCrmUiCache({
-      contacts: trimmedContacts,
-      selectedContactId,
-      messagesByContact: nextMessagesByContact,
-      cachedAt: new Date().toISOString(),
-    });
-  }, [contacts, messages, selectedContactId]);
-
-  useEffect(() => {
-    if (activeTab === "settings") {
-      void fetchLineSettings();
-    }
-  }, [activeTab, fetchLineSettings]);
-
-  useEffect(() => {
-    void fetchLineSettings();
-  }, [fetchLineSettings]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    setLineSettings((prev) =>
-      prev.webhookUrl
-        ? prev
-        : {
-            ...prev,
-            webhookUrl: `${window.location.origin}/api/line/webhook`,
-          },
-    );
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== "inbox") {
-      return;
-    }
-    const timer = setInterval(() => {
-      if (typeof document !== "undefined" && document.hidden) {
-        return;
-      }
-      syncInboxNow();
-    }, INBOX_POLL_MS);
-
-    return () => clearInterval(timer);
-  }, [activeTab, syncInboxNow]);
-
-  useEffect(() => {
-    if (activeTab !== "inbox" || typeof window === "undefined" || typeof document === "undefined") {
-      return;
-    }
-
-    const onForeground = () => {
-      if (!document.hidden) {
-        syncInboxNow();
-      }
-    };
-
-    window.addEventListener("focus", onForeground);
-    document.addEventListener("visibilitychange", onForeground);
-    return () => {
-      window.removeEventListener("focus", onForeground);
-      document.removeEventListener("visibilitychange", onForeground);
-    };
-  }, [activeTab, syncInboxNow]);
-
-  const handleSend = async () => {
-    if (!selectedContactId || sending) {
-      return;
-    }
-    if (!isInteriorIntakeComplete) {
-      setShowProfile(true);
-      setError("請先完成「室內設計初訪問卷」，再進行對話回覆。");
-      return;
-    }
-    const text = composer.trim();
-    if (!text) {
-      return;
-    }
-
-    setSending(true);
-    setError(null);
-    try {
-      let effectiveContactId = selectedContactId;
-      const send = (contactId: string) =>
-        requestJson<{ message: CrmMessage }>("/api/crm/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contactId, text }),
-        });
-
-      let data: { message: CrmMessage };
-      try {
-        data = await send(effectiveContactId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "發送訊息失敗";
-        if (!isContactNotFoundError(message)) {
-          throw err;
-        }
-        const reboundId = await tryRecoverContact(effectiveContactId);
-        if (!reboundId) {
-          throw err;
-        }
-        effectiveContactId = reboundId;
-        setNotice("已自動重新綁定客戶後重試發送。");
-        data = await send(effectiveContactId);
-      }
-
-      setComposer("");
-      appendMessageToLocalCache(effectiveContactId, data.message);
-      await fetchContacts();
-      await fetchMessages(effectiveContactId, false);
-      const syncedContact = contactsRef.current.find((item) => item.id === effectiveContactId);
-      if (syncedContact?.source === "line" && syncedContact.lineUserId) {
-        setNotice("已回覆並成功推送至 LINE 客戶。");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "發送訊息失敗");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !selectedContactId) {
-      return;
-    }
-    if (!isInteriorIntakeComplete) {
-      setShowProfile(true);
-      setError("請先完成「室內設計初訪問卷」，再傳送附件。");
-      event.target.value = "";
-      return;
-    }
-
-    setSending(true);
-    setError(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const uploadResult = await requestJson<{ attachment: CrmAttachment }>("/api/crm/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      let effectiveContactId = selectedContactId;
-      const send = (contactId: string) =>
-        requestJson<{ message: CrmMessage }>("/api/crm/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contactId,
-            text: composer.trim() || undefined,
-            attachment: uploadResult.attachment,
-          }),
-        });
-
-      let sendResult: { message: CrmMessage };
-      try {
-        sendResult = await send(effectiveContactId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "上傳檔案失敗";
-        if (!isContactNotFoundError(message)) {
-          throw err;
-        }
-        const reboundId = await tryRecoverContact(effectiveContactId);
-        if (!reboundId) {
-          throw err;
-        }
-        effectiveContactId = reboundId;
-        setNotice("已自動重新綁定客戶後重試送出附件。");
-        sendResult = await send(effectiveContactId);
-      }
-
-      setComposer("");
-      appendMessageToLocalCache(effectiveContactId, sendResult.message);
-      await fetchContacts();
-      await fetchMessages(effectiveContactId, false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "上傳檔案失敗");
-    } finally {
-      setSending(false);
-      event.target.value = "";
-    }
-  };
-
-  const handleAddTag = async () => {
-    if (!selectedContact || tagBusy) {
-      return;
-    }
-    const trimmedTag = newTagInput.trim();
-    if (!trimmedTag) {
-      return;
-    }
-    if (selectedContact.tags.includes(trimmedTag)) {
-      setNewTagInput("");
-      setNotice("此標籤已存在");
-      return;
-    }
-    let effectiveContactId = selectedContact.id;
-    setTagBusy(true);
-    setError(null);
-    try {
-      const addTag = (contactId: string) =>
-        requestJson<{ contact: CrmContact }>(
-          `/api/crm/contacts/${contactId}/tags?tag=${encodeURIComponent(trimmedTag)}`,
-          {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tag: trimmedTag }),
-          },
-        );
-      let data: { contact: CrmContact } | null = null;
-      try {
-        let lastTagError: unknown = null;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          try {
-            data = await addTag(effectiveContactId);
-            lastTagError = null;
-            break;
-          } catch (error) {
-            lastTagError = error;
-            const message = error instanceof Error ? error.message : "新增標籤失敗";
-            if (!isTransientFetchError(message) || attempt >= 2) {
-              throw error;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
-          }
-        }
-        if (lastTagError) {
-          throw lastTagError;
-        }
-        if (!data) {
-          throw new Error("新增標籤失敗");
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "新增標籤失敗";
-        if (!isContactNotFoundError(message)) {
-          throw err;
-        }
-        const reboundId = await tryRecoverContact(effectiveContactId);
-        if (!reboundId) {
-          throw err;
-        }
-        effectiveContactId = reboundId;
-        setNotice("已自動重新綁定客戶後重試新增標籤。");
-        data = await addTag(effectiveContactId);
-      }
-      if (!data) {
-        throw new Error("新增標籤失敗");
-      }
-      setNewTagInput("");
-      updateContactInList(data.contact);
-      setNotice(`已新增標籤：${trimmedTag}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "新增標籤失敗");
-    } finally {
-      setTagBusy(false);
-    }
-  };
-
-  const handleRemoveTag = async (tag: string) => {
-    if (!selectedContact) {
-      return;
-    }
-    let effectiveContactId = selectedContact.id;
-    try {
-      const trimmedTag = tag.trim();
-      if (!trimmedTag) {
-        return;
-      }
-      const removeTag = (contactId: string) =>
-        requestJson<{ contact: CrmContact }>(
-          `/api/crm/contacts/${contactId}/tags?tag=${encodeURIComponent(trimmedTag)}`,
-          {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tag: trimmedTag }),
-          },
-        );
-      let data: { contact: CrmContact } | null = null;
-      try {
-        let lastRemoveError: unknown = null;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          try {
-            data = await removeTag(effectiveContactId);
-            lastRemoveError = null;
-            break;
-          } catch (error) {
-            lastRemoveError = error;
-            const message = error instanceof Error ? error.message : "移除標籤失敗";
-            if (!isTransientFetchError(message) || attempt >= 2) {
-              throw error;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
-          }
-        }
-        if (lastRemoveError) {
-          throw lastRemoveError;
-        }
-        if (!data) {
-          throw new Error("移除標籤失敗");
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "移除標籤失敗";
-        if (!isContactNotFoundError(message)) {
-          throw err;
-        }
-        const reboundId = await tryRecoverContact(effectiveContactId);
-        if (!reboundId) {
-          throw err;
-        }
-        effectiveContactId = reboundId;
-        setNotice("已自動重新綁定客戶後重試移除標籤。");
-        data = await removeTag(effectiveContactId);
-      }
-      if (!data) {
-        throw new Error("移除標籤失敗");
-      }
-      updateContactInList(data.contact);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "移除標籤失敗");
-    }
-  };
-
-  const handleStatusChange = async (status: ContactStatus) => {
-    if (!selectedContact) {
-      return;
-    }
-    let effectiveContactId = selectedContact.id;
-    try {
-      const changeStatus = (contactId: string) =>
-        requestJson<{ contact: CrmContact }>(`/api/crm/contacts/${contactId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
-        });
-      let data: { contact: CrmContact };
-      try {
-        data = await changeStatus(effectiveContactId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "更新狀態失敗";
-        if (!isContactNotFoundError(message)) {
-          throw err;
-        }
-        const reboundId = await tryRecoverContact(effectiveContactId);
-        if (!reboundId) {
-          throw err;
-        }
-        effectiveContactId = reboundId;
-        setNotice("已自動重新綁定客戶後重試更新狀態。");
-        data = await changeStatus(effectiveContactId);
-      }
-      updateContactInList(data.contact);
-      setNotice("客戶狀態已更新");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "更新狀態失敗");
-    }
-  };
-
-  const handleProfileFieldChange = (field: keyof ContactProfileForm, value: string) => {
-    if (!selectedContact) {
-      return;
-    }
-    setProfileForm((prev) => {
-      const next: ContactProfileForm = {
-        ...prev,
-        [field]: value,
-      };
-      const base = toContactProfileForm(selectedContact);
-      const dirty = !isSameProfileForm(next, base);
-      setProfileDirty(dirty);
-      if (dirty) {
-        profileDraftsRef.current[selectedContact.id] = next;
-      } else {
-        delete profileDraftsRef.current[selectedContact.id];
-      }
-      saveProfileDraftMap(profileDraftsRef.current);
-      return next;
-    });
-  };
-
-  const handleSaveProfile = async () => {
-    if (!selectedContact || profileSaving) {
-      return;
-    }
-    let effectiveContactId = selectedContact.id;
-    setProfileSaving(true);
-    setError(null);
-    try {
-      const payload = () => ({
-        displayName: profileForm.displayName.trim() || selectedContact.displayName,
-        phone: profileForm.phone.trim(),
-        email: profileForm.email.trim(),
-      });
-      const saveProfile = (contactId: string) =>
-        requestJson<{ contact: CrmContact }>(`/api/crm/contacts/${contactId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload()),
-        });
-      let data: { contact: CrmContact };
-      try {
-        data = await saveProfile(effectiveContactId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "儲存聯絡資訊失敗";
-        if (!isContactNotFoundError(message)) {
-          throw err;
-        }
-        const reboundId = await tryRecoverContact(effectiveContactId);
-        if (!reboundId) {
-          throw err;
-        }
-        effectiveContactId = reboundId;
-        setNotice("已自動重新綁定客戶後重試儲存聯絡資訊。");
-        data = await saveProfile(effectiveContactId);
-      }
-      updateContactInList(data.contact);
-      const nextForm = toContactProfileForm(data.contact);
-      setProfileForm(nextForm);
-      setProfileDirty(false);
-      delete profileDraftsRef.current[effectiveContactId];
-      saveProfileDraftMap(profileDraftsRef.current);
-      setNotice("聯絡資訊已儲存");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "儲存聯絡資訊失敗");
-    } finally {
-      setProfileSaving(false);
-    }
-  };
-
-  const handleSaveLineSettings = async () => {
-    setSettingsBusy(true);
-    setError(null);
-    try {
-      const data = await requestJson<LineSettings>(
-        `/api/crm/settings/line?userId=${encodeURIComponent(lineCacheScope)}`,
-        {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(lineForm),
-        },
-      );
-      setLineSettings(data);
-      setLineForm((prev) => ({
-        ...prev,
-        channelId: data.channelId,
-      }));
-      setNotice("LINE OA 設定已儲存（此瀏覽器已暫存憑證，避免重填）");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "儲存 LINE 設定失敗");
-    } finally {
-      setSettingsBusy(false);
-    }
-  };
-
-  const handleDisconnectLine = async () => {
-    setSettingsBusy(true);
-    setError(null);
-    try {
-      const data = await requestJson<LineSettings>(
-        `/api/crm/settings/line?userId=${encodeURIComponent(lineCacheScope)}`,
-        {
-        method: "DELETE",
-        },
-      );
-      setLineSettings(data);
-      setLineForm({
-        channelId: "",
-        channelAccessToken: "",
-        channelSecret: "",
-      });
-      clearLineFormCache(lineCacheScope);
-      clearLineSettingsCache(lineCacheScope);
-      setNotice("已解除 LINE OA 串接");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "解除 LINE 串接失敗");
-    } finally {
-      setSettingsBusy(false);
-    }
-  };
-
+  /* ---- copy webhook URL ---- */
   const copyWebhookUrl = async () => {
-    if (!lineSettings.webhookUrl) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(lineSettings.webhookUrl);
-      setNotice("Webhook URL 已複製");
-    } catch {
-      setError("無法複製 Webhook URL");
-    }
+    if (!lineData?.webhookUrl) return;
+    await navigator.clipboard.writeText(lineData.webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  const renderAttachment = (message: CrmMessage) => {
-    const attachment = message.attachment;
-    if (!attachment) {
-      return null;
-    }
+  /* ================================================================ */
+  /*  RENDER                                                           */
+  /* ================================================================ */
 
-    const sourceUrl = attachment.url || attachment.dataUrl;
-    if (attachment.type === "image" && sourceUrl) {
-      return (
-        <a href={sourceUrl} target="_blank" rel="noreferrer" className="block mt-2">
-          <img
-            src={sourceUrl}
-            alt={attachment.name ?? "image"}
-            className="max-h-56 rounded-lg border border-gray-200 object-contain"
-          />
-        </a>
-      );
-    }
-
-    if (sourceUrl) {
-      return (
-        <a
-          href={sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-2 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+  return (
+    <div className="flex flex-col bg-white rounded-xl shadow overflow-hidden h-full min-h-[calc(100vh-8rem)]">
+      {/* ===== TOP TAB BAR ===== */}
+      <div className="flex border-b border-gray-200 shrink-0">
+        <button
+          onClick={() => setActiveTab("contacts")}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "contacts"
+              ? "border-brand-600 text-brand-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
         >
-          <LinkIcon className="h-3.5 w-3.5" />
-          {attachment.name || "下載附件"}
-        </a>
-      );
-    }
-
-    return (
-      <p className="mt-2 text-xs text-gray-500">
-        已收到附件：{attachment.name || "未命名檔案"}（目前僅保存 metadata）
-      </p>
-    );
-  };
-
-  const renderInbox = () => (
-    <div className="flex h-full min-w-0 flex-1">
-      <div className="flex w-80 flex-col border-r border-gray-200 bg-white">
-        <div className="border-b border-gray-100 p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜尋客戶、電話、標籤"
-              className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-sm focus:border-brand-500 focus:bg-white focus:outline-none"
-            />
-          </div>
-          <input
-            value={filterTag}
-            onChange={(event) => setFilterTag(event.target.value)}
-            placeholder="標籤篩選 (例如：高預算)"
-            className="mt-2 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs focus:border-brand-500 focus:bg-white focus:outline-none"
-          />
-        </div>
-
-        <div className="custom-scrollbar flex-1 overflow-y-auto">
-          {loadingContacts && (
-            <p className="px-4 py-3 text-xs text-gray-500">載入聯絡人中...</p>
+          <UserCircle className="w-4 h-4" /> 客戶列表
+        </button>
+        <button
+          onClick={() => setActiveTab("line-settings")}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "line-settings"
+              ? "border-brand-600 text-brand-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+        >
+          <MessageCircle className="w-4 h-4" /> LINE OA 設定
+          {lineData?.connected && (
+            <span className="w-2 h-2 rounded-full bg-green-500" />
           )}
-          {!loadingContacts && contacts.length === 0 && (
-            <p className="px-4 py-6 text-sm text-gray-500">目前沒有聯絡人資料，請先完成 LINE 串接。</p>
-          )}
-          {contacts.map((contact) => (
-            <button
-              key={contact.id}
-              onClick={() => setSelectedContactId(contact.id)}
-              className={`w-full border-l-4 p-4 text-left transition-colors ${
-                selectedContactId === contact.id
-                  ? "border-l-brand-600 bg-brand-50"
-                  : "border-l-transparent hover:bg-gray-50"
-              }`}
-            >
-              <div className="mb-1 flex items-center justify-between">
-                <span className={`text-sm ${contact.unread ? "font-bold" : "font-medium"}`}>
-                  {contact.displayName}
-                </span>
-                <span className="text-[11px] text-gray-500">{formatTime(contact.lastMessageAt)}</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("pricing")}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "pricing"
+              ? "border-brand-600 text-brand-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+        >
+          <Calculator className="w-4 h-4" /> 報價標準
+        </button>
+        <button
+          onClick={() => setActiveTab("tags")}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "tags"
+              ? "border-brand-600 text-brand-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+        >
+          <Tag className="w-4 h-4" /> 標籤管理
+        </button>
+      </div>
+
+      {/* ===== TAG MANAGEMENT TAB ===== */}
+      {activeTab === "tags" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-3xl mx-auto w-full">
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">標籤管理</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  自訂標籤與顏色。設定「自動關鍵字」後，客戶 LINE 訊息含關鍵字就會自動貼上該標籤。
+                </p>
               </div>
-              <p className="line-clamp-1 text-xs text-gray-600">
-                {contact.lastMessageText || "尚無訊息"}
-              </p>
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex gap-1">
-                  {contact.tags.slice(0, 2).map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600"
-                    >
-                      {tag}
-                    </span>
+              <Button variant="primary" size="sm" onClick={saveTagDefs} disabled={tagSaving || !tagDirty} className="gap-1.5">
+                {tagSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                {tagSaving ? "儲存中" : tagDirty ? "儲存變更" : "已儲存"}
+              </Button>
+            </div>
+
+            {tagMsg && (
+              <div className={`mt-3 mb-2 p-2.5 rounded-lg text-sm ${tagMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {tagMsg.text}
+              </div>
+            )}
+
+            {tagLoading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
+                <RefreshCw className="w-5 h-5 animate-spin mr-2" /> 載入中...
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {tagDefs.length === 0 && (
+                  <p className="text-sm text-gray-400 text-center py-8 bg-gray-50 rounded-lg">
+                    尚無自訂標籤，按下方「新增標籤」開始。
+                  </p>
+                )}
+                {tagDefs.map((t) => (
+                  <div key={t.id} className="border border-gray-200 rounded-lg p-3 grid grid-cols-12 gap-2 items-center">
+                    <input
+                      className="col-span-12 md:col-span-3 text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      placeholder="標籤名稱（如：高意願）"
+                      value={t.name}
+                      onChange={(e) => updateTagDef(t.id, { name: e.target.value })}
+                    />
+                    <div className="col-span-6 md:col-span-3 flex items-center gap-1.5">
+                      <select
+                        className="text-sm border border-gray-200 rounded px-2 py-1.5 bg-white"
+                        value={t.color}
+                        onChange={(e) => updateTagDef(t.id, { color: e.target.value })}
+                      >
+                        {TAG_COLORS.map((c) => (<option key={c} value={c}>{c}</option>))}
+                      </select>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${TAG_COLOR_CLASS[t.color] || TAG_COLOR_CLASS.gray}`}>
+                        {t.name || "預覽"}
+                      </span>
+                    </div>
+                    <input
+                      className="col-span-11 md:col-span-5 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      placeholder="自動關鍵字（逗號分隔，如：報價,預算,什麼時候）"
+                      value={(t.autoKeywords || []).join(", ")}
+                      onChange={(e) => updateTagDef(t.id, { autoKeywords: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) })}
+                    />
+                    <button onClick={() => removeTagDef(t.id)} className="col-span-1 text-gray-300 hover:text-red-500 justify-self-end" title="刪除">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={addTagDef}
+                  className="w-full py-2.5 text-sm text-brand-600 hover:bg-brand-50 border border-dashed border-gray-300 rounded-lg flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> 新增標籤
+                </button>
+              </div>
+            )}
+            <p className="text-[11px] text-gray-400 mt-3">
+              提示：自動關鍵字比對客戶傳來的訊息內容（不分大小寫）。例如「報價,多少錢」→ 自動貼「詢價中」標籤，方便日後依標籤群發。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ===== PRICING STANDARDS TAB ===== */}
+      {activeTab === "pricing" && (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-4xl mx-auto w-full">
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">標準報價表</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  AI 從 LINE 對話歸納報價時，客戶沒明講價格就依這份表自動填入單價。隨時可增修。
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={resetPricing}
+                  disabled={pricingSaving}
+                  className="text-xs px-3 py-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  重設預設
+                </button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={savePricing}
+                  disabled={pricingSaving || !pricingDirty}
+                  className="gap-1.5"
+                >
+                  {pricingSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  {pricingSaving ? "儲存中" : pricingDirty ? "儲存變更" : "已儲存"}
+                </Button>
+              </div>
+            </div>
+
+            {pricingMsg && (
+              <div className={`mt-3 mb-2 p-2.5 rounded-lg text-sm ${
+                pricingMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+              }`}>
+                {pricingMsg.text}
+              </div>
+            )}
+
+            {pricingLoading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
+                <RefreshCw className="w-5 h-5 animate-spin mr-2" /> 載入中...
+              </div>
+            ) : (
+              <div className="mt-4 border border-gray-200 rounded-xl overflow-hidden">
+                {/* header row */}
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500">
+                  <div className="col-span-3">工項名稱</div>
+                  <div className="col-span-2">分類</div>
+                  <div className="col-span-1">單位</div>
+                  <div className="col-span-2">單價(NT$)</div>
+                  <div className="col-span-3">別名 / 備註（逗號分隔）</div>
+                  <div className="col-span-1"></div>
+                </div>
+                <div className="max-h-[calc(100vh-22rem)] overflow-y-auto divide-y divide-gray-100">
+                  {pricingItems.map((it) => (
+                    <div key={it.id} className="grid grid-cols-12 gap-2 px-3 py-2 items-center hover:bg-gray-50/60">
+                      <input
+                        className="col-span-3 text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="例：木作天花板"
+                        value={it.name}
+                        onChange={(e) => updatePricingItem(it.id, { name: e.target.value })}
+                      />
+                      <input
+                        className="col-span-2 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="分類"
+                        value={it.category}
+                        onChange={(e) => updatePricingItem(it.id, { category: e.target.value })}
+                      />
+                      <input
+                        className="col-span-1 text-xs border border-gray-200 rounded px-1.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 text-center"
+                        placeholder="坪"
+                        value={it.unit}
+                        onChange={(e) => updatePricingItem(it.id, { unit: e.target.value })}
+                      />
+                      <input
+                        type="number"
+                        className="col-span-2 text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="0"
+                        value={it.unitPrice}
+                        onChange={(e) => updatePricingItem(it.id, { unitPrice: Number(e.target.value) || 0 })}
+                      />
+                      <input
+                        className="col-span-3 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 text-gray-600"
+                        placeholder="拆除,打牆 / 8-10%"
+                        value={[...(it.aliases || []), ...(it.note ? [it.note] : [])].join(", ")}
+                        onChange={(e) => {
+                          // crude split: everything is alias unless it looks like a note (contains %, 區間, 元)
+                          const parts = e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+                          const notes = parts.filter((p) => /[%％]|區間|元|備註/.test(p));
+                          const aliases = parts.filter((p) => !notes.includes(p));
+                          updatePricingItem(it.id, { aliases, note: notes.join("；") || undefined });
+                        }}
+                      />
+                      <div className="col-span-1 flex justify-end">
+                        <button
+                          onClick={() => removePricingItem(it.id)}
+                          className="text-gray-300 hover:text-red-500 p-1"
+                          title="刪除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   ))}
                 </div>
-                <div className="flex items-center gap-1">
-                  {contact.source === "line" && <Smartphone className="h-3.5 w-3.5 text-green-600" />}
-                  {contact.unread > 0 && (
-                    <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                      {contact.unread}
+                <button
+                  onClick={addPricingItem}
+                  className="w-full py-2.5 text-sm text-brand-600 hover:bg-brand-50 border-t border-gray-200 flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> 新增工項
+                </button>
+              </div>
+            )}
+
+            <p className="text-[11px] text-gray-400 mt-3">
+              提示：單位可填「坪 / 尺 / 式 / 台 / 間 / 車 / 平方米 / %」。別名讓 AI 對得上客戶的口語說法（例如「打牆」對應「拆除」）。百分比類（如工程管理費）單價填 0，在備註寫「8-10%」。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ===== LINE SETTINGS TAB ===== */}
+      {activeTab === "line-settings" && (
+        <div className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">LINE Official Account 串接</h2>
+          <p className="text-sm text-gray-500 mb-6">將你的 LINE OA 連接到 CRM，自動接收客戶訊息並管理對話</p>
+
+          {/* Storage backend warning — memory mode breaks webhooks on serverless */}
+          {lineData?.storageBackend === "memory" && (
+            <div className="mb-6 border border-amber-300 bg-amber-50 rounded-xl p-4">
+              <div className="flex gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-sm text-amber-800">
+                  <p className="font-semibold mb-1">資料庫尚未設定，LINE 訊息無法正常接收</p>
+                  <p className="text-amber-700 leading-relaxed">
+                    目前儲存模式為「記憶體」(memory)，在 Vercel serverless 環境下資料不會持久化、各實例不共用，
+                    導致 LINE webhook 找不到設定而失敗（事件數卡住）。請在 Vercel 加上 Upstash Redis 或 Vercel KV，
+                    設定 <span className="font-mono">UPSTASH_REDIS_REST_URL</span> /{" "}
+                    <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> 後重新部署，
+                    儲存模式會自動變成 redis，再重新填寫下方設定即可。
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Connection status */}
+          {lineLoading ? (
+            <div className="flex items-center gap-2 text-sm text-gray-400 py-8 justify-center">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 載入中...
+            </div>
+          ) : lineData?.connected ? (
+            <>
+              {/* Connected state */}
+              <div className="border border-green-200 bg-green-50 rounded-xl p-5 mb-6">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                    <Check className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-green-800">已連線</p>
+                    <p className="text-xs text-green-600">Channel ID：{lineData.channelId}</p>
+                  </div>
+                </div>
+                {lineData.updatedAt && (
+                  <p className="text-xs text-green-600 mb-1">
+                    設定時間：{new Date(lineData.updatedAt).toLocaleString("zh-TW")}
+                  </p>
+                )}
+              </div>
+
+              {/* Webhook URL */}
+              <div className="mb-6">
+                <label className="text-sm font-medium text-gray-700 block mb-2">
+                  Webhook URL（貼到 LINE Developers Console）
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={lineData.webhookUrl}
+                    className="flex-1 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 font-mono text-gray-700 select-all"
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    onClick={copyWebhookUrl}
+                    className="px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-1.5"
+                  >
+                    {copied ? <Check className="w-4 h-4 text-green-600" /> : <ClipboardCopy className="w-4 h-4" />}
+                    {copied ? "已複製" : "複製"}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  前往 <span className="font-medium">LINE Developers → Messaging API → Webhook URL</span>，貼上此連結並啟用 Use webhook
+                </p>
+              </div>
+
+              {/* Webhook stats */}
+              <div className="mb-6">
+                <label className="text-sm font-medium text-gray-700 block mb-2">Webhook 接收記錄</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
+                    <p className="text-xs text-gray-400">最近接收</p>
+                    <p className="text-sm font-medium text-gray-800 mt-0.5">
+                      {lineData.lastWebhookAt
+                        ? new Date(lineData.lastWebhookAt).toLocaleString("zh-TW")
+                        : "尚未收到"}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
+                    <p className="text-xs text-gray-400">事件數</p>
+                    <p className="text-sm font-medium text-gray-800 mt-0.5">
+                      {lineData.lastWebhookEventCount} 收 / {lineData.lastWebhookProcessedCount} 成功 / {lineData.lastWebhookFailedCount} 失敗
+                    </p>
+                  </div>
+                </div>
+                {lineData.lastWebhookError && (
+                  <div className="mt-2 bg-red-50 border border-red-100 rounded-lg p-3">
+                    <p className="text-xs text-red-600">最近錯誤：{lineData.lastWebhookError}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Refresh + Disconnect */}
+              <div className="flex gap-3">
+                <Button variant="outline" size="sm" onClick={fetchLineSettings} className="gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5" /> 重新整理
+                </Button>
+                <Button variant="ghost" size="sm" onClick={disconnectLine} className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1.5">
+                  <Unlink className="w-3.5 h-3.5" /> 中斷連線
+                </Button>
+              </div>
+
+              {/* Re-configure (collapsed) */}
+              <details className="mt-6 border border-gray-200 rounded-xl">
+                <summary className="px-4 py-3 text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 rounded-xl flex items-center gap-2">
+                  <Settings className="w-4 h-4" /> 重新設定（更新 Token）
+                </summary>
+                <div className="p-4 pt-2 space-y-3 border-t border-gray-100">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Channel ID</label>
+                    <input
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder={lineData.channelId || "Channel ID"}
+                      value={lineForm.channelId}
+                      onChange={(e) => setLineForm((f) => ({ ...f, channelId: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Channel Access Token</label>
+                    <input
+                      type="password"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder="留空則保持現有 Token"
+                      value={lineForm.channelAccessToken}
+                      onChange={(e) => setLineForm((f) => ({ ...f, channelAccessToken: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Channel Secret</label>
+                    <input
+                      type="password"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder="留空則保持現有 Secret"
+                      value={lineForm.channelSecret}
+                      onChange={(e) => setLineForm((f) => ({ ...f, channelSecret: e.target.value }))}
+                    />
+                  </div>
+                  <Button variant="primary" size="sm" onClick={saveLineSettings} disabled={lineSaving} className="gap-1.5">
+                    {lineSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    {lineSaving ? "驗證中..." : "更新並驗證"}
+                  </Button>
+                </div>
+              </details>
+            </>
+          ) : (
+            <>
+              {/* Not connected — setup form */}
+              <div className="border border-gray-200 rounded-xl p-5 mb-6 bg-gray-50">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                    <Link2 className="w-5 h-5 text-gray-500" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-800">尚未連線</p>
+                    <p className="text-xs text-gray-500">輸入 LINE Messaging API 設定完成串接</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Channel ID *</label>
+                    <input
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                      placeholder="LINE Developers Console → Basic settings"
+                      value={lineForm.channelId}
+                      onChange={(e) => setLineForm((f) => ({ ...f, channelId: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Channel Access Token (long-lived) *</label>
+                    <input
+                      type="password"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                      placeholder="LINE Developers Console → Messaging API → Issue"
+                      value={lineForm.channelAccessToken}
+                      onChange={(e) => setLineForm((f) => ({ ...f, channelAccessToken: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Channel Secret *</label>
+                    <input
+                      type="password"
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                      placeholder="LINE Developers Console → Basic settings"
+                      value={lineForm.channelSecret}
+                      onChange={(e) => setLineForm((f) => ({ ...f, channelSecret: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  variant="primary"
+                  className="mt-4 w-full gap-2"
+                  onClick={saveLineSettings}
+                  disabled={lineSaving}
+                >
+                  {lineSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                  {lineSaving ? "驗證連線中..." : "連接 LINE OA"}
+                </Button>
+              </div>
+
+              {/* Setup guide */}
+              <div className="border border-brand-100 bg-brand-50/50 rounded-xl p-5">
+                <h4 className="text-sm font-semibold text-brand-800 mb-3 flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4" /> 如何取得 LINE OA API 資訊？
+                </h4>
+                <ol className="text-xs text-brand-700 space-y-2 list-decimal list-inside">
+                  <li>前往 <span className="font-medium">LINE Developers Console</span> → 選擇你的 Provider</li>
+                  <li>建立或選擇 <span className="font-medium">Messaging API Channel</span></li>
+                  <li>在 Basic settings 複製 <span className="font-medium">Channel ID</span> 和 <span className="font-medium">Channel Secret</span></li>
+                  <li>在 Messaging API 頁面按 Issue 取得 <span className="font-medium">Channel Access Token (long-lived)</span></li>
+                  <li>串接成功後，將本系統產生的 <span className="font-medium">Webhook URL</span> 貼回 LINE Developers</li>
+                  <li>啟用 <span className="font-medium">Use webhook</span>，完成！</li>
+                </ol>
+              </div>
+            </>
+          )}
+
+          {/* Status message */}
+          {lineMsg && (
+            <div className={`mt-4 p-3 rounded-lg text-sm ${
+              lineMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+            }`}>
+              {lineMsg.text}
+            </div>
+          )}
+
+          {/* ===== 自動回覆設定 ===== */}
+          <div className="mt-8 border-t border-gray-200 pt-6">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">自動回覆設定</h3>
+                <p className="text-sm text-gray-500 mt-0.5">把 LINE OA 後台的歡迎訊息與關鍵字自動回覆搬到這裡統一管理。</p>
+              </div>
+              <Button variant="primary" size="sm" onClick={saveAutoReply} disabled={autoReplySaving || !autoReplyDirty} className="gap-1.5 shrink-0">
+                {autoReplySaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                {autoReplySaving ? "儲存中" : autoReplyDirty ? "儲存變更" : "已儲存"}
+              </Button>
+            </div>
+
+            {autoReplyMsg && (
+              <div className={`mb-3 p-2.5 rounded-lg text-sm ${autoReplyMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {autoReplyMsg.text}
+              </div>
+            )}
+
+            {/* 歡迎訊息 */}
+            <div className="border border-gray-200 rounded-xl p-4 mb-4">
+              <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={welcomeEnabled}
+                  onChange={(e) => { setWelcomeEnabled(e.target.checked); setAutoReplyDirty(true); }}
+                />
+                <span className="text-sm font-medium text-gray-800">加入好友時自動發送歡迎訊息</span>
+              </label>
+              <textarea
+                value={welcomeMessage}
+                onChange={(e) => { setWelcomeMessage(e.target.value); setAutoReplyDirty(true); }}
+                disabled={!welcomeEnabled}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 h-24 resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-50 disabled:text-gray-400"
+                placeholder="您好，感謝加入！我們是專業室內設計團隊，請告訴我們您的空間坪數與需求，將盡快為您服務 😊"
+              />
+            </div>
+
+            {/* 關鍵字自動回覆 */}
+            <div className="border border-gray-200 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium text-gray-800">關鍵字自動回覆</p>
+                <button onClick={addReplyRule} className="text-xs px-2 py-1 border border-brand-200 text-brand-700 rounded-lg hover:bg-brand-50 flex items-center gap-1">
+                  <Plus className="w-3 h-3" /> 新增規則
+                </button>
+              </div>
+              {replyRules.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-4">尚無關鍵字回覆規則。客戶訊息含關鍵字時自動回覆指定內容。</p>
+              ) : (
+                <div className="space-y-2">
+                  {replyRules.map((rule) => (
+                    <div key={rule.id} className="border border-gray-100 rounded-lg p-2.5 bg-gray-50/50 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          placeholder="關鍵字（逗號分隔，如：報價,價格,多少錢）"
+                          value={rule.keywords.join(", ")}
+                          onChange={(e) => updateReplyRule(rule.id, { keywords: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) })}
+                        />
+                        <label className="flex items-center gap-1 text-[11px] text-gray-500 shrink-0">
+                          <input type="checkbox" checked={rule.enabled !== false} onChange={(e) => updateReplyRule(rule.id, { enabled: e.target.checked })} />
+                          啟用
+                        </label>
+                        <button onClick={() => removeReplyRule(rule.id)} className="text-gray-300 hover:text-red-500 shrink-0">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <textarea
+                        className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 bg-white h-16 resize-none focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="自動回覆內容，例如：感謝詢問！請提供坪數與格局，我們會在 24 小時內提供初步報價 🙏"
+                        value={rule.reply}
+                        onChange={(e) => updateReplyRule(rule.id, { reply: e.target.value })}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-gray-400 mt-2">關鍵字比對客戶訊息（不分大小寫），符合第一條規則就自動回覆並記錄到對話。</p>
+            </div>
+          </div>
+
+          {/* ===== 依標籤群發 ===== */}
+          <div className="mt-8 border-t border-gray-200 pt-6">
+            <h3 className="text-base font-semibold text-gray-900">群發訊息</h3>
+            <p className="text-sm text-gray-500 mt-0.5 mb-3">依標籤對 LINE 客戶群發訊息（選「全部」則發給所有 LINE 客戶）。</p>
+
+            {broadcastMsg && (
+              <div className={`mb-3 p-2.5 rounded-lg text-sm ${broadcastMsg.type === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {broadcastMsg.text}
+              </div>
+            )}
+
+            <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">對象標籤</label>
+                <select
+                  value={broadcastTag}
+                  onChange={(e) => setBroadcastTag(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">全部 LINE 客戶</option>
+                  {tagDefs.map((t) => (<option key={t.id} value={t.name}>{t.name}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-1">群發內容</label>
+                <textarea
+                  value={broadcastMessage}
+                  onChange={(e) => setBroadcastMessage(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="輸入要群發的訊息，例如：本月新成屋專案優惠開跑，回覆「諮詢」即可預約免費丈量 🏠"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button variant="primary" onClick={sendBroadcast} disabled={broadcasting || !broadcastMessage.trim()} className="gap-2">
+                  {broadcasting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+                  {broadcasting ? "群發中..." : "確認群發"}
+                </Button>
+              </div>
+              <p className="text-[11px] text-gray-400">群發會逐一推播並記錄到每位客戶的對話。請留意 LINE 官方帳號的推播訊息額度。</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== CONTACTS TAB ===== */}
+      {activeTab === "contacts" && (
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+      {/* ---------- LEFT PANEL: Client List ---------- */}
+      <div className="w-80 shrink-0 border-r border-gray-200 flex flex-col min-w-0">
+        {/* 訊息來源頻道（預留 FB / IG） */}
+        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-100 bg-gray-50/60">
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> LINE
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-400" title="即將支援">
+            Facebook · 即將推出
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-400" title="即將支援">
+            Instagram · 即將推出
+          </span>
+        </div>
+        {/* search */}
+        <div className="p-3 border-b border-gray-100">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+              placeholder="搜尋客戶..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && fetchContacts()}
+            />
+          </div>
+        </div>
+
+        {/* status filter tabs */}
+        <div className="flex flex-wrap gap-1 px-3 py-2 border-b border-gray-100">
+          {(Object.keys(STATUS_LABELS) as StatusFilter[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-2 py-1 text-xs rounded-full transition-colors ${
+                statusFilter === s
+                  ? "bg-brand-600 text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {STATUS_LABELS[s]}
+            </button>
+          ))}
+        </div>
+
+        {/* action buttons */}
+        <div className="flex gap-2 px-3 py-2 border-b border-gray-100">
+          <Button size="sm" variant="primary" onClick={() => setShowAddModal(true)} className="flex-1 gap-1">
+            <Plus className="w-4 h-4" /> 新增客戶
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setShowScanModal(true)} className="flex-1 gap-1">
+            <Camera className="w-4 h-4" /> 掃描名片
+          </Button>
+        </div>
+
+        {/* contact list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading && contacts.length === 0 && (
+            <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
+              <RefreshCw className="w-4 h-4 animate-spin mr-2" /> 載入中...
+            </div>
+          )}
+          {!loading && contacts.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-sm">
+              <UserCircle className="w-8 h-8 mb-2" />
+              尚無客戶
+            </div>
+          )}
+          {contacts.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedId(c.id)}
+              className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${
+                selectedId === c.id ? "bg-brand-50" : ""
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                {c.avatarUrl ? (
+                  <img src={c.avatarUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                    <User className="w-5 h-5 text-gray-500" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`font-medium text-sm truncate min-w-0 ${c.unread > 0 ? "text-gray-900 font-semibold" : "text-gray-900"}`}>
+                      {c.displayName}
                     </span>
+                    {c.source === "line" && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-green-100 text-green-700 shrink-0">LINE</span>
+                    )}
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-600"}`}>
+                      {STATUS_LABELS[c.status as StatusFilter] ?? c.status}
+                    </span>
+                  </div>
+                  {c.lastMessageText ? (
+                    <p
+                      className={`text-xs mt-0.5 truncate overflow-hidden whitespace-nowrap ${c.unread > 0 ? "text-gray-700 font-medium" : "text-gray-400"}`}
+                      title={c.lastMessageText}
+                    >
+                      {c.lastMessageText}
+                    </p>
+                  ) : c.company ? (
+                    <p className="text-xs text-gray-500 truncate overflow-hidden whitespace-nowrap">{c.company}</p>
+                  ) : null}
+                  {c.lastMessageAt && (
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      {new Date(c.lastMessageAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </p>
                   )}
                 </div>
+                {c.unread > 0 && (
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {c.unread > 9 ? "9+" : c.unread}
+                  </span>
+                )}
               </div>
             </button>
           ))}
         </div>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col bg-gray-50/40">
-        {!selectedContact ? (
-          <div className="flex flex-1 items-center justify-center text-gray-400">
-            <div className="text-center">
-              <MessageCircle className="mx-auto mb-2 h-12 w-12 opacity-40" />
-              <p>請先選擇一位客戶</p>
-            </div>
+      {/* ---------- RIGHT PANEL: Chat + Detail ---------- */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {!selected ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <MessageCircle className="w-16 h-16 mb-3" />
+            <p className="text-lg">選擇客戶查看對話</p>
+            <p className="text-sm mt-1">LINE 客戶的訊息會即時顯示在這裡</p>
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3">
-              <div className="flex items-center gap-3">
-                {selectedContact.avatarUrl ? (
-                  <img
-                    src={selectedContact.avatarUrl}
-                    alt={selectedContact.displayName}
-                    className="h-10 w-10 rounded-full border border-gray-200 object-cover"
-                  />
-                ) : (
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-500 text-sm font-bold text-white">
-                    {getAvatarInitial(selectedContact.displayName)}
+            {/* Chat header */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white shrink-0">
+              {selected.avatarUrl ? (
+                <img src={selected.avatarUrl} alt="" className="w-9 h-9 rounded-full object-cover" />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center">
+                  <User className="w-4 h-4 text-gray-500" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-gray-900">{selected.displayName}</span>
+                  {selected.source === "line" && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">LINE</span>
+                  )}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_COLORS[selected.status]}`}>
+                    {STATUS_LABELS[selected.status as StatusFilter] ?? selected.status}
+                  </span>
+                </div>
+                {selected.company && <p className="text-xs text-gray-500 truncate">{selected.company}</p>}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    if (summary && !summaryLoading) {
+                      setShowSummary((v) => !v);
+                    } else {
+                      void runSummary();
+                    }
+                  }}
+                  disabled={summaryLoading || chatMessages.length === 0}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    showSummary && summary
+                      ? "bg-brand-50 text-brand-700 border border-brand-200"
+                      : "bg-brand-600 text-white hover:bg-brand-700"
+                  }`}
+                  title="AI 整理整段對話"
+                >
+                  {summaryLoading ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  {summaryLoading ? "整理中..." : summary ? (showSummary ? "收合摘要" : "展開摘要") : "AI 整理對話"}
+                </button>
+                <button
+                  onClick={openExtractFlow}
+                  disabled={extractLoading || chatMessages.length === 0}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="AI 從對話建立或更新室內設計專案"
+                >
+                  {extractLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5" />}
+                  {extractLoading ? "分析中..." : "AI 建立 / 更新專案"}
+                </button>
+                <button
+                  onClick={() => setShowDetail(!showDetail)}
+                  className={`p-2 rounded-lg transition-colors ${showDetail ? "bg-brand-50 text-brand-600" : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"}`}
+                  title="客戶詳情"
+                >
+                  <User className="w-4 h-4" />
+                </button>
+                <select
+                  value={selected.status}
+                  onChange={(e) => updateStatus(e.target.value)}
+                  className="text-xs px-2 py-1 rounded-lg border border-gray-200 cursor-pointer bg-white"
+                >
+                  <option value="new">新客戶</option>
+                  <option value="contacted">已聯繫</option>
+                  <option value="proposal">提案中</option>
+                  <option value="signed">已簽約</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex-1 flex min-h-0 overflow-hidden">
+              {/* Chat messages */}
+              <div className="flex-1 flex flex-col min-w-0">
+                {/* AI Summary card */}
+                {showSummary && (
+                  <div className="shrink-0 border-b border-brand-200 bg-gradient-to-br from-brand-50 to-purple-50 px-4 py-3 max-h-[40%] overflow-y-auto">
+                    {summaryLoading && !summary && (
+                      <div className="flex items-center gap-2 text-sm text-brand-700 py-2">
+                        <RefreshCw className="w-4 h-4 animate-spin" /> AI 正在分析這段對話...
+                      </div>
+                    )}
+                    {summaryError && (
+                      <div className="text-sm text-red-600 py-2 flex items-center justify-between gap-2">
+                        <span>整理失敗：{summaryError}</span>
+                        <button onClick={runSummary} className="text-xs underline">重試</button>
+                      </div>
+                    )}
+                    {summary && (
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Sparkles className="w-4 h-4 text-brand-600 shrink-0" />
+                            <h4 className="text-sm font-semibold text-gray-900 truncate">{summary.topic}</h4>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              summary.sentiment === "urgent" ? "bg-red-100 text-red-700"
+                              : summary.sentiment === "negative" ? "bg-orange-100 text-orange-700"
+                              : summary.sentiment === "positive" ? "bg-green-100 text-green-700"
+                              : "bg-gray-100 text-gray-600"
+                            }`}>
+                              {summary.sentiment === "urgent" ? "緊急" : summary.sentiment === "negative" ? "不滿" : summary.sentiment === "positive" ? "正面" : "中性"}
+                            </span>
+                            <button
+                              onClick={runSummary}
+                              disabled={summaryLoading}
+                              className="p-1 text-gray-400 hover:text-brand-600 hover:bg-white/50 rounded transition-colors disabled:opacity-40"
+                              title="重新整理"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${summaryLoading ? "animate-spin" : ""}`} />
+                            </button>
+                            <button
+                              onClick={() => setShowSummary(false)}
+                              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-white/50 rounded transition-colors"
+                              title="收合"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/70 rounded-lg p-2.5 border border-brand-100">
+                          <p className="text-[10px] font-semibold text-brand-700 mb-0.5">客戶意圖</p>
+                          <p className="text-xs text-gray-800 leading-relaxed">{summary.customerIntent}</p>
+                        </div>
+
+                        {summary.keyPoints?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-brand-700 mb-1">關鍵重點</p>
+                            <ul className="space-y-0.5">
+                              {summary.keyPoints.map((p, i) => (
+                                <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                                  <span className="text-brand-500 shrink-0">•</span>
+                                  <span>{p}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {summary.nextActions?.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold text-brand-700 mb-1">建議行動</p>
+                            <ul className="space-y-0.5">
+                              {summary.nextActions.map((a, i) => (
+                                <li key={i} className="text-xs text-gray-700 flex gap-1.5">
+                                  <Check className="w-3 h-3 text-green-600 shrink-0 mt-0.5" />
+                                  <span>{a}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {summary.suggestedReply && (
+                          <div className="bg-white border border-brand-200 rounded-lg p-2.5">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-[10px] font-semibold text-brand-700">建議回覆</p>
+                              <button
+                                onClick={useReplyDraft}
+                                className="text-[10px] px-2 py-0.5 bg-brand-600 text-white rounded hover:bg-brand-700 transition-colors"
+                              >
+                                使用此回覆
+                              </button>
+                            </div>
+                            <p className="text-xs text-gray-800 leading-relaxed italic">「{summary.suggestedReply}」</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
-                <div>
-                  <h3 className="font-semibold text-gray-900">{selectedContact.displayName}</h3>
-                  <p className="text-xs text-gray-500">
-                    {selectedContact.source === "line" ? "LINE Official Account" : "手動建立聯絡人"}
-                  </p>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+                  {chatLoading && chatMessages.length === 0 && (
+                    <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
+                      <RefreshCw className="w-4 h-4 animate-spin mr-2" /> 載入對話...
+                    </div>
+                  )}
+                  {!chatLoading && chatMessages.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-sm">
+                      <MessageCircle className="w-8 h-8 mb-2 opacity-30" />
+                      <p>尚無對話記錄</p>
+                      {selected.source === "line" && <p className="text-xs mt-1">客戶在 LINE 傳送訊息後會顯示在這裡</p>}
+                    </div>
+                  )}
+                  {chatMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`flex ${msg.direction === "outbound" ? "justify-end" : "justify-start"}`}
+                    >
+                      <div className={`max-w-[75%] ${msg.direction === "outbound" ? "" : ""}`}>
+                        {msg.attachment?.dataUrl && msg.messageType === "image" && (
+                          <img
+                            src={msg.attachment.dataUrl}
+                            alt="附件"
+                            className="max-w-full max-h-60 rounded-lg mb-1 cursor-pointer border border-gray-200"
+                            onClick={() => window.open(msg.attachment!.dataUrl!, "_blank")}
+                          />
+                        )}
+                        {msg.attachment?.url && msg.messageType === "image" && !msg.attachment.dataUrl && (
+                          <img
+                            src={msg.attachment.url}
+                            alt="附件"
+                            className="max-w-full max-h-60 rounded-lg mb-1 cursor-pointer border border-gray-200"
+                            onClick={() => window.open(msg.attachment!.url!, "_blank")}
+                          />
+                        )}
+                        <div
+                          className={`rounded-2xl px-4 py-2 text-sm ${
+                            msg.direction === "outbound"
+                              ? "bg-brand-600 text-white rounded-br-md"
+                              : "bg-white text-gray-800 border border-gray-200 rounded-bl-md shadow-sm"
+                          }`}
+                        >
+                          <p className="whitespace-pre-wrap break-words">{msg.text || `[${msg.messageType}]`}</p>
+                        </div>
+                        <p className={`text-[10px] mt-0.5 px-1 ${msg.direction === "outbound" ? "text-right text-gray-400" : "text-gray-400"}`}>
+                          {new Date(msg.timestamp).toLocaleString("zh-TW", { hour: "2-digit", minute: "2-digit" })}
+                          {msg.direction === "outbound" && <span className="ml-1">· 你</span>}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Message input */}
+                <div className="px-4 py-3 border-t border-gray-200 bg-white shrink-0">
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder={selected.source === "line" ? "輸入訊息（會推送到客戶的 LINE）..." : "輸入備註訊息..."}
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          sendMessage();
+                        }
+                      }}
+                      disabled={chatSending}
+                    />
+                    <button
+                      onClick={sendMessage}
+                      disabled={chatSending || !chatInput.trim()}
+                      className="px-4 py-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium shrink-0"
+                    >
+                      {chatSending ? "傳送中..." : "傳送"}
+                    </button>
+                  </div>
+                  {selected.source === "line" && (
+                    <p className="text-[10px] text-gray-400 mt-1 text-center">訊息會透過 LINE OA 推送給客戶</p>
+                  )}
                 </div>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setShowProfile((value) => !value)}>
-                {showProfile ? <X className="h-5 w-5" /> : <Settings className="h-5 w-5" />}
-              </Button>
-            </div>
 
-            <div className="custom-scrollbar flex-1 space-y-3 overflow-y-auto p-5">
-              {loadingMessages && <p className="text-xs text-gray-500">載入訊息中...</p>}
-              {!loadingMessages && messages.length === 0 && (
-                <p className="text-sm text-gray-500">目前沒有訊息，等待 webhook 或手動發送。</p>
-              )}
-              {messages.map((message) => {
-                const mine = message.direction === "outbound";
-                return (
-                  <div key={message.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={`max-w-[78%] rounded-2xl border px-3 py-2 text-sm shadow-sm ${
-                        mine
-                          ? "rounded-tr-none border-brand-600 bg-brand-600 text-white"
-                          : "rounded-tl-none border-gray-200 bg-white text-gray-800"
-                      }`}
-                    >
-                      {message.text && <p className="whitespace-pre-wrap">{message.text}</p>}
-                      {renderAttachment(message)}
-                      {!message.text && !message.attachment && <p>{getMessagePreview(message)}</p>}
-                      <p className={`mt-1 text-[10px] ${mine ? "text-brand-100" : "text-gray-400"}`}>
-                        {formatTime(message.timestamp)}
-                      </p>
+              {/* Detail sidebar (toggleable) */}
+              {showDetail && (
+                <div className="w-72 border-l border-gray-200 overflow-y-auto shrink-0 bg-white">
+                  {/* info grid */}
+                  <div className="p-4 space-y-3 border-b border-gray-100">
+                    {([
+                      { key: "phone", icon: Phone, label: "電話" },
+                      { key: "email", icon: Mail, label: "電子郵件" },
+                      { key: "company", icon: Building, label: "公司" },
+                      { key: "title", icon: Briefcase, label: "職稱" },
+                      { key: "address", icon: MapPin, label: "地址" },
+                    ] as const).map(({ key, icon: Icon, label }) => (
+                      <div key={key} className="group">
+                        <label className="text-[10px] text-gray-400 flex items-center gap-1 mb-0.5">
+                          <Icon className="w-3 h-3" /> {label}
+                        </label>
+                        {editingField === key ? (
+                          <div className="flex gap-1">
+                            <input
+                              autoFocus
+                              className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") commitEdit();
+                                if (e.key === "Escape") setEditingField(null);
+                              }}
+                            />
+                            <button onClick={commitEdit} className="text-brand-600 text-xs">OK</button>
+                          </div>
+                        ) : (
+                          <p
+                            className="text-xs text-gray-800 cursor-pointer hover:text-brand-600 flex items-center gap-1"
+                            onClick={() => startEdit(key, (selected[key] as string) ?? "")}
+                          >
+                            {(selected[key] as string) || <span className="text-gray-300">未填寫</span>}
+                            <Edit3 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-50" />
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* tags */}
+                  <div className="p-4 border-b border-gray-100">
+                    <label className="text-[10px] text-gray-400 flex items-center gap-1 mb-2">
+                      <Tag className="w-3 h-3" /> 標籤
+                    </label>
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {selected.tags.map((t) => (
+                        <span key={t} className="inline-flex items-center gap-0.5 text-[10px] bg-brand-50 text-brand-700 px-1.5 py-0.5 rounded-full">
+                          {t}
+                          <button onClick={() => removeTag(t)} className="hover:text-red-500"><X className="w-2.5 h-2.5" /></button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
+                      <input
+                        className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="新增標籤..."
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addTag(newTag); }}
+                      />
+                      <button onClick={() => addTag(newTag)} className="text-brand-600 text-xs px-1">+</button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
 
-            <div className="border-t border-gray-200 bg-white p-4">
-              {!isInteriorIntakeComplete && (
-                <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                  此客戶尚未完成「室內設計初訪問卷」，請先於右側填答後再回覆訊息。
+                  {/* notes */}
+                  <div className="p-4 border-b border-gray-100">
+                    <label className="text-[10px] text-gray-400 mb-1 block">備註</label>
+                    <textarea
+                      className="w-full text-xs border border-gray-200 rounded-lg p-2 min-h-[80px] focus:outline-none focus:ring-1 focus:ring-brand-500 resize-y"
+                      placeholder="輸入備註..."
+                      value={notesDraft}
+                      onChange={(e) => handleNotesChange(e.target.value)}
+                    />
+                    <p className="text-[9px] text-gray-400 mt-0.5">自動儲存</p>
+                  </div>
+
+                  {/* card image */}
+                  {selected.cardImageUrl && (
+                    <div className="p-4 border-b border-gray-100">
+                      <label className="text-[10px] text-gray-400 mb-1 block">名片</label>
+                      <img
+                        src={selected.cardImageUrl}
+                        alt="名片"
+                        className="w-full rounded-lg border border-gray-200 max-h-32 object-contain bg-gray-50 cursor-pointer"
+                        onClick={() => window.open(selected.cardImageUrl!, "_blank")}
+                      />
+                    </div>
+                  )}
+
+                  {/* delete */}
+                  <div className="p-4">
+                    <button onClick={deleteContact} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                      <Trash2 className="w-3 h-3" /> 刪除客戶
+                    </button>
+                  </div>
                 </div>
               )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={handleUpload}
-                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3,.wav"
-              />
-              <div className="flex items-end gap-2">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!isInteriorIntakeComplete}
-                  className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
-                  title="上傳圖片或檔案"
-                >
-                  <Paperclip className="h-5 w-5" />
-                </button>
-                <textarea
-                  rows={2}
-                  value={composer}
-                  onChange={(event) => setComposer(event.target.value)}
-                  disabled={!isInteriorIntakeComplete}
-                  onFocus={() => {
-                    composerFocusedRef.current = true;
-                  }}
-                  onBlur={() => {
-                    composerFocusedRef.current = false;
-                  }}
-                  placeholder="輸入訊息（可直接推送到 LINE）"
-                  className="max-h-36 min-h-[42px] flex-1 resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-brand-500 focus:bg-white focus:outline-none"
-                />
-                <Button
-                  className="h-[42px] rounded-xl px-4"
-                  onClick={handleSend}
-                  disabled={!composer.trim() || sending || !isInteriorIntakeComplete}
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
             </div>
           </>
         )}
       </div>
 
-      {showProfile && selectedContact && (
-        <aside className="custom-scrollbar hidden w-80 shrink-0 overflow-y-auto border-l border-gray-200 bg-white xl:block">
-          <div className="border-b border-gray-100 p-6 text-center">
-            {selectedContact.avatarUrl ? (
-              <img
-                src={selectedContact.avatarUrl}
-                alt={selectedContact.displayName}
-                className="mx-auto h-20 w-20 rounded-full border border-gray-200 object-cover"
-              />
-            ) : (
-              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-500 text-2xl font-bold text-white">
-                {getAvatarInitial(selectedContact.displayName)}
+      {/* ========== AI 建立專案預覽 MODAL ========== */}
+      {showExtractModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-brand-50">
+              <div className="flex items-center gap-2">
+                <FolderPlus className="w-5 h-5 text-purple-600" />
+                <h3 className="text-base font-bold text-gray-900">
+                  {extractStep === "picker"
+                    ? "選擇處理方式"
+                    : extractMode === "update"
+                    ? "AI 更新專案預覽"
+                    : "AI 建立新專案預覽"}
+                </h3>
               </div>
-            )}
-            <h3 className="mt-3 text-lg font-bold text-gray-900">{selectedContact.displayName}</h3>
-            <p className="mt-1 text-xs text-gray-500">
-              LINE User ID: {selectedContact.lineUserId || "未提供"}
-            </p>
-          </div>
-
-          <div className="space-y-6 p-6">
-            <div>
-              <h4 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500">
-                <Tag className="h-3 w-3" />
-                客戶標籤
-              </h4>
-              <div className="mb-2 flex flex-wrap gap-2">
-                {selectedContact.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="inline-flex items-center gap-1 rounded-md border border-brand-100 bg-brand-50 px-2 py-1 text-xs text-brand-700"
-                  >
-                    {tag}
-                    <button onClick={() => void handleRemoveTag(tag)} className="hover:text-brand-900">
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  value={newTagInput}
-                  onChange={(event) => setNewTagInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-                      event.preventDefault();
-                      void handleAddTag();
-                    }
-                  }}
-                  placeholder="新增標籤"
-                  className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:border-brand-500 focus:outline-none"
-                />
-                <Button size="sm" onClick={handleAddTag} disabled={tagBusy || !newTagInput.trim()}>
-                  {tagBusy ? "新增中..." : "新增"}
-                </Button>
-              </div>
+              <button
+                onClick={() => {
+                  setShowExtractModal(false);
+                  setExtracted(null);
+                  setExtractError(null);
+                  setExtractStep("picker");
+                  setLinkedProjectId(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-white/60"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            <div>
-              <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500">聯絡資訊</h4>
-              <div className="space-y-3 text-sm">
-                <div>
-                  <label className="mb-1 block text-[11px] text-gray-500">名稱</label>
-                  <input
-                    value={profileForm.displayName}
-                    onChange={(event) => handleProfileFieldChange("displayName", event.target.value)}
-                    className="w-full rounded border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs focus:border-brand-500 focus:bg-white focus:outline-none"
-                    placeholder="客戶名稱"
-                  />
+            {/* Modal body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {/* ========== STEP 1: PICKER ========== */}
+              {extractStep === "picker" && (
+                <div className="space-y-4">
+                  {existingProjectsLoading ? (
+                    <div className="flex items-center justify-center py-8 text-gray-500">
+                      <RefreshCw className="w-5 h-5 animate-spin mr-2" /> 檢查現有專案...
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-600">
+                        客戶「<span className="font-semibold">{selected?.displayName}</span>」
+                        {existingProjects.length > 0
+                          ? `已有 ${existingProjects.length} 個相關專案。你想要：`
+                          : "目前沒有相關專案。"}
+                      </p>
+
+                      {/* Option: Create new */}
+                      <button
+                        onClick={() => { setExtractMode("create"); setLinkedProjectId(null); }}
+                        className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                          extractMode === "create"
+                            ? "border-purple-500 bg-purple-50"
+                            : "border-gray-200 hover:border-purple-300 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                            extractMode === "create" ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500"
+                          }`}>
+                            <Plus className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-gray-900">建立新專案</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              AI 會從整段對話建立全新的專案、報價項目和工作流程
+                            </p>
+                          </div>
+                          {extractMode === "create" && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
+                        </div>
+                      </button>
+
+                      {/* Existing projects list */}
+                      {existingProjects.length > 0 && (
+                        <>
+                          <div className="flex items-center gap-2 text-xs text-gray-400 px-1">
+                            <div className="flex-1 border-t border-gray-200" />
+                            或更新現有專案
+                            <div className="flex-1 border-t border-gray-200" />
+                          </div>
+
+                          {existingProjects.map((p) => {
+                            const isSelected = extractMode === "update" && linkedProjectId === p.id;
+                            return (
+                              <button
+                                key={p.id}
+                                onClick={() => { setExtractMode("update"); setLinkedProjectId(p.id); }}
+                                className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                                  isSelected
+                                    ? "border-purple-500 bg-purple-50"
+                                    : "border-gray-200 hover:border-purple-300 bg-white"
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isSelected ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500"
+                                  }`}>
+                                    <FileText className="w-5 h-5" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.phase}</span>
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.budget}</span>
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                      {p.quotationItems?.length || 0} 個報價項目 · {p.workflowTasks?.length || 0} 個任務
+                                      {p.updatedAt && ` · 上次更新 ${new Date(p.updatedAt).toLocaleDateString("zh-TW")}`}
+                                    </p>
+                                    {p.note && (
+                                      <p className="text-xs text-gray-400 mt-1 line-clamp-2">{p.note}</p>
+                                    )}
+                                  </div>
+                                  {isSelected && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
+                                </div>
+                              </button>
+                            );
+                          })}
+
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-700">
+                            💡 <span className="font-medium">更新模式</span>會保留原專案內容，AI 只會：新增新提到的項目／更新有變動的數量、單價、日期／在備註後追加新進度。手動勾選過的「完成」任務也會保留。
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
-                <div>
-                  <label className="mb-1 block text-[11px] text-gray-500">電話</label>
-                  <input
-                    value={profileForm.phone}
-                    onChange={(event) => handleProfileFieldChange("phone", event.target.value)}
-                    className="w-full rounded border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs focus:border-brand-500 focus:bg-white focus:outline-none"
-                    placeholder="09xx-xxx-xxx"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] text-gray-500">信箱</label>
-                  <input
-                    value={profileForm.email}
-                    onChange={(event) => handleProfileFieldChange("email", event.target.value)}
-                    className="w-full rounded border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs focus:border-brand-500 focus:bg-white focus:outline-none"
-                    placeholder="name@example.com"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">狀態</span>
-                  <select
-                    value={selectedContact.status}
-                    onChange={(event) => void handleStatusChange(event.target.value as ContactStatus)}
-                    className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs focus:border-brand-500 focus:outline-none"
-                  >
-                    <option value="new">{STATUS_LABELS.new}</option>
-                    <option value="contacted">{STATUS_LABELS.contacted}</option>
-                    <option value="proposal">{STATUS_LABELS.proposal}</option>
-                    <option value="signed">{STATUS_LABELS.signed}</option>
-                  </select>
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => void handleSaveProfile()}
-                  disabled={!profileDirty || profileSaving}
-                >
-                  {profileSaving ? "儲存中..." : profileDirty ? "儲存聯絡資訊" : "已儲存"}
-                </Button>
-                {profileDirty && (
-                  <p className="text-[11px] text-amber-700">
-                    已暫存草稿（若切換頁面回來，可繼續編輯後再按儲存）。
+              )}
+
+              {/* ========== STEP 2: PREVIEW ========== */}
+              {extractStep === "preview" && extractLoading && (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+                  <RefreshCw className="w-8 h-8 animate-spin text-purple-600 mb-3" />
+                  <p className="text-sm font-medium">
+                    {extractMode === "update" ? "AI 正在比對現有專案與新對話..." : "AI 正在分析整段對話..."}
                   </p>
-                )}
-              </div>
+                  <p className="text-xs text-gray-400 mt-1">提取專案資訊、報價項目和工作流程</p>
+                </div>
+              )}
+
+              {extractStep === "preview" && extractError && !extractLoading && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+                  <span className="text-sm text-red-700">提取失敗：{extractError}</span>
+                  <button onClick={runExtraction} className="text-xs text-red-700 underline">重試</button>
+                </div>
+              )}
+
+              {extractStep === "preview" && extracted && !extractLoading && (
+                <div className="space-y-5">
+                  <div className="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                    <span>💡</span>
+                    <div>
+                      {extractMode === "update" ? (
+                        <>
+                          AI 已比對「<span className="font-semibold">{existingProjects.find((p) => p.id === linkedProjectId)?.name}</span>」與新對話，產生<span className="font-semibold text-purple-700">合併後</span>的完整狀態。
+                          按「更新專案」會覆蓋專案的報價項目和工作流程清單（備註會在原內容後追加）。
+                        </>
+                      ) : (
+                        <>以下是 AI 從對話推測的資訊。請檢視並修改後再按「建立專案」。建立後仍可在專案頁繼續編輯。</>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Basic info */}
+                  <section>
+                    <h4 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-brand-600" /> 專案基本資訊
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">專案名稱 *</label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.projectName}
+                          onChange={(e) => updateExtractedField("projectName", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">客戶名稱 *</label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.clientName}
+                          onChange={(e) => updateExtractedField("clientName", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">目前階段</label>
+                        <select
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.phase}
+                          onChange={(e) => updateExtractedField("phase", e.target.value)}
+                        >
+                          {["需求訪談", "提案中", "報價中", "簽約", "施工中", "完工"].map((p) => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500 block mb-1">預算</label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          placeholder="例如：80-100萬"
+                          value={extracted.budget}
+                          onChange={(e) => updateExtractedField("budget", e.target.value)}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[11px] text-gray-500 block mb-1">專案備註</label>
+                        <textarea
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[60px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={extracted.note}
+                          onChange={(e) => updateExtractedField("note", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Quotation items */}
+                  <section>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                        <Calculator className="w-4 h-4 text-brand-600" />
+                        報價項目（{extracted.quotationItems.length}）
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">小計：</span>
+                        <span className="text-sm font-bold text-brand-700">NT$ {quotationTotal.toLocaleString()}</span>
+                        <button
+                          onClick={addQuotationItem}
+                          className="text-xs px-2 py-1 border border-brand-200 text-brand-700 rounded-lg hover:bg-brand-50 flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> 加項目
+                        </button>
+                      </div>
+                    </div>
+                    {extracted.quotationItems.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic py-4 text-center bg-gray-50 rounded-lg">對話中未提到具體報價項目，請手動新增</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {extracted.quotationItems.map((item, idx) => (
+                          <div key={idx} className="border border-gray-200 rounded-lg p-2.5 bg-gray-50/40">
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1 grid grid-cols-12 gap-2">
+                                <input
+                                  className="col-span-5 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="項目名稱"
+                                  value={item.name}
+                                  onChange={(e) => updateQuotationItem(idx, { name: e.target.value })}
+                                />
+                                <input
+                                  type="number"
+                                  className="col-span-2 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="數量"
+                                  value={item.quantity}
+                                  onChange={(e) => updateQuotationItem(idx, { quantity: Number(e.target.value) || 0 })}
+                                />
+                                <select
+                                  className="col-span-2 text-xs border border-gray-200 rounded px-1 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  value={item.unit || "式"}
+                                  onChange={(e) => updateQuotationItem(idx, { unit: e.target.value })}
+                                >
+                                  {COMMON_UNITS.map((u) => (
+                                    <option key={u} value={u}>{u}</option>
+                                  ))}
+                                  {item.unit && !COMMON_UNITS.includes(item.unit as typeof COMMON_UNITS[number]) && (
+                                    <option value={item.unit}>{item.unit}</option>
+                                  )}
+                                </select>
+                                <input
+                                  type="number"
+                                  className="col-span-3 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="單價"
+                                  value={item.unitPrice}
+                                  onChange={(e) => updateQuotationItem(idx, { unitPrice: Number(e.target.value) || 0 })}
+                                />
+                                <input
+                                  className="col-span-12 text-[11px] border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white text-gray-600"
+                                  placeholder="說明 / 規格（選填）"
+                                  value={item.description || ""}
+                                  onChange={(e) => updateQuotationItem(idx, { description: e.target.value })}
+                                />
+                              </div>
+                              <button
+                                onClick={() => removeQuotationItem(idx)}
+                                className="text-gray-300 hover:text-red-500 p-1 shrink-0"
+                                title="刪除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Workflow tasks */}
+                  <section>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                        <ListChecks className="w-4 h-4 text-brand-600" />
+                        工作流程任務（{extracted.workflowTasks.length}）
+                      </h4>
+                      <button
+                        onClick={addWorkflowTask}
+                        className="text-xs px-2 py-1 border border-brand-200 text-brand-700 rounded-lg hover:bg-brand-50 flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" /> 加任務
+                      </button>
+                    </div>
+                    {extracted.workflowTasks.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic py-4 text-center bg-gray-50 rounded-lg">對話中未提到具體任務</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {extracted.workflowTasks.map((task, idx) => (
+                          <div key={idx} className="border border-gray-200 rounded-lg p-2.5 bg-gray-50/40">
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1 grid grid-cols-12 gap-2">
+                                <input
+                                  className="col-span-6 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  placeholder="任務名稱"
+                                  value={task.title}
+                                  onChange={(e) => updateWorkflowTask(idx, { title: e.target.value })}
+                                />
+                                <input
+                                  type="date"
+                                  className="col-span-4 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  value={task.date || ""}
+                                  onChange={(e) => updateWorkflowTask(idx, { date: e.target.value })}
+                                />
+                                <input
+                                  type="time"
+                                  className="col-span-2 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white"
+                                  value={task.time || ""}
+                                  onChange={(e) => updateWorkflowTask(idx, { time: e.target.value })}
+                                />
+                                {task.detail && (
+                                  <input
+                                    className="col-span-12 text-[11px] border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 bg-white text-gray-600"
+                                    placeholder="細節說明"
+                                    value={task.detail}
+                                    onChange={(e) => updateWorkflowTask(idx, { detail: e.target.value })}
+                                  />
+                                )}
+                              </div>
+                              <button
+                                onClick={() => removeWorkflowTask(idx)}
+                                className="text-gray-300 hover:text-red-500 p-1 shrink-0"
+                                title="刪除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Contact details patch (only show if AI extracted any) */}
+                  {(extracted.contactDetails.phone || extracted.contactDetails.email || extracted.contactDetails.company || extracted.contactDetails.address || extracted.contactDetails.title) && (
+                    <section>
+                      <h4 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
+                        <UserCircle className="w-4 h-4 text-brand-600" />
+                        客戶聯絡資料更新
+                      </h4>
+                      <p className="text-[11px] text-gray-500 mb-2">AI 從對話中發現的新資訊，建立專案時會更新到客戶資料（不覆蓋已有值）</p>
+                      <div className="grid grid-cols-2 gap-2 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        {(["phone", "email", "company", "title", "address"] as const).map((key) => {
+                          const labels = { phone: "電話", email: "Email", company: "公司", title: "職稱", address: "地址" };
+                          const existing = selected?.[key];
+                          const newVal = extracted.contactDetails[key];
+                          if (!newVal) return null;
+                          return (
+                            <div key={key}>
+                              <label className="text-[10px] text-gray-500 block">{labels[key]}</label>
+                              {existing ? (
+                                <p className="text-xs text-gray-400 line-through">{existing}（保留）</p>
+                              ) : (
+                                <input
+                                  className="w-full text-xs border border-gray-200 rounded px-2 py-1 bg-white"
+                                  value={newVal}
+                                  onChange={(e) =>
+                                    updateExtractedField("contactDetails", { ...extracted.contactDetails, [key]: e.target.value })
+                                  }
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                </div>
+              )}
             </div>
 
-            <CrmInteriorIntakePanel
-              selectedContact={{
-                id: selectedContact.id,
-                displayName: selectedContact.displayName,
-                tags: selectedContact.tags,
-                status: selectedContact.status,
-              }}
-              userScopeId={lineCacheScope}
-              conversationMessages={messages.map((item) => ({
-                direction: item.direction,
-                text: item.text,
-                timestamp: item.timestamp,
-              }))}
-              onCompletionChange={setIsInteriorIntakeComplete}
-            />
-          </div>
-        </aside>
-      )}
-    </div>
-  );
-
-  const renderSettings = () => (
-    <div className="custom-scrollbar flex-1 overflow-y-auto bg-gray-50 p-6">
-      <div className="mx-auto max-w-4xl space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">LINE OA 串接設定</h2>
-            <p className="text-sm text-gray-500">
-              設定後可接收頭貼、訊息、圖片與檔案並保存於 CRM。
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => setActiveTab("inbox")}>
-            返回訊息中心
-          </Button>
-        </div>
-
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#00B900] text-white">
-                <Smartphone className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-gray-900">LINE Official Account</h3>
-                <p className="text-xs text-gray-500">接收訊息與附件、同步客戶頭貼</p>
-              </div>
-            </div>
-            {lineSettings.connected ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                <CheckCircle className="h-3 w-3" />
-                已連線
-              </span>
-            ) : (
-              <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-500">未連線</span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Channel ID</label>
-              <input
-                value={lineForm.channelId}
-                onChange={(event) =>
-                  setLineForm((prev) => ({ ...prev, channelId: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-brand-500 focus:bg-white focus:outline-none"
-                placeholder="例如：2001234567"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Webhook URL</label>
-              <div className="flex gap-2">
-                <input
-                  readOnly
-                  value={lineSettings.webhookUrl}
-                  className="w-full rounded-lg border border-gray-200 bg-gray-100 px-3 py-2 text-xs text-gray-600"
-                />
-                <Button variant="outline" size="sm" onClick={copyWebhookUrl}>
-                  <Copy className="h-4 w-4" />
+            {/* Modal footer — picker step */}
+            {extractStep === "picker" && !existingProjectsLoading && (
+              <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <Button variant="outline" size="sm" onClick={() => { setShowExtractModal(false); setLinkedProjectId(null); }}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={runExtraction}
+                  disabled={extractMode === "update" && !linkedProjectId}
+                  className="gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {extractMode === "update" ? "下一步：AI 比對更新" : "下一步：AI 開始分析"}
                 </Button>
               </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">
-                Channel Access Token
-              </label>
-              <input
-                type="password"
-                value={lineForm.channelAccessToken}
-                onChange={(event) =>
-                  setLineForm((prev) => ({ ...prev, channelAccessToken: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-brand-500 focus:bg-white focus:outline-none"
-                placeholder={
-                  lineSettings.hasChannelAccessToken ? "已設定，若不修改可留空" : "輸入長效 Token"
-                }
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Channel Secret</label>
-              <input
-                type="password"
-                value={lineForm.channelSecret}
-                onChange={(event) =>
-                  setLineForm((prev) => ({ ...prev, channelSecret: event.target.value }))
-                }
-                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-brand-500 focus:bg-white focus:outline-none"
-                placeholder={lineSettings.hasChannelSecret ? "已設定，若不修改可留空" : "輸入 Secret"}
-              />
-            </div>
-          </div>
-
-          <p className="mt-2 text-[11px] text-gray-500">
-            為減少重複輸入，憑證會暫存於目前瀏覽器 localStorage；若為公用電腦請避免啟用此功能並於使用後解除串接。
-          </p>
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <Button onClick={handleSaveLineSettings} disabled={settingsBusy}>
-              儲存並驗證 LINE 設定
-            </Button>
-            {lineSettings.connected && (
-              <Button variant="outline" onClick={handleDisconnectLine} disabled={settingsBusy}>
-                解除 LINE 串接
-              </Button>
             )}
-            <Button variant="ghost" onClick={() => void fetchLineSettings()} disabled={settingsBusy}>
-              重新讀取狀態
-            </Button>
-          </div>
 
-          <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs text-gray-600">
-            <p className="font-semibold text-gray-700">LINE Developers 設定步驟</p>
-            <ol className="mt-2 list-decimal space-y-1 pl-4">
-              <li>進入 Messaging API，將上方 Webhook URL 貼上並啟用 Webhook。</li>
-              <li>關閉「Use webhook」前請先完成 Channel Secret / Access Token 設定。</li>
-              <li>按 Verify 成功只代表 Webhook 可達，還需要用真實 LINE 帳號傳訊息測試。</li>
-              <li>成功後，客戶訊息與附件會進入 CRM，資料可用於後續分析模組。</li>
-            </ol>
-            <p className="mt-2">
-              最近更新：{lineSettings.updatedAt ? formatTime(lineSettings.updatedAt) : "尚未設定"}
-            </p>
-            <p className="mt-1">
-              最近 Webhook：{lineSettings.lastWebhookAt ? formatTime(lineSettings.lastWebhookAt) : "尚未收到事件"}
-            </p>
-            <p className="mt-1">
-              最近事件統計：收到 {lineSettings.lastWebhookEventCount} / 成功{" "}
-              {lineSettings.lastWebhookProcessedCount} / 失敗 {lineSettings.lastWebhookFailedCount}
-            </p>
-            {lineSettings.lastWebhookError && (
-              <p className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-red-700">
-                最近 Webhook 錯誤：{lineSettings.lastWebhookError}
-              </p>
+            {/* Modal footer — preview step */}
+            {extractStep === "preview" && extracted && !extractLoading && (
+              <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setExtractStep("picker"); setExtracted(null); }}
+                    className="text-xs text-gray-500 hover:text-brand-700"
+                  >
+                    ← 重選
+                  </button>
+                  <button
+                    onClick={runExtraction}
+                    className="text-xs text-gray-500 hover:text-brand-700 flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" /> 重新分析
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => { setShowExtractModal(false); setExtracted(null); setExtractStep("picker"); }}>
+                    取消
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={createProjectFromExtraction}
+                    disabled={creatingProject || !extracted.projectName.trim() || !extracted.clientName.trim()}
+                    className="gap-1.5"
+                  >
+                    {creatingProject ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    {creatingProject
+                      ? (extractMode === "update" ? "更新中..." : "建立中...")
+                      : (extractMode === "update" ? "更新專案並前往" : "建立專案並前往")}
+                  </Button>
+                </div>
+              </div>
             )}
-            <p className="mt-1">
-              目前儲存後端：{lineSettings.storageBackend === "redis" ? "Redis (持久化)" : "File (非持久化)"}
-            </p>
-            {lineSettings.connected && !lineSettings.lastWebhookAt && (
-              <p className="mt-2 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700">
-                目前已連線但尚未收到任何 Webhook 事件。請用「已加好友的 LINE 個人帳號」直接傳文字給 OA
-                測試，並確認 LINE Developers 的 Webhook URL 使用正式網域（避免使用會變動的 preview 網域）。
-              </p>
-            )}
-            {lineSettings.storageBackend !== "redis" && (
-              <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
-                建議在 Vercel 加入 Redis/Upstash Integration，否則資料可能因 Serverless 實例切換而無法穩定顯示。
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="relative flex h-[calc(100vh-8rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="flex w-16 shrink-0 flex-col items-center gap-4 bg-gray-900 py-4">
-        <button
-          onClick={() => setActiveTab("inbox")}
-          className={`rounded-xl p-3 transition-colors ${
-            activeTab === "inbox"
-              ? "bg-brand-600 text-white shadow-lg"
-              : "text-gray-400 hover:bg-gray-800 hover:text-white"
-          }`}
-          title="訊息中心"
-        >
-          <MessageCircle className="h-6 w-6" />
-        </button>
-        <button
-          onClick={() => setActiveTab("settings")}
-          className={`rounded-xl p-3 transition-colors ${
-            activeTab === "settings"
-              ? "bg-brand-600 text-white shadow-lg"
-              : "text-gray-400 hover:bg-gray-800 hover:text-white"
-          }`}
-          title="LINE 設定"
-        >
-          <Settings className="h-6 w-6" />
-        </button>
-      </div>
-
-      {activeTab === "inbox" ? renderInbox() : renderSettings()}
-
-      {error && (
-        <div className="absolute bottom-4 left-20 right-4 z-10">
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
           </div>
         </div>
       )}
-      {!selectedContact && activeTab === "inbox" && contacts.length === 0 && (
-        <div className="pointer-events-none absolute right-6 top-6 hidden items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 md:flex">
-          <UserCircle className="h-4 w-4" />
-          前往右上「設定」先完成 LINE OA 串接
+
+      {/* ========== ADD CLIENT MODAL ========== */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold">新增客戶</h3>
+              <button onClick={() => setShowAddModal(false)}>
+                <X className="w-5 h-5 text-gray-400 hover:text-gray-600" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              {([
+                { key: "displayName", label: "姓名 *", ph: "客戶姓名" },
+                { key: "email", label: "電子郵件", ph: "email@example.com" },
+                { key: "phone", label: "電話", ph: "0912-345-678" },
+                { key: "company", label: "公司", ph: "公司名稱" },
+                { key: "title", label: "職稱", ph: "職稱" },
+                { key: "address", label: "地址", ph: "地址" },
+                { key: "tags", label: "標籤 (逗號分隔)", ph: "VIP, 北區" },
+              ] as const).map(({ key, label, ph }) => (
+                <div key={key}>
+                  <label className="text-sm text-gray-600 block mb-1">{label}</label>
+                  <input
+                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder={ph}
+                    value={addForm[key]}
+                    onChange={(e) => setAddForm((f) => ({ ...f, [key]: e.target.value }))}
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="text-sm text-gray-600 block mb-1">備註</label>
+                <textarea
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 min-h-[60px] focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="備註..."
+                  value={addForm.notes}
+                  onChange={(e) => setAddForm((f) => ({ ...f, notes: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-100">
+              <Button variant="outline" onClick={() => setShowAddModal(false)}>
+                取消
+              </Button>
+              <Button variant="primary" onClick={handleAddSubmit}>
+                新增
+              </Button>
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* ========== SCAN BUSINESS CARD MODAL ========== */}
+      {showScanModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-brand-600" /> 掃描名片
+              </h3>
+              <button
+                onClick={() => {
+                  setShowScanModal(false);
+                  setCardImage(null);
+                  setScanResult(null);
+                }}
+              >
+                <X className="w-5 h-5 text-gray-400 hover:text-gray-600" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {!cardImage && (
+                <div
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-brand-500 hover:bg-brand-50/30 transition-colors"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="w-10 h-10 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm text-gray-600">點擊上傳名片照片</p>
+                  <p className="text-xs text-gray-400 mt-1">支援 JPG / PNG</p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleCardUpload}
+                  />
+                </div>
+              )}
+
+              {cardImage && !scanResult && (
+                <div className="space-y-3">
+                  <img src={cardImage} alt="名片" className="w-full rounded-lg" />
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setCardImage(null)}
+                      className="flex-1"
+                    >
+                      重新上傳
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={runCardScan}
+                      disabled={scanLoading}
+                      className="flex-1 gap-1"
+                    >
+                      {scanLoading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" /> 辨識中...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" /> AI 辨識
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {scanResult && (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-gray-700">辨識結果：</p>
+                  {(["displayName", "email", "phone", "company", "title", "address"] as const).map(
+                    (field) => (
+                      <div key={field}>
+                        <label className="text-xs text-gray-400 block mb-0.5">
+                          {
+                            {
+                              displayName: "姓名",
+                              email: "電子郵件",
+                              phone: "電話",
+                              company: "公司",
+                              title: "職稱",
+                              address: "地址",
+                            }[field]
+                          }
+                        </label>
+                        <input
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          value={scanResult[field] ?? ""}
+                          onChange={(e) =>
+                            setScanResult((prev) =>
+                              prev ? { ...prev, [field]: e.target.value } : prev,
+                            )
+                          }
+                        />
+                      </div>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+            {scanResult && (
+              <div className="flex justify-end gap-2 p-4 border-t border-gray-100">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setScanResult(null);
+                    setCardImage(null);
+                  }}
+                >
+                  重新掃描
+                </Button>
+                <Button variant="primary" onClick={confirmScanResult}>
+                  建立客戶
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      </div>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createProject, listProjects } from "@/lib/crm/store";
+import { resolveServerUserScopeId } from "@/lib/server/user-scope";
 import {
   CrmProject,
   ProjectAuspiciousPlan,
@@ -44,7 +45,9 @@ export async function GET(request: Request) {
   const includeArchived = url.searchParams.get("includeArchived") === "1";
   const includeFiled = url.searchParams.get("includeFiled") === "1";
   const includeDeleted = url.searchParams.get("includeDeleted") === "1";
-  const projects = await listProjects({ search, includeArchived, includeFiled, includeDeleted });
+  const requestedUserId = url.searchParams.get("userId")?.trim() || "";
+  const userId = await resolveServerUserScopeId(requestedUserId);
+  const projects = await listProjects({ userId, search, includeArchived, includeFiled, includeDeleted });
   return NextResponse.json({ projects });
 }
 
@@ -69,8 +72,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unsupported project status." }, { status: 400 });
   }
 
+  const requestedUserId = String((body as Record<string, unknown>).userId || "").trim();
+  const userId = await resolveServerUserScopeId(requestedUserId);
+
   try {
     const project = await createProject({
+      userId,
       name,
       clientName,
       status,

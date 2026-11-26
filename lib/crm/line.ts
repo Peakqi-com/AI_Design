@@ -54,16 +54,31 @@ export async function fetchLineProfile(
   userId: string,
   channelAccessToken: string,
 ): Promise<LineProfile | null> {
-  const response = await fetch(`${LINE_API_BASE}/profile/${encodeURIComponent(userId)}`, {
-    headers: getAuthHeaders(channelAccessToken),
-  });
+  // Retry a couple of times on transient failures (429 rate limit / 5xx /
+  // network) so we don't fall back to a generic name unnecessarily.
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(`${LINE_API_BASE}/profile/${encodeURIComponent(userId)}`, {
+        headers: getAuthHeaders(channelAccessToken),
+      });
 
-  if (!response.ok) {
-    return null;
+      if (response.ok) {
+        return (await response.json()) as LineProfile;
+      }
+
+      // 4xx other than 429 = permanent (e.g. user hasn't added the OA) — give up.
+      if (response.status !== 429 && response.status < 500) {
+        return null;
+      }
+    } catch {
+      /* network error — fall through to retry */
+    }
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, 300 * attempt));
+    }
   }
-
-  const profile = (await response.json()) as LineProfile;
-  return profile;
+  return null;
 }
 
 export interface LineMessageContent {

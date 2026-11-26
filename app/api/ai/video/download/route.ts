@@ -2,6 +2,7 @@ import { downloadVeoVideo, isReplicateCredentialErrorMessage } from "@/lib/ai/ve
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

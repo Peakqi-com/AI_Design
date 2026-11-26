@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Button } from "./Button";
+import { resolveClientUserScopeId } from "@/lib/client/user-scope";
 import {
   Plus,
   Search,
@@ -13,7 +15,12 @@ import {
   Image as ImageIcon,
   Trash2,
   FolderArchive,
+  CheckCircle,
+  Sparkles,
+  FileText,
+  RefreshCw,
 } from "lucide-react";
+import { buildPricingReferenceText } from "@/lib/crm/pricing-standards";
 import {
   Project,
   ProjectAuspiciousPlan,
@@ -118,6 +125,10 @@ const requestJson = async <T,>(input: RequestInfo, init?: RequestInit): Promise<
 };
 
 export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => {
+  const { data: session } = useSession();
+  const sessionUser = session?.user as { id?: string; email?: string | null } | undefined;
+  const userScopeId = resolveClientUserScopeId(sessionUser?.id || null, sessionUser?.email || null);
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -127,6 +138,10 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [meetingNotes, setMeetingNotes] = useState("");
+  const [meetingClientName, setMeetingClientName] = useState("");
+  const [meetingGenerating, setMeetingGenerating] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [crmContacts, setCrmContacts] = useState<CrmContactLite[]>([]);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -140,8 +155,11 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     budget: "待定",
     coverImageUrl: "",
     linkedContactId: "",
+    linkedContactIds: [] as string[],
+    linkedAssetIds: [] as string[],
     note: "",
   });
+  const [mediaAssets, setMediaAssets] = useState<Array<{ id: string; url: string; meta?: { slotLabel?: string; style?: string } }>>([]);
 
   const loadProjects = useCallback(
     async (searchKey: string, showArchived: boolean, showFiled: boolean, showDeleted: boolean) => {
@@ -150,6 +168,9 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     setError(null);
     try {
       const params = new URLSearchParams();
+      if (userScopeId) {
+        params.set("userId", userScopeId);
+      }
       if (searchKey.trim()) {
         params.set("search", searchKey.trim());
       }
@@ -193,9 +214,18 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     }
   }, []);
 
+  const loadMediaAssets = useCallback(async () => {
+    try {
+      const res = await fetch("/api/social/assets?userId=guest_server&kind=image&limit=100");
+      const data = await res.json();
+      setMediaAssets((data.items || []).map((a: { id: string; url: string; meta?: Record<string, string> }) => ({ id: a.id, url: a.url, meta: a.meta })));
+    } catch { setMediaAssets([]); }
+  }, []);
+
   useEffect(() => {
     void loadContacts();
-  }, [loadContacts]);
+    void loadMediaAssets();
+  }, [loadContacts, loadMediaAssets]);
 
   useEffect(() => {
     const delay = didFirstProjectLoadRef.current ? 250 : 0;
@@ -260,13 +290,16 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          userId: userScopeId,
           name,
           clientName,
           status: form.status,
           phase: form.phase,
           budget: form.budget,
           coverImageUrl: form.coverImageUrl,
-          linkedContactId: form.linkedContactId || undefined,
+          linkedContactId: form.linkedContactIds[0] || form.linkedContactId || undefined,
+          linkedContactIds: form.linkedContactIds,
+          linkedAssetIds: form.linkedAssetIds,
           note: form.note,
         }),
       });
@@ -281,6 +314,8 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         budget: "待定",
         coverImageUrl: "",
         linkedContactId: "",
+        linkedContactIds: [],
+        linkedAssetIds: [],
         note: "",
       });
       setSearch("");
@@ -289,6 +324,100 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
       setError(err instanceof Error ? err.message : "新增室內設計專案失敗");
     } finally {
       setCreating(false);
+    }
+  };
+
+  /** 從會議紀錄 / 自由文字用 AI 建立專案（非 LINE 來源） */
+  const handleCreateFromMeeting = async () => {
+    if (meetingGenerating) return;
+    const notes = meetingNotes.trim();
+    if (!notes) {
+      setError("請貼上會議紀錄或需求描述");
+      return;
+    }
+    setMeetingGenerating(true);
+    setError(null);
+    try {
+      let pricingText = "（尚未設定標準報價表）";
+      try {
+        const pr = await fetch(`/api/crm/settings/pricing?userId=${encodeURIComponent(userScopeId)}`);
+        if (pr.ok) {
+          const pd = await pr.json();
+          pricingText = buildPricingReferenceText(pd.items || []);
+        }
+      } catch { /* ignore */ }
+
+      const client = meetingClientName.trim() || "（待確認）";
+      const prompt =
+        `你是資深室內設計專案經理。以下是一段會議紀錄／需求描述，請從中歸納出一個室內設計專案。\n\n` +
+        `客戶：${client}\n\n` +
+        `【公司標準報價表（客戶沒明講單價時對應此表填 unitPrice 並標「參考標準價」，對應不到填 0 標「待確認」）】\n${pricingText}\n` +
+        `工程管理費為工程總額 8-10%，以百分比寫在備註，不要當固定單價。\n` +
+        `所有單價(unitPrice)必須是整數（新台幣元），不要小數、不要千分位逗號。\n\n` +
+        `會議紀錄：\n${notes}\n\n` +
+        `只輸出 JSON，不要其他文字。格式：\n` +
+        `{"projectName":"專案名稱","clientName":"客戶","phase":"需求訪談/提案中/報價中/簽約/施工中/完工","budget":"預算","note":"需求重點摘要","quotationItems":[{"name":"工項","description":"說明","unit":"坪/尺/式/台/間/車/平方米/%","quantity":數字,"unitPrice":整數}],"workflowTasks":[{"title":"施工工項","stage":"階段","startOffsetDays":從開工日起算第幾天的整數,"durationDays":數字,"detail":""}]}`;
+
+      const res = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, temperature: 0.4, jsonMode: true }),
+      });
+      const data = (await res.json()) as { text?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "AI 生成失敗");
+      const text = (data.text || "").trim();
+      const m = text.match(/\{[\s\S]*\}/);
+      const parsed = m ? JSON.parse(m[0]) : {};
+
+      const quotationItems = (parsed.quotationItems || []).map((it: Record<string, unknown>, i: number) => ({
+        id: `qi_${Date.now()}_${i}`,
+        name: String(it.name || "").trim(),
+        description: String(it.description || "").trim(),
+        unit: String(it.unit || "式").trim(),
+        quantity: Number(it.quantity) || 1,
+        unitPrice: Math.round(Number(it.unitPrice) || 0),
+      })).filter((it: { name: string }) => it.name);
+      const wfStartMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00").getTime();
+      const workflowTasks = (parsed.workflowTasks || []).map((t: Record<string, unknown>, i: number) => ({
+        id: `wt_${Date.now()}_${i}`,
+        title: String(t.title || "").trim(),
+        stage: String(t.stage || "").trim(),
+        date: t.startOffsetDays !== undefined && t.startOffsetDays !== null
+          ? new Date(wfStartMs + Math.max(0, Number(t.startOffsetDays) || 0) * 86400000).toISOString().slice(0, 10)
+          : String(t.date || "").trim(),
+        durationDays: Math.max(1, Number(t.durationDays) || 1),
+        detail: String(t.detail || "").trim(),
+        time: "",
+        owner: "",
+        done: false,
+        isCustom: false,
+      })).filter((t: { title: string }) => t.title);
+
+      const created = await requestJson<{ project: ProjectApiItem }>("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: userScopeId,
+          name: String(parsed.projectName || "").trim() || `${client} 的專案`,
+          clientName: String(parsed.clientName || client).trim() || client,
+          status: "draft",
+          phase: String(parsed.phase || "需求訪談").trim(),
+          budget: String(parsed.budget || "待定").trim(),
+          note: `${String(parsed.note || "").trim()}\n\n[會議紀錄原文]\n${notes}`.trim(),
+          quotationItems,
+          workflowTasks,
+        }),
+      });
+      const mapped = mapProject(created.project);
+      setProjects((prev) => [mapped, ...prev]);
+      setShowMeetingModal(false);
+      setMeetingNotes("");
+      setMeetingClientName("");
+      void loadProjects("", includeArchived, includeFiled, includeDeleted);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "從會議紀錄建立專案失敗");
+    } finally {
+      setMeetingGenerating(false);
     }
   };
 
@@ -319,11 +448,60 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
             <Trash2 className="w-4 h-4" />
             {includeDeleted ? "隱藏刪除區" : "顯示刪除區"}
           </Button>
+          <Button variant="outline" className="gap-1" onClick={() => setShowMeetingModal(true)}>
+            <FileText className="w-4 h-4" /> 從會議紀錄建立
+          </Button>
           <Button className="gap-1" onClick={() => setShowCreate(true)}>
             <Plus className="w-4 h-4" /> 新增室內設計專案
           </Button>
         </div>
       </div>
+
+      {/* 從會議紀錄 AI 建立專案 */}
+      {showMeetingModal && (
+        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xl rounded-xl border border-gray-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-brand-600" /> 從會議紀錄 AI 建立專案
+              </h3>
+              <button onClick={() => setShowMeetingModal(false)} className="text-gray-500 hover:text-gray-900">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1 block text-xs text-gray-600">客戶名稱（可選）</label>
+                <input
+                  value={meetingClientName}
+                  onChange={(e) => setMeetingClientName(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  placeholder="例如：王先生"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-600">會議紀錄 / 需求描述</label>
+                <textarea
+                  value={meetingNotes}
+                  onChange={(e) => setMeetingNotes(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm h-48 resize-none"
+                  placeholder="貼上會議紀錄、現場勘查筆記或客戶需求描述，例如：30坪老屋翻新，3房2廳，現代北歐風，預算100萬，要全室保護、拆除、客廳系統櫃、全室木地板、主臥大冷氣..."
+                />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  AI 會歸納出專案名稱、需求摘要、報價項目（對應標準報價表自動帶價）與施工工項。
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-100">
+              <Button variant="outline" onClick={() => setShowMeetingModal(false)}>取消</Button>
+              <Button onClick={() => void handleCreateFromMeeting()} disabled={meetingGenerating} className="gap-2">
+                {meetingGenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {meetingGenerating ? "AI 生成中..." : "AI 建立專案"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -339,7 +517,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
         {projects.map((project) => {
           const isArchived = Boolean(project.archivedAt);
           const isFiled = Boolean(project.filedAt);
@@ -500,23 +678,82 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-600">綁定 CRM 客戶（可選）</label>
-                  <select
-                    value={form.linkedContactId}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, linkedContactId: event.target.value }))
-                    }
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
-                  >
-                    <option value="">不綁定</option>
-                    {crmContacts.map((contact) => (
-                      <option key={contact.id} value={contact.id}>
-                        {contact.displayName}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedContactName && (
-                    <p className="mt-1 text-[11px] text-gray-500">已選擇：{selectedContactName}</p>
+                  <label className="mb-1 block text-xs text-gray-600">綁定客戶（可多選）</label>
+                  <div className="max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                    {crmContacts.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-gray-400">尚無客戶，請先至 CRM 建立</p>
+                    ) : (
+                      crmContacts.map((contact) => {
+                        const checked = form.linkedContactIds.includes(contact.id);
+                        return (
+                          <label key={contact.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  linkedContactIds: checked
+                                    ? prev.linkedContactIds.filter((cid) => cid !== contact.id)
+                                    : [...prev.linkedContactIds, contact.id],
+                                  clientName: prev.clientName || contact.displayName,
+                                }))
+                              }
+                              className="rounded border-gray-300 text-brand-600"
+                            />
+                            <span className="text-gray-700">{contact.displayName}</span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                  {form.linkedContactIds.length > 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      已選 {form.linkedContactIds.length} 位：{form.linkedContactIds.map((cid) => crmContacts.find((c) => c.id === cid)?.displayName).filter(Boolean).join("、")}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-gray-600">關聯設計圖（可多選）</label>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
+                    {mediaAssets.length === 0 ? (
+                      <p className="px-2 py-2 text-xs text-gray-400">尚無設計圖，請先至 AI 空間渲染生成</p>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {mediaAssets.slice(0, 24).map((asset) => {
+                          const checked = form.linkedAssetIds.includes(asset.id);
+                          return (
+                            <button
+                              key={asset.id}
+                              type="button"
+                              onClick={() =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  linkedAssetIds: checked
+                                    ? prev.linkedAssetIds.filter((aid) => aid !== asset.id)
+                                    : [...prev.linkedAssetIds, asset.id],
+                                  coverImageUrl: !prev.coverImageUrl && !checked ? asset.url : prev.coverImageUrl,
+                                }))
+                              }
+                              className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                                checked ? "border-brand-500 ring-1 ring-brand-300" : "border-transparent hover:border-gray-300"
+                              }`}
+                            >
+                              <img src={asset.url} alt="" className="w-full h-full object-cover" />
+                              {checked && (
+                                <div className="absolute top-0.5 right-0.5 w-4 h-4 bg-brand-600 rounded-full flex items-center justify-center">
+                                  <CheckCircle className="w-3 h-3 text-white" />
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {form.linkedAssetIds.length > 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500">已選 {form.linkedAssetIds.length} 張設計圖</p>
                   )}
                 </div>
               </div>

@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "installCommand": "npm ci",
-  "buildCommand": "npm run build"
+  "buildCommand": "npm run build",
+  "functions": {
+    "app/api/ai/video/merge/route.ts": {
+      "memory": 3009,
+      "maxDuration": 120
+    }
+  }
 }

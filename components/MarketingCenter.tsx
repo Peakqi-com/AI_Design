@@ -3,6 +3,8 @@ import { useSession } from "next-auth/react";
 import { Button } from "./Button";
 import {
   Calendar,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Facebook,
   Film,
@@ -10,6 +12,7 @@ import {
   Hash,
   Image as ImageIcon,
   Instagram,
+  Key,
   Loader2,
   Search,
   Send,
@@ -18,6 +21,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { resolveClientUserScopeId } from "@/lib/client/user-scope";
+import { useCredits } from "@/lib/client/use-credits";
 import {
   getLatestSocialImageTask,
   SocialImageBackgroundTask,
@@ -276,6 +280,7 @@ const platformIcon = (platform: Platform, className = "w-4 h-4"): React.ReactEle
 
 export const MarketingCenter: React.FC = () => {
   const { data: session } = useSession();
+  const credits = useCredits();
 
   const [userScopeId, setUserScopeId] = useState("guest_server");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("all");
@@ -306,6 +311,10 @@ export const MarketingCenter: React.FC = () => {
   const [postLength, setPostLength] = useState<PostLength>("medium");
   const [isGeneratingCopy, setIsGeneratingCopy] = useState(false);
   const [lastGeneratedModel, setLastGeneratedModel] = useState("");
+  const [copyModelChoice, setCopyModelChoice] = useState<"gemini" | "gpt" | "both">("both");
+  const [altResult, setAltResult] = useState<{ title: string; caption: string; hashtags: string; model: string } | null>(null);
+  const [copyHistory, setCopyHistory] = useState<Array<{ id: string; title: string; caption: string; hashtags: string; model: string; createdAt: string }>>([]);
+  const [showCopyHistory, setShowCopyHistory] = useState(false);
 
   const [postTitle, setPostTitle] = useState("");
   const [postCaption, setPostCaption] = useState("");
@@ -325,6 +334,26 @@ export const MarketingCenter: React.FC = () => {
   ]);
   const [marketingStateItemId, setMarketingStateItemId] = useState("");
   const [marketingStateReady, setMarketingStateReady] = useState(false);
+
+  // Social API settings
+  const [showApiSettings, setShowApiSettings] = useState(false);
+  const [fbPageId, setFbPageId] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:fb:pageId") || "" : "");
+  const [fbAccessToken, setFbAccessToken] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:fb:accessToken") || "" : "");
+  const [igBusinessId, setIgBusinessId] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:ig:businessId") || "" : "");
+  const [igAccessToken, setIgAccessToken] = useState(() => typeof window !== "undefined" ? localStorage.getItem("social:ig:accessToken") || "" : "");
+  const [apiSettingsSaved, setApiSettingsSaved] = useState(false);
+
+  const handleSaveApiSettings = () => {
+    localStorage.setItem("social:fb:pageId", fbPageId);
+    localStorage.setItem("social:fb:accessToken", fbAccessToken);
+    localStorage.setItem("social:ig:businessId", igBusinessId);
+    localStorage.setItem("social:ig:accessToken", igAccessToken);
+    setApiSettingsSaved(true);
+    setTimeout(() => setApiSettingsSaved(false), 2000);
+  };
+
+  const fbConnected = Boolean(fbPageId && fbAccessToken);
+  const igConnected = Boolean(igBusinessId && igAccessToken);
 
   const libraryUploadRef = useRef<HTMLInputElement>(null);
   const referenceUploadRef = useRef<HTMLInputElement>(null);
@@ -583,6 +612,34 @@ export const MarketingCenter: React.FC = () => {
     void loadMarketingState();
   }, [loadMarketingState]);
 
+  // Load copy history
+  const loadCopyHistory = useCallback(async () => {
+    if (!userScopeId) return;
+    try {
+      const data = await requestJson<ContentVaultListResponse>(
+        `/api/content/vault?userId=${encodeURIComponent(userScopeId)}&kind=social-post&limit=20`,
+        { method: "GET" },
+      );
+      setCopyHistory(
+        (data.items || []).map((item) => {
+          const p = (item.payload || {}) as Record<string, unknown>;
+          return {
+            id: item.id,
+            title: String(p.title || item.title || ""),
+            caption: String(p.caption || ""),
+            hashtags: Array.isArray(p.hashtags) ? (p.hashtags as string[]).join(" ") : "",
+            model: String(p.model || ""),
+            createdAt: item.createdAt,
+          };
+        }),
+      );
+    } catch { /* ignore */ }
+  }, [userScopeId]);
+
+  useEffect(() => {
+    void loadCopyHistory();
+  }, [loadCopyHistory]);
+
   const uploadAsset = useCallback(
     async (file: File, meta: Record<string, unknown>): Promise<SocialAssetItem> => {
       const kind = file.type.startsWith("video/") ? "video" : "image";
@@ -755,7 +812,17 @@ export const MarketingCenter: React.FC = () => {
       alert("請先從素材庫選擇圖片或影片");
       return;
     }
+    const platformCount = Math.max(1, selectedPlatforms.length);
+    const deduction = await credits.confirmAndDeduct(
+      `生成 ${platformCount} 個平台的文案`,
+      "ai-social-post",
+      platformCount,
+    );
+    if (!deduction.ok) {
+      return;
+    }
     setIsGeneratingCopy(true);
+    setAltResult(null);
     try {
       const assetSummary =
         selectedAsset.meta?.prompt ||
@@ -772,43 +839,102 @@ export const MarketingCenter: React.FC = () => {
         }
       }
 
-      const generated = await requestJson<GenerateSocialPostResponse>("/api/ai/social/post", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          platforms: selectedPlatforms,
-          topic: postTopic.trim(),
-          objective: postObjective.trim(),
-          tone: postTone,
-          theme: postTheme,
-          length: postLength,
-          hashtagCount: 10,
-          asset: {
-            kind: selectedAsset.kind,
-            fileName: selectedAsset.fileName,
-            summary: assetSummary,
-            imageDataUrl,
-          },
-        }),
-      });
+      const gptPrompt =
+        `你是資深社群行銷企劃，請根據以下資訊產生『可立即發佈』的繁體中文社群貼文。\n` +
+        `不要給教學、不要給說明步驟、不要提到你是 AI。直接輸出可發佈內容。\n\n` +
+        `目標平台：${selectedPlatforms.join(", ")}\n` +
+        `素材描述：${assetSummary}\n` +
+        (postTopic.trim() ? `貼文主題：${postTopic.trim()}\n` : "") +
+        (postObjective.trim() ? `貼文目標：${postObjective.trim()}\n` : "") +
+        `口吻設定：${selectedToneOption.label}。方向：${selectedToneOption.direction}\n` +
+        `主題方向：${selectedThemeOption.label}。方向：${selectedThemeOption.direction}\n` +
+        `貼文長度：${selectedLengthOption.label}。要求：${selectedLengthOption.direction}\n\n` +
+        `caption 內容要求：\n` +
+        `- 第一段：以目標客群痛點或期待切入\n` +
+        `- 中段：描述使用者能得到的價值與差異化\n` +
+        `- 結尾：明確 CTA（預約、私訊、留言）\n` +
+        `- 嚴格遵守長度要求，不要過短也不要過長\n\n` +
+        `輸出 JSON：{"title":"標題","caption":"貼文完整內容","hashtags":["#tag1","#tag2",...]}` +
+        `\nhashtags 數量 10 個，不要重複。只輸出 JSON，不要其他文字。`;
 
-      setPostTitle(ensureDatePrefix(generated.title, toDate(new Date())));
-      setPostCaption(generated.caption);
-      setPostHashtagsInput(generated.hashtags.join(" "));
-      setLastGeneratedModel(generated.model);
+      const callGpt = async () => {
+        const res = await fetch("/api/ai/text-gpt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: gptPrompt, imageDataUrl, temperature: 0.6, jsonMode: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "DeepSeek 生成失敗");
+        const rawText = (data.text || "{}").replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+        const jsonCandidate = rawText.match(/\{[\s\S]*\}/)?.[0] || rawText;
+        const p = JSON.parse(jsonCandidate);
+        return { title: ensureDatePrefix(p.title || "", toDate(new Date())), caption: p.caption || "", hashtags: (p.hashtags || []) as string[], model: `DeepSeek (${data.model || "deepseek-v3"})` };
+      };
+
+      const callGemini = async () => {
+        const g = await requestJson<GenerateSocialPostResponse>("/api/ai/social/post", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            platforms: selectedPlatforms, topic: postTopic.trim(), objective: postObjective.trim(),
+            tone: postTone, theme: postTheme, length: postLength, hashtagCount: 10,
+            asset: { kind: selectedAsset.kind, fileName: selectedAsset.fileName, summary: assetSummary, imageDataUrl },
+          }),
+        });
+        return { title: ensureDatePrefix(g.title, toDate(new Date())), caption: g.caption, hashtags: g.hashtags, model: `Gemini (${g.model})` };
+      };
+
+      let resultTitle = "";
+      let resultCaption = "";
+      let resultHashtags: string[] = [];
+      let resultModel = "";
+
+      if (copyModelChoice === "both") {
+        // 同時呼叫兩個模型，Gemini 為主、GPT 為對比
+        const [geminiResult, gptResult] = await Promise.all([
+          callGemini().catch(() => null),
+          callGpt().catch(() => null),
+        ]);
+        if (geminiResult) {
+          resultTitle = geminiResult.title;
+          resultCaption = geminiResult.caption;
+          resultHashtags = geminiResult.hashtags;
+          resultModel = geminiResult.model;
+        } else if (gptResult) {
+          resultTitle = gptResult.title;
+          resultCaption = gptResult.caption;
+          resultHashtags = gptResult.hashtags;
+          resultModel = gptResult.model;
+        }
+        if (gptResult) {
+          setAltResult({ title: gptResult.title, caption: gptResult.caption, hashtags: gptResult.hashtags.join(" "), model: gptResult.model });
+        }
+      } else if (copyModelChoice === "gpt") {
+        const r = await callGpt();
+        resultTitle = r.title; resultCaption = r.caption; resultHashtags = r.hashtags; resultModel = r.model;
+      } else {
+        const r = await callGemini();
+        resultTitle = r.title; resultCaption = r.caption; resultHashtags = r.hashtags; resultModel = r.model;
+      }
+
+      setPostTitle(resultTitle);
+      setPostCaption(resultCaption);
+      setPostHashtagsInput(resultHashtags.join(" "));
+      setLastGeneratedModel(resultModel);
+
       void requestJson<ContentVaultSaveResponse>("/api/content/vault", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: userScopeId,
           kind: "social-post",
-          title: ensureDatePrefix(generated.title, toDate(new Date())),
-          summary: generated.caption.slice(0, 120),
+          title: resultTitle,
+          summary: resultCaption.slice(0, 120),
           payload: {
-            title: ensureDatePrefix(generated.title, toDate(new Date())),
-            caption: generated.caption,
-            hashtags: generated.hashtags,
-            model: generated.model,
+            title: resultTitle,
+            caption: resultCaption,
+            hashtags: resultHashtags,
+            model: resultModel,
             selectedAssetId: selectedAsset.id,
             selectedAssetFileName: selectedAsset.fileName,
             tone: postTone,
@@ -818,7 +944,7 @@ export const MarketingCenter: React.FC = () => {
             generatedAt: new Date().toISOString(),
           },
         }),
-      }).catch(() => undefined);
+      }).then(() => void loadCopyHistory()).catch(() => undefined);
     } catch (error) {
       alert(error instanceof Error ? error.message : "文案生成失敗");
     } finally {
@@ -882,6 +1008,121 @@ export const MarketingCenter: React.FC = () => {
         <p className="text-sm text-white/90 mt-1">
           先在素材工具生成圖片/影片，再回到此中心選素材，讓 AI 讀取素材後生成文案、Hashtag 與社群預覽。
         </p>
+      </div>
+
+      {/* Social API Settings */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowApiSettings(!showApiSettings)}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-semibold text-gray-800">社群平台 API 設定</span>
+            <div className="flex gap-1.5 ml-2">
+              {fbConnected && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] rounded-full">
+                  <Facebook className="w-2.5 h-2.5" /> 已連接
+                </span>
+              )}
+              {igConnected && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-pink-100 text-pink-700 text-[10px] rounded-full">
+                  <Instagram className="w-2.5 h-2.5" /> 已連接
+                </span>
+              )}
+              {!fbConnected && !igConnected && (
+                <span className="text-[10px] text-gray-400">未設定</span>
+              )}
+            </div>
+          </div>
+          {showApiSettings ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+        </button>
+
+        {showApiSettings && (
+          <div className="px-4 pb-4 border-t border-gray-100 pt-3 space-y-4">
+            <p className="text-[11px] text-gray-500">
+              填入 Facebook / Instagram API 憑證，即可從此頁直接發布貼文。憑證僅儲存於本機瀏覽器。
+            </p>
+
+            {/* Facebook */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Facebook className="w-4 h-4 text-blue-600" />
+                <span className="text-xs font-semibold text-gray-700">Facebook Page</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-500">Page ID</label>
+                  <input
+                    value={fbPageId}
+                    onChange={(e) => setFbPageId(e.target.value)}
+                    placeholder="1234567890"
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">Page Access Token</label>
+                  <input
+                    value={fbAccessToken}
+                    onChange={(e) => setFbAccessToken(e.target.value)}
+                    type="password"
+                    placeholder="EAAx..."
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Instagram */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Instagram className="w-4 h-4 text-pink-600" />
+                <span className="text-xs font-semibold text-gray-700">Instagram Business</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-gray-500">Business Account ID</label>
+                  <input
+                    value={igBusinessId}
+                    onChange={(e) => setIgBusinessId(e.target.value)}
+                    placeholder="17841234567890"
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500">Access Token</label>
+                  <input
+                    value={igAccessToken}
+                    onChange={(e) => setIgAccessToken(e.target.value)}
+                    type="password"
+                    placeholder="IGQx..."
+                    className="w-full text-xs border-gray-200 rounded-lg p-2 bg-white border"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSaveApiSettings}
+                className="px-4 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 transition-colors"
+              >
+                儲存設定
+              </button>
+              {apiSettingsSaved && (
+                <span className="text-xs text-green-600 font-medium">已儲存</span>
+              )}
+              <a
+                href="https://developers.facebook.com/docs/pages-api/getting-started"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-brand-600 hover:underline ml-auto"
+              >
+                如何取得 API Token？
+              </a>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -1180,6 +1421,38 @@ export const MarketingCenter: React.FC = () => {
               <p>主題：{selectedThemeOption.direction}</p>
               <p>長度：{selectedLengthOption.direction}</p>
             </div>
+            <div className="flex gap-1.5 mb-2">
+              <button
+                onClick={() => setCopyModelChoice("both")}
+                className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                  copyModelChoice === "both"
+                    ? "border-purple-500 bg-purple-50 text-purple-700 ring-1 ring-purple-500"
+                    : "border-gray-200 text-gray-600 hover:border-purple-300"
+                }`}
+              >
+                雙模型對比
+              </button>
+              <button
+                onClick={() => setCopyModelChoice("gemini")}
+                className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                  copyModelChoice === "gemini"
+                    ? "border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500"
+                    : "border-gray-200 text-gray-600 hover:border-blue-300"
+                }`}
+              >
+                Gemini
+              </button>
+              <button
+                onClick={() => setCopyModelChoice("gpt")}
+                className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                  copyModelChoice === "gpt"
+                    ? "border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500"
+                    : "border-gray-200 text-gray-600 hover:border-green-300"
+                }`}
+              >
+                DeepSeek
+              </button>
+            </div>
             <Button
               onClick={() => void handleGenerateCopy()}
               disabled={isGeneratingCopy}
@@ -1247,6 +1520,79 @@ export const MarketingCenter: React.FC = () => {
                   <p className="text-xs text-blue-700 mt-2">{hashtags.join(" ")}</p>
                 </div>
               </div>
+            </div>
+
+            {/* GPT 對比結果 */}
+            {altResult && (
+              <div className="bg-white rounded-xl border-2 border-green-200 p-4 shadow-sm space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-green-700 text-sm flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    DeepSeek 對比版本
+                    <span className="text-[10px] font-normal text-green-500">({altResult.model})</span>
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setPostTitle(altResult.title);
+                      setPostCaption(altResult.caption);
+                      setPostHashtagsInput(altResult.hashtags);
+                      setLastGeneratedModel(altResult.model);
+                      setAltResult(null);
+                    }}
+                    className="text-[11px] text-green-600 border border-green-300 px-2 py-0.5 rounded hover:bg-green-50"
+                  >
+                    採用此版本
+                  </button>
+                </div>
+                <p className="text-sm font-bold text-gray-800">{altResult.title}</p>
+                <p className="text-xs text-gray-600 whitespace-pre-wrap line-clamp-5">{altResult.caption}</p>
+                <p className="text-[11px] text-blue-600">{altResult.hashtags}</p>
+              </div>
+            )}
+
+            {/* 文案歷史 */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <button
+                onClick={() => setShowCopyHistory(!showCopyHistory)}
+                className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+              >
+                <span className="text-sm font-bold text-gray-900">文案歷史（{copyHistory.length}）</span>
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showCopyHistory ? "rotate-180" : ""}`} />
+              </button>
+              {showCopyHistory && copyHistory.length > 0 && (
+                <div className="border-t border-gray-100 max-h-80 overflow-y-auto divide-y divide-gray-100">
+                  {copyHistory.map((item) => (
+                    <div key={item.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-semibold text-gray-800 truncate flex-1">{item.title}</p>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          <span className="text-[9px] text-gray-400">{item.model}</span>
+                          <button
+                            onClick={() => {
+                              setPostTitle(item.title);
+                              setPostCaption(item.caption);
+                              setPostHashtagsInput(item.hashtags);
+                              setLastGeneratedModel(item.model);
+                            }}
+                            className="text-[10px] text-brand-600 border border-brand-200 px-1.5 py-0.5 rounded hover:bg-brand-50"
+                          >
+                            套用
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-gray-600 line-clamp-2">{item.caption}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {new Date(item.createdAt).toLocaleString("zh-TW")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showCopyHistory && copyHistory.length === 0 && (
+                <div className="px-4 py-6 text-center text-xs text-gray-400 border-t border-gray-100">
+                  尚無歷史文案，生成文案後會自動儲存
+                </div>
+              )}
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm space-y-3">
